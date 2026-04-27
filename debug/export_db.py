@@ -38,7 +38,7 @@ def export_db(db_path: Path) -> dict:
     # Runtime tables
     data["conversations"] = _rows_to_dicts(conn, "SELECT * FROM conversations ORDER BY created_at DESC")
     data["requests"] = _rows_to_dicts(conn, "SELECT * FROM requests ORDER BY created_at DESC")
-    data["messages"] = _rows_to_dicts(conn, "SELECT * FROM messages ORDER BY created_at DESC")
+    data["artifacts"] = _rows_to_dicts(conn, "SELECT * FROM artifacts ORDER BY created_at DESC")
 
     conn.close()
     return data
