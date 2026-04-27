@@ -214,30 +214,31 @@ class Orchestrator:
         running_user_text = inbound_text
         max_steps = 8  # safety net against tool-loops within a single request
 
+        # Build the system prompt once — the mission is immutable for the
+        # lifetime of this request. Only the LLM user message changes between
+        # tool-call iterations.
+        ctx = PromptContext(
+            agent=agent,
+            paradigms=paradigms,
+            user_profile=self.profile,
+            detected_language=self.user_language,
+            conversation_id=self.conv_id,
+            conversation_folder=str(self.conv_folder),
+            request_id=req_id,
+            parent_request_id=parent_request_id,
+            depth=depth,
+            sender=sender,
+            expected_outcome=expected_outcome,
+            support_files=support_files,
+            inbound_text=inbound_text,
+            tool_registry=registry,
+        )
+        system = render_system_prompt(ctx)
+        tools_payload = tools_payload_for_agent(agent_code, registry)
+        self._write_artifact(req_id, agent_code, "prompt",
+            f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
+
         for step in range(max_steps):
-            ctx = PromptContext(
-                agent=agent,
-                paradigms=paradigms,
-                user_profile=self.profile,
-                detected_language=self.user_language,
-                conversation_id=self.conv_id,
-                conversation_folder=str(self.conv_folder),
-                request_id=req_id,
-                parent_request_id=parent_request_id,
-                depth=depth,
-                sender=sender,
-                expected_outcome=expected_outcome,
-                support_files=support_files,
-                inbound_text=running_user_text,
-                tool_registry=registry,
-            )
-            system = render_system_prompt(ctx)
-            tools_payload = tools_payload_for_agent(agent_code, registry)
-
-            # Persist the rendered prompt for traceability.
-            self._write_artifact(req_id, agent_code, "prompt",
-                f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
-
             response: LLMResponse = self.llm.chat(
                 system=system,
                 user=running_user_text,

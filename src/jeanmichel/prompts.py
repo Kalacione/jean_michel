@@ -130,6 +130,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"from: {ctx.sender}\n"
         f"expected: {ctx.expected_outcome or '(unspecified)'}\n"
         f"support_files:\n{support_files_block}\n\n"
+        f"{ctx.inbound_text}\n\n"
         f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"
         f"# OUTPUT CONTRACT\n"
