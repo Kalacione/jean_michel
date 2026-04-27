@@ -19,6 +19,8 @@ dependencies = [
   # Future: web frontend
   # "fastapi>=0.115.0",
   # "uvicorn>=0.30.0",
+  # SQLite browser (run: sqlite_web jeanmichel.db)
+  "sqlite-web>=0.6.0",
 ]
 
 [project.optional-dependencies]

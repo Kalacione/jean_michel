@@ -65,3 +65,6 @@ fi
 echo
 echo "Done. Activate the venv with:"
 echo "  source ${VENV_DIR}/bin/activate"
+echo
+echo "Tip: browse the SQLite database with:"
+echo "  sqlite_web ${DB_PATH}"
