@@ -58,7 +58,7 @@ SPLASH = r"""
 
 def render_splash(console: Console, model: str) -> None:
     console.print(Text(SPLASH, style="bold cyan"))
-    console.print(f"[dim]model: {model} • Enter=newline  Meta+Enter=send  Ctrl-D=quit[/]\n")
+    console.print(f"[dim]model: {model} • Enter=newline  Alt+Enter=send  Ctrl-D=quit[/]\n")
 
 
 # ---- Event renderer -------------------------------------------------------
