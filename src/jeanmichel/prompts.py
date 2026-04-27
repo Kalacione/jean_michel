@@ -85,6 +85,7 @@ class PromptContext:
     support_files: list[str]
     inbound_text: str
     tool_registry: dict[str, ToolSpec]
+    available_agents: list[Agent]
 
 
 def render_directives(paradigms: list[Paradigm]) -> str:
@@ -105,6 +106,14 @@ def render_system_prompt(ctx: PromptContext) -> str:
     a = ctx.agent
     support_files_block = (
         "\n".join(f"- {p}" for p in ctx.support_files) if ctx.support_files else "(none)"
+    )
+    specialists = [
+        ag for ag in ctx.available_agents
+        if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
+    ]
+    agents_block = (
+        "\n".join(f"- {ag.code}: {ag.mission}" for ag in specialists)
+        if specialists else "(none)"
     )
 
     return (
@@ -131,6 +140,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"expected: {ctx.expected_outcome or '(unspecified)'}\n"
         f"support_files:\n{support_files_block}\n\n"
         f"{ctx.inbound_text}\n\n"
+        f"## Available specialists\n"
+        f"{agents_block}\n\n"
         f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"
         f"# OUTPUT CONTRACT\n"
