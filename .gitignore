@@ -93,3 +93,4 @@ config.local.yaml
 jeanmichel.db
 user_profile.toml
 conversations/*
+backups/*
