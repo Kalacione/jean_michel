@@ -19,21 +19,16 @@ def _frontmatter(conversation_id: str, request_id: str, agent: str, kind: str) -
     )
 
 
-def _hhmmss() -> str:
-    return datetime.now(UTC).strftime("%H%M%S")
+def _hhmmssmmm() -> str:
+    now = datetime.now(UTC)
+    return now.strftime("%H%M%S") + f"{now.microsecond // 1000:03d}"
 
 
 def write_artifact(conv_folder: Path, *, conversation_id: str, request_id: str,
                    agent: str, kind: str, body: str) -> str:
     """Write an artifact file. Returns its relative path inside conv_folder."""
-    filename = f"{_hhmmss()}_{agent}_{kind}.md"
+    filename = f"{_hhmmssmmm()}_{agent}_{kind}.md"
     path = conv_folder / filename
-    # Collision guard: append a counter if the same second produced a same-named file.
-    counter = 1
-    while path.exists():
-        filename = f"{_hhmmss()}_{agent}_{kind}_{counter}.md"
-        path = conv_folder / filename
-        counter += 1
     path.write_text(_frontmatter(conversation_id, request_id, agent, kind) + body, encoding="utf-8")
     return filename
 
