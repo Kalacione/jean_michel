@@ -338,16 +338,49 @@ INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, activ
    'Merge the outputs of multiple specialists into a single coherent answer for the human, in the detected language. Called only when at least two specialists contributed.',
    1, 0.2, 1, datetime('now'), datetime('now'));
 
+-- weather-specialist agent -----------------------------------
+
+INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at) VALUES
+  ('weather-specialist', 'Weather Specialist', 'specialist',
+   'Retrieve weather data (current conditions, forecast, or past weather) for a requested location and time window using the weather tool. Interpret the raw JSON response and present the relevant information clearly. Never invent or extrapolate meteorological data — all information must come from the tool.',
+   1, 0.1, 1, datetime('now'), datetime('now'));
+
+-- meteorology category + paradigms for weather-specialist ----
+
+INSERT INTO categories (section_id, code, title, order_priority, active, created_at, modified_at) VALUES
+  ((SELECT id FROM sections WHERE code='process'),
+   'meteorology', 'Meteorology', 50, 1, datetime('now'), datetime('now'));
+
+INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='meteorology'),
+ 'weather_api_required', 'Weather data from API only',
+ '- Never use your training data to answer meteorological questions.
+- All weather information MUST come from the weather tool response.
+- If the tool returns an error or no data, report the failure explicitly — do not guess or approximate.',
+ 'Prevents the LLM from confabulating climate data from its parametric memory.',
+ 0, 10, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='meteorology'),
+ 'weather_faithful_report', 'Faithful weather report',
+ '- Report only what the tool returned. Do not infer trends beyond the returned data window.
+- Use the wmo_descriptions field to translate numeric weather codes into human-readable conditions.
+- Present temperatures, precipitation and wind with their units as returned by the API.
+- If the user asked about a specific date not covered by the returned window, say so explicitly.',
+ 'Prevents over-interpretation or hallucination of meteorological data.',
+ 0, 20, 1, datetime('now'), datetime('now'));
+
 -- Non-global paradigm bindings -------------------------------
 
 -- summarizer needs no process/code paradigms; globals are enough.
 -- synthesizer needs no process/code paradigms either.
--- Future code agents will be wired here, e.g.:
---   INSERT INTO agent_paradigms (agent_id, paradigm_id)
---   SELECT a.id, p.id FROM agents a, paradigms p
---   WHERE a.code='code-python' AND p.code IN ('no_overengineering','centralize_duplication',
---                                             'logical_anchoring','concise_comments',
---                                             'audit_phase','sprint_phase','check_existing');
+
+-- weather-specialist: bind the two meteorology paradigms + audit_phase
+-- (audit_phase forces it to parse the briefing before calling the tool).
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'weather-specialist'
+  AND p.code IN ('weather_api_required', 'weather_faithful_report', 'audit_phase');
 
 -- Tool grants -------------------------------------------------
 INSERT INTO agent_tools (agent_id, tool_code)
@@ -356,3 +389,5 @@ INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'conv_read_file' FROM agents WHERE code='jean-michel';
 INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'conv_read_file' FROM agents WHERE code='summarizer';
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'weather'        FROM agents WHERE code='weather-specialist';
