@@ -4,7 +4,7 @@
 # Usage:
 #   ./jm.sh                              Launch the interactive CLI (default)
 #   ./jm.sh --install                    Setup venv and database
-#   ./jm.sh --export-db [--out FILE]     Export the DB to backups/db_TIMESTAMP.json
+#   ./jm.sh --export-db [--out FILE]     Export the DB to backups/db_TIMESTAMP.sql
 #   ./jm.sh --browse-db                  Open the DB in sqlite_web (port 8080)
 #   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
 #   ./jm.sh --clean [--days N] [--yes]   Delete conversations older than N days
@@ -13,7 +13,7 @@
 # Extra args after a command are forwarded to the underlying tool.
 # Examples:
 #   ./jm.sh --export-db
-#   ./jm.sh --export-db --out /tmp/db.json
+#   ./jm.sh --export-db --out /tmp/db.sql
 #   ./jm.sh --clean --days 30
 #   ./jm.sh --inspect-conv abc123 --kind thought response
 #   ./jm.sh --inspect-conv abc123 --list
@@ -37,7 +37,7 @@ Usage: ./jm.sh [COMMAND] [OPTIONS]
 Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
-  --export-db [--out FILE]    Export DB to backups/db_TIMESTAMP.json (or FILE)
+  --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
@@ -50,7 +50,7 @@ Examples:
   ./jm.sh
   ./jm.sh --install
   ./jm.sh --export-db
-  ./jm.sh --export-db --out /tmp/db.json
+  ./jm.sh --export-db --out /tmp/db.sql
   ./jm.sh --browse-db
   ./jm.sh --inspect-conv abc123
   ./jm.sh --inspect-conv abc123 --agent jean-michel --kind thought response
@@ -147,7 +147,7 @@ cmd_export_db() {
     mkdir -p "${exports_dir}"
     local ts
     ts="$(date +%Y%m%d_%H%M%S)"
-    local out_path="${exports_dir}/db_${ts}.json"
+    local out_path="${exports_dir}/db_${ts}.sql"
     python "${PROJECT_ROOT}/debug/export_db.py" --db "${DB_PATH}" --out "${out_path}" "$@"
   else
     exec python "${PROJECT_ROOT}/debug/export_db.py" --db "${DB_PATH}" "$@"

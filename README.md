@@ -113,7 +113,7 @@ jeanmichel/
 │   └── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed)
 ├── debug/
 │   ├── inspect_conv.py       # inspection des artefacts d'une conversation
-│   └── export_db.py          # export JSON de la base de données
+│   └── export_db.py          # dump SQL de la base de données
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
 │   └── GEMMA4.md             # référence des tokens et comportements Gemma 4

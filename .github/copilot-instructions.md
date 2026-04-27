@@ -24,7 +24,7 @@ Python 3.14 local AI assistant. Key components:
 ```
 ./jm.sh                  # launch CLI (auto-installs if needed)
 ./jm.sh --install        # setup venv + DB
-./jm.sh --export-db      # → backups/db_TIMESTAMP.json
+./jm.sh --export-db      # → backups/db_TIMESTAMP.sql
 ./jm.sh --clean [--days N]  # purge old conversations
 ./jm.sh --inspect-conv ID   # debug artifacts
 ```
