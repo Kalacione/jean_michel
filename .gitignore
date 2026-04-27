@@ -89,5 +89,7 @@ logs/
 config.local.yaml
 
 
-# Local user profile
+# Local datas
+jeanmichel.db
 user_profile.toml
+conversations/*
