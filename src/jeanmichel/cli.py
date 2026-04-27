@@ -6,6 +6,9 @@ import argparse
 import sys
 from typing import Iterable
 
+from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -55,7 +58,7 @@ SPLASH = r"""
 
 def render_splash(console: Console, model: str) -> None:
     console.print(Text(SPLASH, style="bold cyan"))
-    console.print(f"[dim]model: {model} • Ctrl-D or 'exit' to quit[/]\n")
+    console.print(f"[dim]model: {model} • Enter=newline  Meta+Enter=send  Ctrl-D=quit[/]\n")
 
 
 # ---- Event renderer -------------------------------------------------------
@@ -175,9 +178,24 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[{C_WARN}]{e}[/]")
         return 2
 
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _newline(event):
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("escape", "enter")   # Meta+Enter / Alt+Enter
+    def _submit(event):
+        event.current_buffer.validate_and_handle()
+
     while True:
         try:
-            user_input = Prompt.ask(f"[{C_USER}]you[/]")
+            user_input = pt_prompt(
+                HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
+                multiline=True,
+                key_bindings=kb,
+                prompt_continuation=lambda width, line_number, wrap_count: " " * width,
+            )
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye.[/]")
             return 0
