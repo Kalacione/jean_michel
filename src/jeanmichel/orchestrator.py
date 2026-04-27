@@ -191,6 +191,7 @@ class Orchestrator:
         with db.connect() as conn:
             agent = db.get_agent_by_code(conn, agent_code)
             paradigms = db.load_paradigms_for_agent(conn, agent.id)
+            available_agents = db.list_active_agents(conn)
             req_id = _new_uuid()
             db.create_request(
                 conn,
@@ -232,117 +233,122 @@ class Orchestrator:
             support_files=support_files,
             inbound_text=inbound_text,
             tool_registry=registry,
+            available_agents=available_agents,
         )
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent_code, registry)
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
 
-        for step in range(max_steps):
-            response: LLMResponse = self.llm.chat(
-                system=system,
-                user=running_user_text,
-                tools=tools_payload,
-                temperature=agent.temperature,
-                thinking=agent.thinking_mode,
-            )
+        try:
+            for step in range(max_steps):
+                response: LLMResponse = self.llm.chat(
+                    system=system,
+                    user=running_user_text,
+                    tools=tools_payload,
+                    temperature=agent.temperature,
+                    thinking=agent.thinking_mode,
+                )
 
-            if response.thinking:
-                self._write_artifact(req_id, agent_code, "thought", response.thinking)
-                yield ThoughtCaptured(agent_code=agent_code, text=response.thinking)
+                if response.thinking:
+                    self._write_artifact(req_id, agent_code, "thought", response.thinking)
+                    yield ThoughtCaptured(agent_code=agent_code, text=response.thinking)
 
-            # No tool calls: model produced free text. Treat as implicit return_to_user.
-            if not response.tool_calls:
-                final = response.content.strip() or "(empty response)"
-                self._record_response(req_id, agent_code, final)
-                with db.connect() as conn:
-                    db.update_request_status(conn, req_id, "completed", completed=True)
-                return final
-
-            # Enforce: at most one ask_human per turn.
-            seen_ask = False
-            tool_responses: list[str] = []
-            for call in response.tool_calls:
-                yield ToolCallEmitted(agent_code=agent_code, tool_name=call.name,
-                                      arguments=call.arguments)
-                self._write_artifact(req_id, agent_code, "tool_call",
-                    f"**{call.name}**\n\n```json\n{call.arguments}\n```")
-
-                # ---- Control tools --------------------------------------
-                if call.name == "return_to_user":
-                    answer = (call.arguments.get("answer") or "").strip()
-                    self._record_response(req_id, agent_code, answer)
+                # No tool calls: model produced free text. Treat as implicit return_to_user.
+                if not response.tool_calls:
+                    final = response.content.strip() or "(empty response)"
+                    self._record_response(req_id, agent_code, final)
                     with db.connect() as conn:
                         db.update_request_status(conn, req_id, "completed", completed=True)
-                    return answer
+                    return final
 
-                if call.name == "ask_human":
-                    if seen_ask:
-                        msg = "REJECTED: only one ask_human is allowed per turn."
-                        tool_responses.append(f"[ask_human] {msg}")
-                        continue
-                    seen_ask = True
-                    answer = yield from self._handle_ask_human(
-                        req_id, agent_code, call.arguments,
-                    )
-                    tool_responses.append(f"[ask_human] human answer: {answer}")
-                    continue
+                # Enforce: at most one ask_human per turn.
+                seen_ask = False
+                tool_responses: list[str] = []
+                for call in response.tool_calls:
+                    yield ToolCallEmitted(agent_code=agent_code, tool_name=call.name,
+                                          arguments=call.arguments)
+                    self._write_artifact(req_id, agent_code, "tool_call",
+                        f"**{call.name}**\n\n```json\n{call.arguments}\n```")
 
-                if call.name == "delegate_to":
-                    if depth + 1 > MAX_RECURSION_DEPTH:
-                        msg = (f"REJECTED: recursion depth {depth + 1} exceeds "
-                               f"limit {MAX_RECURSION_DEPTH}. You must conclude "
-                               f"with the information at hand.")
-                        tool_responses.append(f"[delegate_to] {msg}")
-                        continue
-                    child_code = call.arguments.get("agent_code", "")
-                    briefing = call.arguments.get("briefing", "")
-                    expected = call.arguments.get("expected", "")
-                    sup_files = call.arguments.get("support_files") or []
-                    yield DelegationStarted(parent_agent=agent_code,
-                                            child_agent=child_code, briefing=briefing)
-                    self._write_artifact(req_id, agent_code, "briefing",
-                        f"to: {child_code}\nexpected: {expected}\n\n{briefing}")
-                    try:
-                        child_answer = yield from self._run_request(
-                            agent_code=child_code,
-                            inbound_text=briefing,
-                            expected_outcome=expected,
-                            support_files=sup_files,
-                            parent_request_id=req_id,
-                            depth=depth + 1,
-                            sender=agent_code,
+                    # ---- Control tools --------------------------------------
+                    if call.name == "return_to_user":
+                        answer = (call.arguments.get("answer") or "").strip()
+                        self._record_response(req_id, agent_code, answer)
+                        with db.connect() as conn:
+                            db.update_request_status(conn, req_id, "completed", completed=True)
+                        return answer
+
+                    if call.name == "ask_human":
+                        if seen_ask:
+                            msg = "REJECTED: only one ask_human is allowed per turn."
+                            tool_responses.append(f"[ask_human] {msg}")
+                            continue
+                        seen_ask = True
+                        answer = yield from self._handle_ask_human(
+                            req_id, agent_code, call.arguments,
                         )
-                    except KeyError:
-                        child_answer = f"[error] unknown agent: {child_code}"
-                    tool_responses.append(f"[delegate_to:{child_code}] {child_answer}")
-                    continue
+                        tool_responses.append(f"[ask_human] human answer: {answer}")
+                        continue
 
-                # ---- Native Python tools --------------------------------
-                spec = registry.get(call.name)
-                if spec is None:
-                    tool_responses.append(f"[{call.name}] REJECTED: unknown tool.")
-                    continue
-                try:
-                    result = spec.handler(**call.arguments)
-                except TypeError as e:
-                    result = f'{{"error": "Bad arguments: {e}"}}'
-                except Exception as e:  # noqa: BLE001
-                    result = f'{{"error": "Tool failed: {e}"}}'
-                yield ToolResponseRecorded(agent_code=agent_code,
-                                           tool_name=call.name, response=result)
-                self._write_artifact(req_id, agent_code, "tool_response",
-                    f"**{call.name}**\n\n```\n{result}\n```")
-                tool_responses.append(f"[{call.name}] {result}")
+                    if call.name == "delegate_to":
+                        if depth + 1 > MAX_RECURSION_DEPTH:
+                            msg = (f"REJECTED: recursion depth {depth + 1} exceeds "
+                                   f"limit {MAX_RECURSION_DEPTH}. You must conclude "
+                                   f"with the information at hand.")
+                            tool_responses.append(f"[delegate_to] {msg}")
+                            continue
+                        child_code = call.arguments.get("agent_code", "")
+                        briefing = call.arguments.get("briefing", "")
+                        expected = call.arguments.get("expected", "")
+                        sup_files = call.arguments.get("support_files") or []
+                        yield DelegationStarted(parent_agent=agent_code,
+                                                child_agent=child_code, briefing=briefing)
+                        self._write_artifact(req_id, agent_code, "briefing",
+                            f"to: {child_code}\nexpected: {expected}\n\n{briefing}")
+                        try:
+                            child_answer = yield from self._run_request(
+                                agent_code=child_code,
+                                inbound_text=briefing,
+                                expected_outcome=expected,
+                                support_files=sup_files,
+                                parent_request_id=req_id,
+                                depth=depth + 1,
+                                sender=agent_code,
+                            )
+                        except KeyError:
+                            child_answer = f"[error] unknown agent: {child_code}"
+                        tool_responses.append(f"[delegate_to:{child_code}] {child_answer}")
+                        continue
 
-            # Feed all tool responses back to the model on the next iteration.
-            running_user_text = (
-                "Tool responses (in the order of your calls):\n"
-                + "\n".join(tool_responses)
-                + "\n\nProceed."
-            )
+                    # ---- Native Python tools --------------------------------
+                    spec = registry.get(call.name)
+                    if spec is None:
+                        tool_responses.append(f"[{call.name}] REJECTED: unknown tool.")
+                        continue
+                    try:
+                        result = spec.handler(**call.arguments)
+                    except TypeError as e:
+                        result = f'{{"error": "Bad arguments: {e}"}}'
+                    except Exception as e:  # noqa: BLE001
+                        result = f'{{"error": "Tool failed: {e}"}}'
+                    yield ToolResponseRecorded(agent_code=agent_code,
+                                               tool_name=call.name, response=result)
+                    self._write_artifact(req_id, agent_code, "tool_response",
+                        f"**{call.name}**\n\n```\n{result}\n```")
+                    tool_responses.append(f"[{call.name}] {result}")
 
-        # Step budget exhausted.
+                # Feed all tool responses back to the model on the next iteration.
+                running_user_text = (
+                    "[ORCHESTRATOR] Tool results below. Resume execution of your current task.\n\n"
+                    + "\n".join(tool_responses)
+                )
+
+        except Exception:
+            with db.connect() as conn:
+                db.update_request_status(conn, req_id, "failed", completed=True)
+            raise
+
         msg = "[orchestrator] step budget exhausted within a single request."
         self._record_response(req_id, agent_code, msg)
         with db.connect() as conn:
