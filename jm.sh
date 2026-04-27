@@ -4,7 +4,7 @@
 # Usage:
 #   ./jm.sh                              Launch the interactive CLI (default)
 #   ./jm.sh --install                    Setup venv and database
-#   ./jm.sh --export-db [--out FILE]     Export the DB to exports/db_TIMESTAMP.json
+#   ./jm.sh --export-db [--out FILE]     Export the DB to backups/db_TIMESTAMP.json
 #   ./jm.sh --browse-db                  Open the DB in sqlite_web (port 8080)
 #   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
 #   ./jm.sh --clean [--days N] [--yes]   Delete conversations older than N days
@@ -37,7 +37,7 @@ Usage: ./jm.sh [COMMAND] [OPTIONS]
 Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
-  --export-db [--out FILE]    Export DB to exports/db_TIMESTAMP.json (or FILE)
+  --export-db [--out FILE]    Export DB to backups/db_TIMESTAMP.json (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
@@ -143,7 +143,7 @@ cmd_export_db() {
     [[ "${arg}" == "--out" ]] && has_out=1 && break
   done
   if [[ "${has_out}" -eq 0 ]]; then
-    local exports_dir="${PROJECT_ROOT}/exports"
+    local exports_dir="${PROJECT_ROOT}/backups"
     mkdir -p "${exports_dir}"
     local ts
     ts="$(date +%Y%m%d_%H%M%S)"
