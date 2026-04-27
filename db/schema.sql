@@ -391,3 +391,56 @@ INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'conv_read_file' FROM agents WHERE code='summarizer';
 INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'weather'        FROM agents WHERE code='weather-specialist';
+
+-- wikipedia-specialist agent ---------------------------------
+
+INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at) VALUES
+  ('wikipedia-specialist', 'Wikipedia Specialist', 'specialist',
+   'Answer factual questions by searching Wikipedia and retrieving the relevant article content. First call wikipedia_search to identify the best article, then wikipedia_get_page to retrieve it. Extract and present only what is relevant to the question. Never answer from your training data — all facts must come from the retrieved page.',
+   1, 0.1, 1, datetime('now'), datetime('now'));
+
+-- encyclopedic category + paradigms for wikipedia-specialist -
+
+INSERT INTO categories (section_id, code, title, order_priority, active, created_at, modified_at) VALUES
+  ((SELECT id FROM sections WHERE code='process'),
+   'encyclopedic', 'Encyclopedic', 60, 1, datetime('now'), datetime('now'));
+
+INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='encyclopedic'),
+ 'wikipedia_source_only', 'Wikipedia tool as sole source',
+ '- Never answer factual questions from your training data.
+- All facts, figures, dates, and names MUST come from the wikipedia_get_page tool response.
+- If the tool returns an error or the page content does not answer the question, say so explicitly — do not fill the gap with your own knowledge.',
+ 'Prevents the LLM from mixing parametric memory with retrieved facts.',
+ 0, 10, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='encyclopedic'),
+ 'wikipedia_extract_focus', 'Extract only the relevant excerpt',
+ '- Do not summarize the entire article. Identify and quote only the passages that answer the question.
+- Quote key figures, dates, and proper nouns verbatim from the page content.
+- If the answer spans multiple sections, synthesize only those relevant parts.
+- If the page content does not contain the answer, say so — do not extrapolate.',
+ 'Keeps the answer tight and grounded in the source text.',
+ 0, 20, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='encyclopedic'),
+ 'wikipedia_search_strategy', 'Iterative search strategy',
+ '- Start with the most specific search terms matching the question.
+- From the search results, choose the most directly relevant article title.
+- Prefer dedicated articles (e.g. "Leaning Tower of Pisa") over broad ones (e.g. "Pisa").
+- If wikipedia_get_page returns a disambiguation error, pick the most relevant option from the list and retry.
+- If the first search yields no useful results, reformulate with alternative keywords.',
+ 'Guides the specialist to find the right page efficiently.',
+ 0, 30, 1, datetime('now'), datetime('now'));
+
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'wikipedia-specialist'
+  AND p.code IN ('wikipedia_source_only', 'wikipedia_extract_focus',
+                 'wikipedia_search_strategy', 'audit_phase');
+
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'wikipedia_search'   FROM agents WHERE code='wikipedia-specialist';
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'wikipedia_get_page' FROM agents WHERE code='wikipedia-specialist';

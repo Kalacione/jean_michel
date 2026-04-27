@@ -8,6 +8,8 @@ from unittest.mock import patch
 from jeanmichel.tools.clock import SPEC as CLOCK_SPEC
 from jeanmichel.tools.conv_read_file import make_spec
 from jeanmichel.tools.weather import SPEC as WEATHER_SPEC
+from jeanmichel.tools.wikipedia import GET_PAGE_SPEC as WIKI_GET_PAGE
+from jeanmichel.tools.wikipedia import SEARCH_SPEC as WIKI_SEARCH
 
 
 class TestClock:
@@ -221,3 +223,94 @@ class TestWeather:
             WEATHER_SPEC.handler(location="Montreal", mode="history", past_days=999)
         weather_url = next(u for u in calls if "geocoding-api" not in u)
         assert "past_days=92" in weather_url
+
+
+# ---------------------------------------------------------------------------
+# Fake Wikipedia responses used across TestWikipedia
+# ---------------------------------------------------------------------------
+
+_FAKE_SEARCH_RESULTS = [
+    "Leaning Tower of Pisa",
+    "Pisa Cathedral",
+    "Pisa",
+]
+
+_FAKE_PAGE_CONTENT = (
+    "The Leaning Tower of Pisa (Italian: Torre pendente di Pisa) is the "
+    "campanile, or freestanding bell tower, of Pisa Cathedral.\n\n"
+    "== Tilt ==\n"
+    "Construction of the tower occurred in three stages across 199 years. "
+    "The tower's tilt began during construction in the 12th century, caused "
+    "by an inadequate foundation on ground too soft on one side. "
+    "As of 2020, the tower leans at an angle of 3.97 degrees. "
+    "The top of the tower is displaced 3.9 metres (12 ft 10 in) from where "
+    "it would stand if the structure were perfectly vertical."
+)
+
+_FAKE_PAGE = {
+    "title": "Leaning Tower of Pisa",
+    "url": "https://en.wikipedia.org/wiki/Leaning_Tower_of_Pisa",
+    "summary": "The Leaning Tower of Pisa is the campanile of Pisa Cathedral.",
+    "content": _FAKE_PAGE_CONTENT,
+}
+
+
+class TestWikipedia:
+    def test_search_returns_titles(self):
+        with patch("jeanmichel.tools.wikipedia._wiki_search", return_value=_FAKE_SEARCH_RESULTS):
+            result = json.loads(WIKI_SEARCH.handler(query="Tower of Pisa"))
+        assert result["query"] == "Tower of Pisa"
+        assert "Leaning Tower of Pisa" in result["results"]
+
+    def test_search_results_clamped_to_10(self):
+        with patch("jeanmichel.tools.wikipedia._wiki_search", return_value=_FAKE_SEARCH_RESULTS) as m:
+            WIKI_SEARCH.handler(query="Pisa", results=999)
+        _called_results = m.call_args[1]["results"] if m.call_args[1] else m.call_args[0][1]
+        assert _called_results <= 10
+
+    def test_search_failure_returns_error(self):
+        with patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=OSError("timeout")):
+            result = json.loads(WIKI_SEARCH.handler(query="anything"))
+        assert "error" in result
+
+    def test_get_page_returns_content(self):
+        with patch("jeanmichel.tools.wikipedia._wiki_get_page", return_value=_FAKE_PAGE):
+            result = json.loads(WIKI_GET_PAGE.handler(title="Leaning Tower of Pisa"))
+        assert result["title"] == "Leaning Tower of Pisa"
+        assert "3.97 degrees" in result["content"]
+        assert "url" in result
+        assert "summary" in result
+
+    def test_get_page_not_found_returns_error(self):
+        with patch("jeanmichel.tools.wikipedia._wiki_get_page", side_effect=Exception("Page not found")):
+            result = json.loads(WIKI_GET_PAGE.handler(title="NonExistentXYZ"))
+        assert "error" in result
+
+    def test_get_page_disambiguation_returns_options(self):
+        exc = Exception("Disambiguation")
+        exc.options = ["Pisa", "Pisa Cathedral", "Leaning Tower of Pisa"]
+        with patch("jeanmichel.tools.wikipedia._wiki_get_page", side_effect=exc):
+            result = json.loads(WIKI_GET_PAGE.handler(title="Pisa"))
+        assert "error" in result
+        assert "options" in result
+        assert "Leaning Tower of Pisa" in result["options"]
+
+    def test_get_page_content_truncated(self):
+        huge_page = dict(_FAKE_PAGE)
+        huge_page["content"] = "x" * 20_000
+        with patch("jeanmichel.tools.wikipedia._wiki_get_page", return_value=huge_page):
+            result = json.loads(WIKI_GET_PAGE.handler(title="Leaning Tower of Pisa"))
+        assert len(result["content"]) <= 12_000
+
+    def test_tower_of_pisa_inclination_scenario(self):
+        """Full scenario: search → get page → inclination angle extractable."""
+        with patch("jeanmichel.tools.wikipedia._wiki_search", return_value=_FAKE_SEARCH_RESULTS):
+            search_result = json.loads(WIKI_SEARCH.handler(query="Tour de Pise inclinaison"))
+        # Specialist picks the most relevant title from results
+        best_title = search_result["results"][0]
+        assert best_title == "Leaning Tower of Pisa"
+
+        with patch("jeanmichel.tools.wikipedia._wiki_get_page", return_value=_FAKE_PAGE):
+            page_result = json.loads(WIKI_GET_PAGE.handler(title=best_title))
+        # The inclination angle is present in the content
+        assert "3.97 degrees" in page_result["content"]

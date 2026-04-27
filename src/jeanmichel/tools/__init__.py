@@ -16,6 +16,7 @@ from ._base import ToolSpec
 from . import clock as _clock_mod
 from . import conv_read_file as _conv_read_file_mod
 from . import weather as _weather_mod
+from . import wikipedia as _wikipedia_mod
 
 
 def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
@@ -25,6 +26,8 @@ def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         conv_read_file_spec.name: conv_read_file_spec,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
+        _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
+        _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
     }
 
 

@@ -8,11 +8,11 @@ from jeanmichel import db
 
 
 class TestAgents:
-    def test_list_active_agents_returns_four(self, tmp_env):
+    def test_list_active_agents_returns_five(self, tmp_env):
         with db.connect() as conn:
             agents = db.list_active_agents(conn)
         codes = {a.code for a in agents}
-        assert codes == {"jean-michel", "summarizer", "synthesizer", "weather-specialist"}
+        assert codes == {"jean-michel", "summarizer", "synthesizer", "weather-specialist", "wikipedia-specialist"}
 
     def test_get_agent_by_code(self, tmp_env):
         with db.connect() as conn:
