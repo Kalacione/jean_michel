@@ -2,16 +2,19 @@
 # jm — Jean-Michel unified entry point.
 #
 # Usage:
-#   ./jm.sh                          Launch the interactive CLI (default)
-#   ./jm.sh --install                Setup venv and database
-#   ./jm.sh --export-db [--out FILE] Export the database to JSON
-#   ./jm.sh --browse-db              Open the database in sqlite_web (port 8080)
-#   ./jm.sh --inspect-conv ID [...]  Inspect a conversation's artifacts
-#   ./jm.sh --help                   Show this help
+#   ./jm.sh                              Launch the interactive CLI (default)
+#   ./jm.sh --install                    Setup venv and database
+#   ./jm.sh --export-db [--out FILE]     Export the DB to exports/db_TIMESTAMP.json
+#   ./jm.sh --browse-db                  Open the DB in sqlite_web (port 8080)
+#   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
+#   ./jm.sh --clean [--days N] [--yes]   Delete conversations older than N days
+#   ./jm.sh --help                       Show this help
 #
 # Extra args after a command are forwarded to the underlying tool.
 # Examples:
+#   ./jm.sh --export-db
 #   ./jm.sh --export-db --out /tmp/db.json
+#   ./jm.sh --clean --days 30
 #   ./jm.sh --inspect-conv abc123 --kind thought response
 #   ./jm.sh --inspect-conv abc123 --list
 
@@ -32,24 +35,28 @@ usage() {
 Usage: ./jm.sh [COMMAND] [OPTIONS]
 
 Commands:
-  (default)              Launch the interactive CLI
-  --install              Create venv, install deps, initialize the DB
-  --export-db            Export the database to JSON (stdout or --out FILE)
-  --browse-db            Open the database in sqlite_web at http://localhost:8080
-  --inspect-conv ID      Inspect artifacts of a conversation (by ID prefix)
-  --help                 Show this help
+  (default)                   Launch the interactive CLI
+  --install                   Create venv, install deps, initialize the DB
+  --export-db [--out FILE]    Export DB to exports/db_TIMESTAMP.json (or FILE)
+  --browse-db                 Open the database in sqlite_web at http://localhost:8080
+  --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
+  --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
+  --help                      Show this help
 
 CLI pass-through:
-  Any extra arguments after the command are forwarded to the underlying tool.
+  Unknown flags/args are forwarded to the jean-michel CLI.
 
 Examples:
   ./jm.sh
   ./jm.sh --install
+  ./jm.sh --export-db
   ./jm.sh --export-db --out /tmp/db.json
   ./jm.sh --browse-db
   ./jm.sh --inspect-conv abc123
   ./jm.sh --inspect-conv abc123 --agent jean-michel --kind thought response
   ./jm.sh --inspect-conv abc123 --list
+  ./jm.sh --clean
+  ./jm.sh --clean --days 30 --yes
 EOF
 }
 
@@ -129,7 +136,27 @@ cmd_cli() {
 
 cmd_export_db() {
   ensure_venv
-  exec python "${PROJECT_ROOT}/debug/export_db.py" --db "${DB_PATH}" "$@"
+  # If --out is already in the args, forward as-is; otherwise default to
+  # exports/db_TIMESTAMP.json.
+  local has_out=0
+  for arg in "$@"; do
+    [[ "${arg}" == "--out" ]] && has_out=1 && break
+  done
+  if [[ "${has_out}" -eq 0 ]]; then
+    local exports_dir="${PROJECT_ROOT}/exports"
+    mkdir -p "${exports_dir}"
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    local out_path="${exports_dir}/db_${ts}.json"
+    python "${PROJECT_ROOT}/debug/export_db.py" --db "${DB_PATH}" --out "${out_path}" "$@"
+  else
+    exec python "${PROJECT_ROOT}/debug/export_db.py" --db "${DB_PATH}" "$@"
+  fi
+}
+
+cmd_clean() {
+  ensure_venv
+  exec python "${PROJECT_ROOT}/debug/clean_convs.py" "$@"
 }
 
 cmd_browse_db() {
@@ -173,6 +200,10 @@ case "${COMMAND}" in
   --inspect-conv)
     shift
     cmd_inspect_conv "$@"
+    ;;
+  --clean)
+    shift
+    cmd_clean "$@"
     ;;
   "")
     cmd_cli
