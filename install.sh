@@ -42,6 +42,7 @@ source "${VENV_DIR}/bin/activate"
 
 echo "[2/3] Installing dependencies"
 pip install --upgrade pip >/dev/null
+pip cache purge >/dev/null 2>&1 || true
 pip install -e ".[dev]"
 
 # ---- database -------------------------------------------------------------
