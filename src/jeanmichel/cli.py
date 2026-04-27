@@ -65,7 +65,14 @@ def render_splash(console: Console, model: str) -> None:
 
 def render_events(console: Console, events: Iterable[object],
                   show_thoughts: bool) -> None:
-    for ev in events:
+    gen = iter(events)
+    while True:
+        with console.status("[dim]thinking…[/]", spinner="dots"):
+            try:
+                ev = next(gen)
+            except StopIteration:
+                break
+
         if isinstance(ev, ConversationStarted):
             console.print(Rule(
                 Text(f"conversation {ev.conversation_id} • lang={ev.user_language}",
