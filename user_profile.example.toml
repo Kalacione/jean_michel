@@ -1,0 +1,5 @@
+# Free-form description of the human, injected verbatim into the
+# `# CONTEXT > Human` block of every agent prompt.
+description = """
+L'humain auquel tu réponds est un mâle franco-canadien, la quarantaine, localisé à Montréal.
+"""

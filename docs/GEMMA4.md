@@ -1,0 +1,68 @@
+# Gemma 4 — Capabilities & Interaction Cheat-Sheet
+
+Source: <https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4> (last verified 2026-04-27).
+
+## Control tokens
+
+| Token / pair | Purpose |
+|---|---|
+| `<|turn>system … <turn|>` | System role (native in G4, no longer folded into user) |
+| `<|turn>user … <turn|>` | User turn |
+| `<|turn>model … <turn|>` | Model turn (model emits `<turn|>` to stop) |
+| `<|think|>` | Activates thinking mode — placed inside the system block |
+| `<|channel>thought … <channel|>` | Model's internal reasoning channel |
+| `<|tool>declaration:name{schema}<tool|>` | Tool declaration (in system block) |
+| `<|tool_call>call:name{args}<tool_call|>` | Model invokes a tool |
+| `<|tool_response>response:name{...}<tool_response|>` | Tool result fed back; also acts as a stop sequence |
+| `<|"|>` | Mandatory delimiter for **all string values** inside tool blocks |
+| `<|image|>`, `<|audio|>` | Multimodal placeholders inside user turn |
+
+## Family & limits
+
+| Variant | Active params | Context | Notes |
+|---|---|---|---|
+| E2B | ~2B effective | 128K | edge / mobile, audio input supported |
+| E4B | ~4B effective | 128K | edge / laptop, audio input supported |
+| 26B-A4B (MoE) | 4B active / 26B total | 256K | fast inference, recommended workhorse |
+| 31B (dense) | 31B | 256K | best quality, heaviest |
+
+## Behaviors that matter for an agentic stack
+
+| Behavior | Implication for Jean-Michel |
+|---|---|
+| Native `system` role | One consolidated system block per turn carries identity, context, directives, tools, and `<|think|>` |
+| Native function calling | Briefings between agents go through `tool_call` — no custom JSON parser needed |
+| Strip thoughts between standard turns | Orchestrator must remove the previous `thought` channel when re-prompting |
+| Do **not** strip thoughts inside a tool-call sequence | `ask_human` resume preserves the prior thinking block |
+| Long agent chains can loop | Inject a `## Prior reasoning summary` (built by `synthesizer`) instead of raw thoughts at depth ≥ 3 |
+| 26B / 31B may emit `thought` even with thinking off | Stabilize by injecting an empty `<|channel>thought\n<channel|>` |
+| LOW-thinking via system instruction | "Think briefly and efficiently" reduces ~20% thinking tokens; use for trivial agents |
+| 140+ languages trained | `langdetect` on user input → set `detected_language` for the final reply only |
+
+## Temperature strategy (per project doctrine)
+
+| Phase | Temperature | Used by |
+|---|---|---|
+| Triage / routing | 0.1 | jean-michel (router) |
+| Factual / summarization | 0.0–0.2 | summarizer, code agents |
+| Brainstorm / divergent | 0.7–0.81 | future creative specialists |
+| Validation pass | 0.2 (× N runs) | future critic agent |
+
+## Ollama specifics (project context)
+
+- Project version: **Ollama 0.21**.
+- Native thinking implemented since Ollama 0.9. The `thought` channel is
+  surfaced as `<thinking>…</thinking>` in the API response — capture it
+  before persisting the artifact.
+- Tool calls are exposed via the standard Ollama tool-call response shape;
+  the orchestrator parses them, executes locally, and re-prompts with
+  `tool_response`.
+
+## Hard rules taken from the doc
+
+1. Tool declarations live **only** in the system block.
+2. Every string value inside a tool block must be wrapped in `<|"|>`.
+3. `<|tool_response>` is a stop token — generation halts there until the
+   application appends the response.
+4. Thinking mode is conversation-level (set once in the consolidated system
+   block), not per turn.

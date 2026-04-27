@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+wheels/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+
+# uv
+.uv/
+uv.lock
+
+# Security — secrets & credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+secrets/
+secrets.toml
+secrets.yaml
+secrets.json
+*_secret*
+*_private*
+credentials.json
+service_account.json
+token.json
+token.pickle
+
+# Tests
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+*.swp
+*.swo
+*~
+
+# polywatch runtime data
+data/
+alerts/
+reports/
+*.duckdb
+*.duckdb.wal
+*.parquet
+
+# Logs
+*.log
+logs/
+
+# Local overrides
+config.local.yaml
+
+
+# Local user profile
+user_profile.toml

@@ -1,0 +1,45 @@
+[project]
+name = "jean-michel"
+version = "0.1.0"
+description = "Local AI assistant with role-specialized agents, paradigm-driven prompts, and a Python orchestrator."
+requires-python = ">=3.14"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = [
+  # LLM client
+  "ollama>=0.4.0",
+  # Language detection on the user's raw input
+  "langdetect>=1.0.9",
+  # CLI rendering (dynamic, reactive)
+  "rich>=13.7.0",
+  "prompt_toolkit>=3.0.47",
+  # Config files
+  "tomli>=2.0.1; python_version < '3.11'",
+  # Future: web frontend
+  # "fastapi>=0.115.0",
+  # "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.5.0",
+]
+
+[project.scripts]
+jean-michel = "jeanmichel.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jeanmichel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
