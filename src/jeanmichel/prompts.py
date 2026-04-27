@@ -10,7 +10,7 @@ from typing import Any
 
 from .config import MAX_RECURSION_DEPTH, UserProfile
 from .models import Agent, Paradigm
-from .tools import AGENT_TOOL_GRANTS, ToolSpec
+from .tools import ToolSpec
 
 
 # ---- Control tool declarations (always available to LLM agents) -----------
@@ -156,11 +156,11 @@ def render_system_prompt(ctx: PromptContext) -> str:
     )
 
 
-def tools_payload_for_agent(agent_code: str,
+def tools_payload_for_agent(tool_grants: list[str],
                             registry: dict[str, ToolSpec]) -> list[dict[str, Any]]:
     """Build the tools payload (control tools + agent-granted native tools)."""
     payload = list(CONTROL_TOOLS_SCHEMA)
-    for tool_name in AGENT_TOOL_GRANTS.get(agent_code, []):
+    for tool_name in tool_grants:
         spec = registry.get(tool_name)
         if spec is None:
             continue

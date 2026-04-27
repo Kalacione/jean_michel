@@ -192,6 +192,7 @@ class Orchestrator:
             agent = db.get_agent_by_code(conn, agent_code)
             paradigms = db.load_paradigms_for_agent(conn, agent.id)
             available_agents = db.list_active_agents(conn)
+            tool_grants = db.load_tool_grants(conn, agent.id)
             req_id = _new_uuid()
             db.create_request(
                 conn,
@@ -236,7 +237,7 @@ class Orchestrator:
             available_agents=available_agents,
         )
         system = render_system_prompt(ctx)
-        tools_payload = tools_payload_for_agent(agent_code, registry)
+        tools_payload = tools_payload_for_agent(tool_grants, registry)
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
 

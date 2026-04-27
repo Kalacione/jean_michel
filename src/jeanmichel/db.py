@@ -79,6 +79,17 @@ def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int) -> list[Pa
     return [Paradigm(**dict(r)) for r in rows]
 
 
+# ---- Tool grants ----------------------------------------------------------
+
+def load_tool_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
+    """Return the list of tool_code strings granted to this agent."""
+    rows = conn.execute(
+        "SELECT tool_code FROM agent_tools WHERE agent_id = ? ORDER BY tool_code",
+        (agent_id,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 # ---- Conversations --------------------------------------------------------
 
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,

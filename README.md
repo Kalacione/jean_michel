@@ -110,17 +110,24 @@ jeanmichel/
 ├── pyproject.toml
 ├── user_profile.toml         # description libre de l'humain (édité localement)
 ├── db/
-│   └── schema.sql            # schéma SQLite + paradigmes et agents seed
+│   └── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed)
+├── debug/
+│   ├── inspect_conv.py       # inspection des artefacts d'une conversation
+│   └── export_db.py          # export JSON de la base de données
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
 │   └── GEMMA4.md             # référence des tokens et comportements Gemma 4
 ├── src/jeanmichel/
-│   ├── cli.py                # interface rich
+│   ├── cli.py                # interface rich (multi-ligne Alt+Enter)
 │   ├── orchestrator.py       # boucle principale (générateur d'events)
 │   ├── llm.py                # client Ollama + MockClient
 │   ├── db.py                 # accès SQLite
-│   ├── prompts.py            # rendu du squelette
-│   ├── tools.py              # tools natifs Python (clock, read_file)
+│   ├── prompts.py            # rendu du squelette système
+│   ├── tools/                # sous-package outils natifs Python
+│   │   ├── __init__.py       # build_registry(conv_folder) → dict[str, ToolSpec]
+│   │   ├── _base.py          # dataclass ToolSpec
+│   │   ├── clock.py          # outil clock (SPEC stateless)
+│   │   └── conv_read_file.py # outil lecture fichier (make_spec, sandboxé)
 │   ├── persistence.py        # écriture artefacts disque + frontmatter
 │   ├── models.py             # dataclasses
 │   └── config.py             # paths, constantes, user_profile loading

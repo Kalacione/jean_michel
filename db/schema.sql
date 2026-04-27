@@ -69,6 +69,13 @@ CREATE TABLE agent_paradigms (
   PRIMARY KEY (agent_id, paradigm_id)
 );
 
+CREATE TABLE agent_tools (
+  agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  tool_code      TEXT NOT NULL,
+  PRIMARY KEY (agent_id, tool_code)
+);
+CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
+
 -- =============================================================
 -- RUNTIME
 -- =============================================================
@@ -341,3 +348,11 @@ INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, activ
 --   WHERE a.code='code-python' AND p.code IN ('no_overengineering','centralize_duplication',
 --                                             'logical_anchoring','concise_comments',
 --                                             'audit_phase','sprint_phase','check_existing');
+
+-- Tool grants -------------------------------------------------
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'clock'          FROM agents WHERE code='jean-michel';
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'conv_read_file' FROM agents WHERE code='jean-michel';
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT id, 'conv_read_file' FROM agents WHERE code='summarizer';
