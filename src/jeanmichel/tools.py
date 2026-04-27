@@ -34,7 +34,7 @@ def _clock(timezone: str = "UTC") -> str:
     now_local = now_utc.astimezone(tz)
     return (
         f'{{"utc": "{now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")}", '
-        f'"local": "{now_local.strftime("%Y-%m-%dT%H:%M:%S%z")}", '
+        f'"local": "{now_local.isoformat()}", '
         f'"timezone": "{timezone}"}}'
     )
 
