@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Iterable
+from collections.abc import Iterable
 
-from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.text import Text
 
@@ -25,14 +25,13 @@ from .orchestrator import (
     FinalAnswer,
     HumanAnswerReceived,
     HumanQuestionAsked,
-    Orchestrator,
     OrchestrationFailed,
+    Orchestrator,
     RecursionLimitReached,
     ThoughtCaptured,
     ToolCallEmitted,
     ToolResponseRecorded,
 )
-
 
 # ---- Style palette --------------------------------------------------------
 
@@ -66,12 +65,17 @@ def render_splash(console: Console, model: str) -> None:
 def render_events(console: Console, events: Iterable[object],
                   show_thoughts: bool) -> None:
     gen = iter(events)
+    awaiting_human = False  # True right after HumanQuestionAsked — skip spinner
     while True:
-        with console.status("[dim]thinking…[/]", spinner="dots"):
-            try:
+        try:
+            if awaiting_human:
                 ev = next(gen)
-            except StopIteration:
-                break
+            else:
+                with console.status("[dim]thinking…[/]", spinner="dots"):
+                    ev = next(gen)
+        except StopIteration:
+            break
+        awaiting_human = False
 
         if isinstance(ev, ConversationStarted):
             console.print(Rule(
@@ -115,11 +119,12 @@ def render_events(console: Console, events: Iterable[object],
             )
 
         elif isinstance(ev, HumanQuestionAsked):
-            # Handled inline by the ask_human callback. Nothing to render here.
-            pass
+            # The callback will run on the very next next(gen) call — skip the
+            # spinner so Rich doesn't fight prompt_toolkit for the terminal.
+            awaiting_human = True
 
         elif isinstance(ev, HumanAnswerReceived):
-            console.print(f"  [dim]↳ human answered.[/]")
+            console.print("  [dim]↳ human answered.[/]")
 
         elif isinstance(ev, RecursionLimitReached):
             console.print(
@@ -147,7 +152,7 @@ def _truncate(value: object, max_len: int = 60) -> str:
 
 # ---- ask_human callback ---------------------------------------------------
 
-def make_ask_human(console: Console):
+def make_ask_human(console: Console, session: PromptSession):
     def _ask(question: str, why: str) -> str:
         console.print()
         console.print(Panel(
@@ -160,8 +165,12 @@ def make_ask_human(console: Console):
             border_style="yellow",
             padding=(1, 2),
         ))
-        answer = Prompt.ask("[bold yellow]your answer[/]")
-        return answer
+        answer = session.prompt(
+            HTML('<ansiyellow><b>your answer</b></ansiyellow>: '),
+            multiline=True,
+            prompt_continuation=lambda width, line_number, wrap_count: " " * width,
+        )
+        return answer.strip()
     return _ask
 
 
@@ -195,12 +204,16 @@ def main(argv: list[str] | None = None) -> int:
     def _submit(event):
         event.current_buffer.validate_and_handle()
 
+    session: PromptSession[str] = PromptSession(
+        history=InMemoryHistory(),
+        key_bindings=kb,
+    )
+
     while True:
         try:
-            user_input = pt_prompt(
+            user_input = session.prompt(
                 HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
                 multiline=True,
-                key_bindings=kb,
                 prompt_continuation=lambda width, line_number, wrap_count: " " * width,
             )
         except (EOFError, KeyboardInterrupt):
@@ -213,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         orch = Orchestrator(llm=llm, profile=profile,
-                            ask_human_callback=make_ask_human(console))
+                            ask_human_callback=make_ask_human(console, session))
         try:
             render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts)
         except Exception as e:  # noqa: BLE001

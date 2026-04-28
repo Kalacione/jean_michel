@@ -357,8 +357,10 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
  'weather_api_required', 'Weather data from API only',
  '- Never use your training data to answer meteorological questions.
 - All weather information MUST come from the weather tool response.
-- If the tool returns an error or no data, report the failure explicitly — do not guess or approximate.',
- 'Prevents the LLM from confabulating climate data from its parametric memory.',
+- If the tool returns an error or no data, report the failure explicitly — do not guess or approximate.
+- If no location is specified in the briefing, use the user''s location from the ## Human section
+  of the context. Never call ask_human to request the location.',
+ 'Prevents LLM from confabulating climate data and from unnecessarily blocking on location.',
  0, 10, 1, datetime('now'), datetime('now')),
 
 ((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='meteorology'),
