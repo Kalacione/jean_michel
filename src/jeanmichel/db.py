@@ -144,3 +144,87 @@ def record_artifact(conn: sqlite3.Connection, request_id: str,
         "VALUES (?, ?, ?, ?)",
         (request_id, relative_path, kind, _now()),
     )
+
+
+# ---- Admin write helpers --------------------------------------------------
+
+def grant_tool(conn: sqlite3.Connection, agent_code: str, tool_code: str) -> None:
+    """Grant tool_code to agent identified by agent_code. No-op if already granted."""
+    agent = get_agent_by_code(conn, agent_code)
+    conn.execute(
+        "INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES (?, ?)",
+        (agent.id, tool_code),
+    )
+
+
+def revoke_tool(conn: sqlite3.Connection, agent_code: str, tool_code: str) -> None:
+    """Revoke tool_code from agent identified by agent_code."""
+    agent = get_agent_by_code(conn, agent_code)
+    conn.execute(
+        "DELETE FROM agent_tools WHERE agent_id = ? AND tool_code = ?",
+        (agent.id, tool_code),
+    )
+
+
+def bind_paradigm(conn: sqlite3.Connection, agent_code: str, paradigm_code: str) -> None:
+    """Bind paradigm to agent. No-op if already bound."""
+    agent = get_agent_by_code(conn, agent_code)
+    row = conn.execute("SELECT id FROM paradigms WHERE code = ?", (paradigm_code,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown paradigm: {paradigm_code}")
+    conn.execute(
+        "INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (?, ?)",
+        (agent.id, row["id"]),
+    )
+
+
+def unbind_paradigm(conn: sqlite3.Connection, agent_code: str, paradigm_code: str) -> None:
+    """Remove an explicit paradigm binding from an agent."""
+    agent = get_agent_by_code(conn, agent_code)
+    row = conn.execute("SELECT id FROM paradigms WHERE code = ?", (paradigm_code,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown paradigm: {paradigm_code}")
+    conn.execute(
+        "DELETE FROM agent_paradigms WHERE agent_id = ? AND paradigm_id = ?",
+        (agent.id, row["id"]),
+    )
+
+
+def create_paradigm(
+    conn: sqlite3.Connection,
+    *,
+    section_code: str,
+    category_code: str,
+    code: str,
+    title: str,
+    content: str,
+    rationale: str | None = None,
+    is_global: bool = False,
+    order_priority: int = 100,
+) -> int:
+    """Insert a new paradigm. Returns the new paradigm id."""
+    row = conn.execute(
+        "SELECT c.id FROM categories c JOIN sections s ON s.id = c.section_id "
+        "WHERE s.code = ? AND c.code = ?",
+        (section_code, category_code),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown category: {section_code}.{category_code}")
+    now = _now()
+    cursor = conn.execute(
+        "INSERT INTO paradigms (category_id, code, title, content, rationale, "
+        "is_global, order_priority, active, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+        (row["id"], code, title, content, rationale, int(is_global), order_priority, now, now),
+    )
+    return cursor.lastrowid  # type: ignore[return-value]
+
+
+def set_paradigm_active(conn: sqlite3.Connection, paradigm_code: str, active: bool) -> None:
+    """Enable or disable a paradigm."""
+    result = conn.execute(
+        "UPDATE paradigms SET active = ?, modified_at = ? WHERE code = ?",
+        (int(active), _now(), paradigm_code),
+    )
+    if result.rowcount == 0:
+        raise KeyError(f"Unknown paradigm: {paradigm_code}")

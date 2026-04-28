@@ -20,9 +20,8 @@ class TestAgents:
         assert agent.role == "router"
 
     def test_get_agent_unknown_raises(self, tmp_env):
-        with db.connect() as conn:
-            with pytest.raises(KeyError):
-                db.get_agent_by_code(conn, "ghost")
+        with db.connect() as conn, pytest.raises(KeyError):
+            db.get_agent_by_code(conn, "ghost")
 
 
 class TestToolGrants:
@@ -44,6 +43,108 @@ class TestToolGrants:
             sy = db.get_agent_by_code(conn, "synthesizer")
             grants = db.load_tool_grants(conn, sy.id)
         assert grants == []
+
+
+class TestAdminHelpers:
+    def test_grant_and_revoke_tool(self, tmp_env):
+        with db.connect() as conn:
+            db.grant_tool(conn, "synthesizer", "clock")
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            grants = db.load_tool_grants(conn, sy.id)
+        assert "clock" in grants
+
+        with db.connect() as conn:
+            db.revoke_tool(conn, "synthesizer", "clock")
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            grants = db.load_tool_grants(conn, sy.id)
+        assert "clock" not in grants
+
+    def test_grant_tool_idempotent(self, tmp_env):
+        with db.connect() as conn:
+            db.grant_tool(conn, "synthesizer", "clock")
+            db.grant_tool(conn, "synthesizer", "clock")  # no error
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            grants = db.load_tool_grants(conn, sy.id)
+        assert grants.count("clock") == 1
+
+    def test_grant_tool_unknown_agent_raises(self, tmp_env):
+        with db.connect() as conn, pytest.raises(KeyError):
+            db.grant_tool(conn, "ghost", "clock")
+
+    def test_bind_and_unbind_paradigm(self, tmp_env):
+        with db.connect() as conn:
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            before = db.load_paradigms_for_agent(conn, sy.id)
+            before_codes = {p.code for p in before}
+            assert "brutal_truth" in before_codes  # global
+
+            db.bind_paradigm(conn, "synthesizer", "brutal_truth")  # already global — no error
+            db.bind_paradigm(conn, "synthesizer", "audit_phase")
+
+        with db.connect() as conn:
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            after = {p.code for p in db.load_paradigms_for_agent(conn, sy.id)}
+        assert "audit_phase" in after
+
+        with db.connect() as conn:
+            db.unbind_paradigm(conn, "synthesizer", "audit_phase")
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            final = {p.code for p in db.load_paradigms_for_agent(conn, sy.id)}
+        assert "audit_phase" not in final
+
+    def test_bind_unknown_paradigm_raises(self, tmp_env):
+        with db.connect() as conn, pytest.raises(KeyError):
+            db.bind_paradigm(conn, "synthesizer", "nonexistent_paradigm")
+
+    def test_create_paradigm(self, tmp_env):
+        with db.connect() as conn:
+            pid = db.create_paradigm(
+                conn,
+                section_code="reasoning",
+                category_code="sources",
+                code="test_paradigm",
+                title="Test Paradigm",
+                content="- Test bullet",
+            )
+        assert isinstance(pid, int)
+
+        with db.connect() as conn:
+            sy = db.get_agent_by_code(conn, "synthesizer")
+            db.bind_paradigm(conn, "synthesizer", "test_paradigm")
+            paradigms = db.load_paradigms_for_agent(conn, sy.id)
+        assert any(p.code == "test_paradigm" for p in paradigms)
+
+    def test_create_paradigm_unknown_category_raises(self, tmp_env):
+        with db.connect() as conn, pytest.raises(KeyError):
+            db.create_paradigm(
+                conn,
+                section_code="nope",
+                category_code="nope",
+                code="x",
+                title="X",
+                content="- x",
+            )
+
+    def test_set_paradigm_active_toggle(self, tmp_env):
+        with db.connect() as conn:
+            db.set_paradigm_active(conn, "brutal_truth", False)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT active FROM paradigms WHERE code='brutal_truth'"
+            ).fetchone()
+        assert row["active"] == 0
+
+        with db.connect() as conn:
+            db.set_paradigm_active(conn, "brutal_truth", True)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT active FROM paradigms WHERE code='brutal_truth'"
+            ).fetchone()
+        assert row["active"] == 1
+
+    def test_set_paradigm_active_unknown_raises(self, tmp_env):
+        with db.connect() as conn, pytest.raises(KeyError):
+            db.set_paradigm_active(conn, "ghost_paradigm", True)
 
 
 class TestConversations:

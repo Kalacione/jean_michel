@@ -8,6 +8,7 @@
 #   ./jm.sh --browse-db                  Open the DB in sqlite_web (port 8080)
 #   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
 #   ./jm.sh --clean [--days N] [--yes]   Delete conversations older than N days
+#   ./jm.sh --admin [CMD ...]            Manage agents, tools, and paradigms (REPL or one-shot)
 #   ./jm.sh --help                       Show this help
 #
 # Extra args after a command are forwarded to the underlying tool.
@@ -41,6 +42,7 @@ Commands:
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
+  --admin [CMD ...]           Manage agents, tools, and paradigms (interactive REPL or one-shot)
   --help                      Show this help
 
 CLI pass-through:
@@ -175,6 +177,12 @@ cmd_inspect_conv() {
   exec python "${PROJECT_ROOT}/debug/inspect_conv.py" "$@"
 }
 
+cmd_admin() {
+  ensure_venv
+  export JEANMICHEL_HOME="${PROJECT_ROOT}"
+  exec python "${PROJECT_ROOT}/debug/admin.py" "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -204,6 +212,10 @@ case "${COMMAND}" in
   --clean)
     shift
     cmd_clean "$@"
+    ;;
+  --admin)
+    shift
+    cmd_admin "$@"
     ;;
   "")
     cmd_cli
