@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from jeanmichel.config import UserProfile
 from jeanmichel.prompts import tools_payload_for_agent
-from jeanmichel.tools.clock import SPEC as clock_spec
+from jeanmichel.tools.clock import SPEC as CLOCK_SPEC
 
 
 def test_control_tools_always_present():
@@ -14,7 +14,7 @@ def test_control_tools_always_present():
 
 
 def test_granted_tool_appears_in_payload():
-    registry = {"clock": clock_spec}
+    registry = {"clock": CLOCK_SPEC}
     payload = tools_payload_for_agent(["clock"], registry)
     names = {e["function"]["name"] for e in payload}
     assert "clock" in names
