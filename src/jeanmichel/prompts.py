@@ -123,7 +123,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"Mission: {a.mission}\n\n"
         f"# CONTEXT\n"
         f"## Human\n"
-        f"{ctx.user_profile.description}\n"
+        f"{ctx.user_profile.render()}\n"
         f"Detected language for user-facing reply: {ctx.detected_language}\n\n"
         f"## Conversation\n"
         f"- conversation_id: {ctx.conversation_id}\n"

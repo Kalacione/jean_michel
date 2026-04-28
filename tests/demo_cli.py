@@ -36,7 +36,7 @@ def main() -> None:
         conn.commit()
         conn.close()
 
-        profile = config.UserProfile(description="L'humain est francophone, basé à Montréal.")
+        profile = config.UserProfile(city="Montréal", language="french", notes="L'humain est francophone.")
 
         script = [
             LLMResponse(

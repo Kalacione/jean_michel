@@ -25,15 +25,41 @@ DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 @dataclass(frozen=True)
 class UserProfile:
-    description: str
+    name: str = ""
+    birthdate: str = ""
+    city: str = ""
+    country: str = ""
+    language: str = ""
+    interests: str = ""
+    notes: str = ""
+
+    def render(self) -> str:
+        lines = []
+        for key in ("name", "birthdate", "city", "country", "language", "interests"):
+            val = getattr(self, key)
+            if val:
+                lines.append(f"{key}: {val}")
+        if self.notes:
+            if lines:
+                lines.append("")
+            lines.append(self.notes)
+        return "\n".join(lines) if lines else "No user profile provided."
 
     @staticmethod
-    def load(path: Path = USER_PROFILE_PATH) -> "UserProfile":
+    def load(path: Path = USER_PROFILE_PATH) -> UserProfile:
         if not path.exists():
-            return UserProfile(description="No user profile provided.")
+            return UserProfile()
         with open(path, "rb") as f:
             data = tomllib.load(f)
-        return UserProfile(description=data.get("description", "").strip() or "No user profile provided.")
+        return UserProfile(
+            name=data.get("name", "").strip(),
+            birthdate=data.get("birthdate", "").strip(),
+            city=data.get("city", "").strip(),
+            country=data.get("country", "").strip(),
+            language=data.get("language", "").strip(),
+            interests=data.get("interests", "").strip(),
+            notes=data.get("notes", "").strip(),
+        )
 
 
 def ensure_dirs() -> None:

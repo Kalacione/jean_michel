@@ -202,6 +202,14 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
 - The `why` field is mandatory and must explain what is blocked without it.',
  'Enforced at orchestrator level too — second ask_human in a turn is rejected.', 1, 10, 1, datetime('now'), datetime('now')),
 
+-- communication / clarification
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='communication' AND c.code='clarification'),
+ 'trust_context_defaults', 'Trust context defaults',
+ '- The `## Human` section is authoritative context about the user (location, language, preferences, etc.).
+- Treat those fields as given facts — do not call ask_human to confirm information already present there.
+- If the current request explicitly overrides a field (e.g., asks for weather in Paris while profile says city: Montreal), the request takes precedence.',
+ NULL, 0, 20, 1, datetime('now'), datetime('now')),
+
 -- communication / restrictions
 ((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='communication' AND c.code='restrictions'),
  'no_decoration', 'No decoration',
@@ -381,6 +389,12 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
 
 -- summarizer needs no process/code paradigms; globals are enough.
 -- synthesizer needs no process/code paradigms either.
+
+-- jean-michel: trust_context_defaults is non-global, bind explicitly.
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'jean-michel'
+  AND p.code IN ('trust_context_defaults');
 
 -- weather-specialist: bind the two meteorology paradigms + audit_phase
 -- (audit_phase forces it to parse the briefing before calling the tool).

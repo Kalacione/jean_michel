@@ -16,7 +16,7 @@ from jeanmichel.orchestrator import (
     ToolResponseRecorded,
 )
 
-PROFILE = UserProfile(description="test user")
+PROFILE = UserProfile(notes="test user")
 
 
 def _orch(script, tmp_env):
