@@ -27,6 +27,7 @@ from .orchestrator import (
     HumanQuestionAsked,
     OrchestrationFailed,
     Orchestrator,
+    RecursionLimitReached,
     ThoughtCaptured,
     ToolCallEmitted,
     ToolResponseRecorded,
@@ -124,6 +125,12 @@ def render_events(console: Console, events: Iterable[object],
 
         elif isinstance(ev, HumanAnswerReceived):
             console.print("  [dim]↳ human answered.[/]")
+
+        elif isinstance(ev, RecursionLimitReached):
+            console.print(
+                f"[{C_WARN}]⚠ recursion limit reached at depth {ev.depth} "
+                f"({ev.agent_code}).[/]"
+            )
 
         elif isinstance(ev, OrchestrationFailed):
             console.print(f"[{C_WARN}]✖ {ev.reason}[/]")

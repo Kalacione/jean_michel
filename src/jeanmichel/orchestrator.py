@@ -85,6 +85,12 @@ class HumanAnswerReceived:
 
 
 @dataclass
+class RecursionLimitReached:
+    agent_code: str
+    depth: int
+
+
+@dataclass
 class FinalAnswer:
     text: str
 
@@ -284,6 +290,7 @@ class Orchestrator:
                             msg = (f"REJECTED: recursion depth {depth + 1} exceeds "
                                    f"limit {MAX_RECURSION_DEPTH}. You must conclude "
                                    f"with the information at hand.")
+                            yield RecursionLimitReached(agent_code=agent_code, depth=depth + 1)
                             tool_responses.append(f"[delegate_to] {msg}")
                             continue
                         child_code = call.arguments.get("agent_code", "")
