@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ._base import ToolSpec
 from . import clock as _clock_mod
 from . import conv_read_file as _conv_read_file_mod
 from . import weather as _weather_mod
 from . import wikipedia as _wikipedia_mod
+from ._base import ToolSpec
 
 
 def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:

@@ -7,17 +7,16 @@ orchestrator internals.
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generator
 
 from . import config, db
 from .config import MAX_RECURSION_DEPTH, UserProfile, ensure_dirs
 from .llm import LLMClient
-from .models import LLMResponse, ToolCall
+from .models import LLMResponse
 from .persistence import (
     append_to_journal,
     conversation_folder_name,
@@ -29,7 +28,6 @@ from .prompts import (
     tools_payload_for_agent,
 )
 from .tools import build_registry
-
 
 # ---- Events emitted to the CLI -------------------------------------------
 
@@ -136,7 +134,7 @@ class Orchestrator:
 
     # ---- Public API ------------------------------------------------------
 
-    def run(self, user_input: str) -> Generator[object, None, None]:
+    def run(self, user_input: str) -> Generator[object]:
         """Process one user input. Yields events; the CLI consumes them."""
         self.user_language = _detect_language(user_input)
         started = datetime.now(UTC)
@@ -167,7 +165,7 @@ class Orchestrator:
                 depth=0,
                 sender="human",
             )
-        except _RecursionExceeded as e:
+        except _RecursionExceededError as e:
             yield RecursionLimitReached(agent_code=e.agent_code, depth=e.depth)
             answer = ("[recursion limit reached — partial answer based on the "
                       "information available]")
@@ -242,7 +240,7 @@ class Orchestrator:
             f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
 
         try:
-            for step in range(max_steps):
+            for _step in range(max_steps):
                 response: LLMResponse = self.llm.chat(
                     system=system,
                     user=running_user_text,
@@ -399,7 +397,7 @@ class Orchestrator:
         return filename
 
 
-class _RecursionExceeded(Exception):
+class _RecursionExceededError(Exception):
     def __init__(self, agent_code: str, depth: int) -> None:
         self.agent_code = agent_code
         self.depth = depth

@@ -12,7 +12,6 @@ from .config import MAX_RECURSION_DEPTH, UserProfile
 from .models import Agent, Paradigm
 from .tools import ToolSpec
 
-
 # ---- Control tool declarations (always available to LLM agents) -----------
 
 CONTROL_TOOLS_SCHEMA: list[dict[str, Any]] = [

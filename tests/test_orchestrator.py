@@ -8,7 +8,6 @@ from jeanmichel.models import LLMResponse, ToolCall
 from jeanmichel.orchestrator import (
     AgentStarted,
     ConversationStarted,
-    DelegationStarted,
     FinalAnswer,
     Orchestrator,
     ThoughtCaptured,
