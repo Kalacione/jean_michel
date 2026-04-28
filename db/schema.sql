@@ -366,8 +366,13 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
  '- Report only what the tool returned. Do not infer trends beyond the returned data window.
 - Use the wmo_descriptions field to translate numeric weather codes into human-readable conditions.
 - Present temperatures, precipitation and wind with their units as returned by the API.
-- If the user asked about a specific date not covered by the returned window, say so explicitly.',
- 'Prevents over-interpretation or hallucination of meteorological data.',
+- The `local_date` field in every tool response is today''s date at the queried location — use it
+  as the reference for "today" / "tomorrow" / "yesterday", NOT the UTC time in the system context.
+- In `forecast` mode, the returned array starts at `local_date` (index 0 = today local,
+  index 1 = tomorrow local, etc.). To retrieve tomorrow, call with `forecast_days=2` and read index 1.
+- If the user asked about a specific date not covered by the returned window, call the tool again
+  with the appropriate `forecast_days` or `past_days` value — do not refuse or approximate.',
+ 'Prevents over-interpretation and UTC/local timezone confusion.',
  0, 20, 1, datetime('now'), datetime('now'));
 
 -- Non-global paradigm bindings -------------------------------

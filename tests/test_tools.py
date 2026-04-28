@@ -224,6 +224,21 @@ class TestWeather:
         weather_url = next(u for u in calls if "geocoding-api" not in u)
         assert "past_days=92" in weather_url
 
+    def test_local_date_present_in_current(self):
+        mock_http, _ = _make_http_mock(_FAKE_GEO, _FAKE_CURRENT)
+        with patch("jeanmichel.tools.weather._http_get_json", side_effect=mock_http):
+            result = json.loads(WEATHER_SPEC.handler(location="Montreal"))
+        assert "local_date" in result
+        # UTC-4 offset (-14400s) → date must be a valid ISO date string
+        import re
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", result["local_date"])
+
+    def test_local_date_present_in_forecast(self):
+        mock_http, _ = _make_http_mock(_FAKE_GEO, _FAKE_FORECAST)
+        with patch("jeanmichel.tools.weather._http_get_json", side_effect=mock_http):
+            result = json.loads(WEATHER_SPEC.handler(location="Montreal", mode="forecast", forecast_days=2))
+        assert "local_date" in result
+
 
 # ---------------------------------------------------------------------------
 # Fake Wikipedia responses used across TestWikipedia

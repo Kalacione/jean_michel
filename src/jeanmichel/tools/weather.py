@@ -10,6 +10,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime, timedelta
 
 from ._base import ToolSpec
 
@@ -148,10 +149,13 @@ def _handler(
         return json.dumps({"error": f"open-meteo request failed: {e}"})
 
     # --- Assemble result ----------------------------------------------------
+    utc_offset_seconds = raw.get("utc_offset_seconds", 0)
+    local_now = datetime.now(UTC) + timedelta(seconds=utc_offset_seconds)
     result: dict = {
         "location": {"name": display_name, "lat": lat, "lon": lon},
         "timezone": raw.get("timezone"),
-        "utc_offset_seconds": raw.get("utc_offset_seconds"),
+        "utc_offset_seconds": utc_offset_seconds,
+        "local_date": local_now.strftime("%Y-%m-%d"),
         "mode": mode,
     }
     for key in ("current", "current_units", "hourly", "hourly_units", "daily", "daily_units"):
