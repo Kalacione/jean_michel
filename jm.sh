@@ -4,6 +4,7 @@
 # Usage:
 #   ./jm.sh                              Launch the interactive CLI (default)
 #   ./jm.sh --install                    Setup venv and database
+#   ./jm.sh --test [PYTEST_ARGS ...]      Run the test suite
 #   ./jm.sh --export-db [--out FILE]     Export the DB to backups/db_TIMESTAMP.sql
 #   ./jm.sh --browse-db                  Open the DB in sqlite_web (port 8080)
 #   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
@@ -38,6 +39,7 @@ Usage: ./jm.sh [COMMAND] [OPTIONS]
 Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
+  --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
@@ -183,6 +185,12 @@ cmd_admin() {
   exec python "${PROJECT_ROOT}/debug/admin.py" "$@"
 }
 
+cmd_test() {
+  ensure_venv
+  export JEANMICHEL_HOME="${PROJECT_ROOT}"
+  exec python -m pytest "${PROJECT_ROOT}/tests" -v "$@"
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -216,6 +224,10 @@ case "${COMMAND}" in
   --admin)
     shift
     cmd_admin "$@"
+    ;;
+  --test)
+    shift
+    cmd_test "$@"
     ;;
   "")
     cmd_cli
