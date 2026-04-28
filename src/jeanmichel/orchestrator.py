@@ -85,12 +85,6 @@ class HumanAnswerReceived:
 
 
 @dataclass
-class RecursionLimitReached:
-    agent_code: str
-    depth: int
-
-
-@dataclass
 class FinalAnswer:
     text: str
 
@@ -155,8 +149,7 @@ class Orchestrator:
         )
 
         # Root request goes to jean-michel.
-        try:
-            answer = yield from self._run_request(
+        answer = yield from self._run_request(
                 agent_code="jean-michel",
                 inbound_text=user_input,
                 expected_outcome="Address the human request fully.",
@@ -165,10 +158,6 @@ class Orchestrator:
                 depth=0,
                 sender="human",
             )
-        except _RecursionExceededError as e:
-            yield RecursionLimitReached(agent_code=e.agent_code, depth=e.depth)
-            answer = ("[recursion limit reached — partial answer based on the "
-                      "information available]")
 
         append_to_journal(self.conv_folder, f"## Jean-Michel\n{answer}\n")
         yield FinalAnswer(text=answer)
@@ -395,9 +384,3 @@ class Orchestrator:
         with db.connect() as conn:
             db.record_artifact(conn, request_id, filename, kind)
         return filename
-
-
-class _RecursionExceededError(Exception):
-    def __init__(self, agent_code: str, depth: int) -> None:
-        self.agent_code = agent_code
-        self.depth = depth
