@@ -91,6 +91,8 @@ config.local.yaml
 
 # Local datas
 jeanmichel.db
+jeanmichel.db-shm
+jeanmichel.db-wal
 user_profile.toml
 conversations/*
 backups/*
