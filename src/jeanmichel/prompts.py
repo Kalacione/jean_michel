@@ -123,7 +123,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"# CONTEXT\n"
         f"## Human\n"
         f"{ctx.user_profile.render()}\n"
-        f"Detected language for user-facing reply: {ctx.detected_language}\n\n"
+        f"Detected language — use for ALL human-facing output "
+        f"(return_to_user answer, ask_human question and why): {ctx.detected_language}\n\n"
         f"## Conversation\n"
         f"- conversation_id: {ctx.conversation_id}\n"
         f"- request_id: {ctx.request_id}\n"
@@ -150,8 +151,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"- If task belongs to another specialist: call delegate_to(...). "
         f"Multiple parallel delegate_to calls allowed in the same turn.\n"
         f"- If task is yours and complete: call return_to_user(answer).\n"
-        f"- Inter-agent briefings: English. User-facing answer: "
-        f"{ctx.detected_language}.\n"
+        f"- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"
     )
 
 
