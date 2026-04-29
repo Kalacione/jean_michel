@@ -61,7 +61,7 @@ def _build_initial_data(db_path: Path) -> dict:
             categories = []
             for cat in cats_raw:
                 paradigms_raw = conn.execute(
-                    "SELECT id, code, title, is_global, active, order_priority, category_id "
+                    "SELECT id, code, title, content, is_global, active, order_priority, category_id "
                     "FROM paradigms WHERE category_id=? ORDER BY order_priority, id",
                     (cat["id"],),
                 ).fetchall()
@@ -70,6 +70,7 @@ def _build_initial_data(db_path: Path) -> dict:
                         "id": p["id"],
                         "code": p["code"],
                         "title": p["title"],
+                        "content": p["content"],
                         "is_global": p["is_global"],
                         "active": p["active"],
                         "order_priority": p["order_priority"],
@@ -228,9 +229,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
     th, td { padding: 0.35rem 0.5rem; text-align: center; vertical-align: middle; }
-    td.label { text-align: left; white-space: nowrap; max-width: 260px;
+    td.label { text-align: left; white-space: nowrap; min-width: 320px; max-width: 420px;
                overflow: hidden; text-overflow: ellipsis; }
 
+    thead tr th { position: sticky; top: 0; z-index: 2;
+                   background: var(--background-alt, #eee);
+                   box-shadow: 0 2px 0 var(--border, #ccc); }
     tr.section-row td { font-weight: bold; font-size: 1em;
                         background: var(--background-alt, #eee);
                         border-top: 2px solid var(--border, #ccc); }
@@ -343,6 +347,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         DB_GLOBAL.set(p.id, p.is_global);
         DB_ACTIVE.set(p.id, p.active);
       })
+    )
+  );
+
+  // Quick lookup: content per paradigm id (for tooltips)
+  const DB_CONTENT = new Map();
+  DB.sections.forEach(sec =>
+    sec.categories.forEach(cat =>
+      cat.paradigms.forEach(p => DB_CONTENT.set(p.id, p.content))
     )
   );
 
@@ -461,7 +473,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           const rowClass  = isActive ? "" : " inactive-row";
 
           html += `<tr class="${rowClass}">`;
-          html += `<td class="label" title="${escHtml(p.code)}">&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(p.title)}</td>`;
+          const tooltip = escHtml(p.code) + '&#10;&#10;'
+                        + escHtml(DB_CONTENT.get(p.id) || '').replace(/\\n/g, '&#10;');
+          html += `<td class="label" title="${tooltip}">&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(p.title)}</td>`;
 
           // [G] checkbox
           const gChecked  = isGlobal ? "checked" : "";
