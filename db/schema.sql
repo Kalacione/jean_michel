@@ -457,7 +457,11 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
 
 ((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='encyclopedic'),
  'wikipedia_search_strategy', 'Iterative search strategy',
- '- Start with the most specific search terms matching the question.
+ '- If the entity name is not in English, translate it to its English equivalent before
+  forming the search query (e.g. French "morse" → "walrus", "dauphin" → "dolphin",
+  "rhinocéros" → "rhinoceros"). Wikipedia defaults to the English edition — searching
+  with non-English terms returns irrelevant results.
+- Start with the most specific search terms matching the question.
 - From the search results, choose the most directly relevant article title.
 - Prefer dedicated articles (e.g. "Leaning Tower of Pisa") over broad ones (e.g. "Pisa").
 - If wikipedia_get_page returns a disambiguation error, pick the most relevant option from the list and retry.
