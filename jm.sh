@@ -42,6 +42,7 @@ Commands:
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
+  --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
   --admin [CMD ...]           Manage agents, tools, and paradigms (interactive REPL or one-shot)
@@ -174,6 +175,17 @@ cmd_browse_db() {
   exec sqlite_web "${DB_PATH}"
 }
 
+cmd_paradigm_matrix() {
+  ensure_venv
+  if [ ! -f "${DB_PATH}" ]; then
+    echo "Error: database not found at ${DB_PATH}" >&2
+    echo "Run ./jm.sh --install first." >&2
+    exit 1
+  fi
+  export JEANMICHEL_HOME="${PROJECT_ROOT}"
+  exec python "${PROJECT_ROOT}/debug/paradigm_matrix.py" "$@"
+}
+
 cmd_inspect_conv() {
   ensure_venv
   exec python "${PROJECT_ROOT}/debug/inspect_conv.py" "$@"
@@ -212,6 +224,10 @@ case "${COMMAND}" in
   --browse-db)
     shift
     cmd_browse_db "$@"
+    ;;
+  --paradigm-matrix)
+    shift
+    cmd_paradigm_matrix "$@"
     ;;
   --inspect-conv)
     shift
