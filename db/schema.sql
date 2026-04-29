@@ -284,6 +284,9 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
  'briefing_contract', 'Briefing contract',
  '- A delegate_to call must include: a clear mission, the expected outcome, and the relevant support_files paths.
 - Briefings between agents are written in English.
+- When translating entity names from the human''s language into the briefing, always include
+  the original term in parentheses: e.g. "walrus (morse)", "rhinoceros (rhinocéros)".
+  This allows downstream specialists to verify the translation.
 - Independent subtasks may be emitted as multiple delegate_to calls in the same turn.',
  NULL, 1, 10, 1, datetime('now'), datetime('now')),
 
