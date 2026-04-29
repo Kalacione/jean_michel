@@ -269,6 +269,16 @@ INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, 
 - Visualize the event chain and call stack before committing to a design.',
  NULL, 0, 10, 1, datetime('now'), datetime('now')),
 
+-- process / execution
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='execution'),
+ 'tool_error_retry', 'Retry on transient tool error',
+ '- If a tool call returns a technical error (network failure, empty response, JSON parse error),
+  retry the exact same call once before taking any other action.
+- Only escalate to ask_human if the retry also fails.
+- A transient tool error is not an ambiguity — do not treat it as one.',
+ 'Prevents unnecessary ask_human interruptions on recoverable API failures.',
+ 1, 20, 1, datetime('now'), datetime('now')),
+
 -- process / handoff
 ((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='handoff'),
  'briefing_contract', 'Briefing contract',
@@ -465,3 +475,71 @@ INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'wikipedia_search'   FROM agents WHERE code='wikipedia-specialist';
 INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'wikipedia_get_page' FROM agents WHERE code='wikipedia-specialist';
+
+-- comparator-specialist agent --------------------------------
+
+INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at) VALUES
+  ('comparator-specialist', 'Comparator Specialist', 'specialist',
+   'Given a comparative question and the entities to compare, gather factual data for each entity via parallel delegations to domain specialists, then synthesize a structured, evidence-based comparative verdict.',
+   1, 0.2, 1, datetime('now'), datetime('now'));
+
+-- comparison category + paradigms ----------------------------
+
+INSERT INTO categories (section_id, code, title, order_priority, active, created_at, modified_at) VALUES
+  ((SELECT id FROM sections WHERE code='process'),
+   'comparison', 'Comparison', 40, 1, datetime('now'), datetime('now'));
+
+INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='comparison'),
+ 'comparison_routing', 'Comparison routing',
+ '- When the human asks to compare, rank, or choose between two or more entities,
+  do not delegate to a domain specialist directly.
+- Delegate exclusively to `comparator-specialist`, passing the comparison question
+  and the list of entities to compare.
+- The comparator is solely responsible for sourcing the data.',
+ 'Prevents jean-michel from sending comparison tasks to domain specialists who lack the synthesis mandate.',
+ 0, 10, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='comparison'),
+ 'comparison_research_first', 'Research before comparing',
+ '- Before any comparative reasoning, emit one delegate_to per entity to the
+  appropriate domain specialist (e.g. wikipedia-specialist for encyclopedic
+  facts, weather-specialist for meteorological data).
+- These calls may be issued in the same turn — they run in parallel.
+- Do not attempt any comparative reasoning before all delegations have returned.',
+ 'Forces data collection before synthesis, prevents the step-budget loop.',
+ 0, 20, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='comparison'),
+ 'comparison_data_only', 'Comparison from gathered data only',
+ '- All factual claims in the verdict must come from the briefings returned by
+  the delegated specialists. Never use training knowledge about the entities.
+- If a delegation returned no usable data, state it explicitly — do not fill
+  the gap with inferred or approximate information.',
+ 'Prevents the LLM from mixing parametric memory with retrieved facts during synthesis.',
+ 0, 30, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='comparison'),
+ 'structured_verdict', 'Structured comparative verdict',
+ '- Structure the final answer as:
+  1. Summary of gathered data per entity.
+  2. Side-by-side analysis of each relevant criterion.
+  3. Explicit verdict with justification.
+- If data is insufficient for a definitive verdict, say so with the reason.',
+ 'Enforces a consistent, traceable output format for comparative answers.',
+ 0, 40, 1, datetime('now'), datetime('now'));
+
+-- comparator-specialist paradigm bindings --------------------
+
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'comparator-specialist'
+  AND p.code IN ('comparison_research_first', 'comparison_data_only', 'structured_verdict');
+
+-- jean-michel: bind comparison_routing -----------------------
+
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'jean-michel'
+  AND p.code IN ('comparison_routing');
