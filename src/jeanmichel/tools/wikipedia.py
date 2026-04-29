@@ -22,15 +22,20 @@ _MAX_SUMMARY_CHARS = 2_000    # summary ceiling
 # Internal wrappers (patched in tests)
 # ---------------------------------------------------------------------------
 
+_USER_AGENT = "jean-michel/1.0 (local AI assistant; https://github.com/local/jean-michel)"
+
+
 def _wiki_search(query: str, results: int = 5) -> list[str]:
     """Return a list of Wikipedia article titles matching *query*."""
     import wikipedia  # noqa: PLC0415
+    wikipedia.set_user_agent(_USER_AGENT)
     return wikipedia.search(query, results=results)
 
 
 def _wiki_get_page(title: str, language: str = "en") -> dict:
     """Fetch a Wikipedia page and return metadata + content (not yet truncated)."""
     import wikipedia  # noqa: PLC0415
+    wikipedia.set_user_agent(_USER_AGENT)
     wikipedia.set_lang(language)
     page = wikipedia.page(title, auto_suggest=False)
     return {
