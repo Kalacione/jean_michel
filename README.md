@@ -11,6 +11,14 @@ Une requête humaine arrive à **Jean-Michel** (agent routeur). Il la formalise,
 
 Quand plusieurs spécialistes contribuent, l'agent **synthesizer** fusionne les sorties en une réponse unique pour l'humain, dans la langue détectée.
 
+Agents actifs :
+- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement
+- **summarizer** (specialist) — résumé de texte
+- **weather-specialist** (specialist) — météo via open-meteo
+- **wikipedia-specialist** (specialist) — recherche et extraction d'articles Wikipedia
+- **comparator-specialist** (specialist) — orchestre des recherches parallèles sur plusieurs entités et produit un verdict comparatif structuré
+- **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
+
 L'**orchestrateur** (code Python pur, pas un LLM) construit les prompts à la volée, dépile les requêtes, gère les statuts et persiste tout sur disque.
 
 ## Principes
@@ -40,7 +48,7 @@ Détails et rationale dans `PROMPT_SKELETON.md`.
 
 Les agents communiquent par **tool calls natifs Gemma 4**, jamais par texte libre :
 
-- `delegate_to(agent_code, briefing, support_files, expected)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle = exécution parallèle (`asyncio.gather`) côté orchestrateur.
+- `delegate_to(agent_code, briefing, support_files, expected)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur.
 - `ask_human(question, why)` — pause la requête, demande à l'humain. `why` obligatoire. Une seule question par appel.
 - `return_to_user(answer)` — réponse finale.
 
@@ -84,13 +92,13 @@ Tri lexicographique = tri chronologique.
 ## Installation
 
 ```bash
-./install.sh    # crée le venv + initialise la BDD
-./start.sh      # lance le CLI en interactif
+./jm.sh --install   # crée le venv + initialise la BDD
+./jm.sh             # lance le CLI en interactif
 ```
 
-Override du Python : `PYTHON_BIN=/path/to/python3.14 ./install.sh`.
+Override du Python : `PYTHON_BIN=/path/to/python3.14 ./jm.sh --install`.
 
-Override du modèle Ollama : `JEANMICHEL_MODEL=gemma4:4b ./start.sh` ou `./start.sh --model gemma4:4b`.
+Override du modèle Ollama : `JEANMICHEL_MODEL=gemma4:4b ./jm.sh` ou `./jm.sh --model gemma4:4b`.
 
 ## Profil utilisateur
 
@@ -105,18 +113,20 @@ description = "L'humain auquel tu réponds est un mâle franco-canadien, la quar
 ```
 jeanmichel/
 ├── README.md
-├── install.sh                # setup venv + DB
-├── start.sh                  # lance le CLI
+├── jm.sh                     # point d'entrée unifié (CLI, --install, --export-db, --clean, --inspect-conv)
 ├── pyproject.toml
 ├── user_profile.toml         # description libre de l'humain (édité localement)
 ├── db/
 │   └── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed)
 ├── debug/
 │   ├── inspect_conv.py       # inspection des artefacts d'une conversation
-│   └── export_db.py          # dump SQL de la base de données
+│   ├── export_db.py          # dump SQL de la base de données
+│   ├── admin.py              # administration DB
+│   └── clean_convs.py        # purge des anciennes conversations
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
-│   └── GEMMA4.md             # référence des tokens et comportements Gemma 4
+│   ├── GEMMA4.md             # référence des tokens et comportements Gemma 4
+│   └── HOWTO_ADD_SPECIALIST_OR_TOOL.md  # notice d'implémentation pour agents IA
 ├── src/jeanmichel/
 │   ├── cli.py                # interface rich (multi-ligne Alt+Enter)
 │   ├── orchestrator.py       # boucle principale (générateur d'events)
@@ -126,12 +136,15 @@ jeanmichel/
 │   ├── tools/                # sous-package outils natifs Python
 │   │   ├── __init__.py       # build_registry(conv_folder) → dict[str, ToolSpec]
 │   │   ├── _base.py          # dataclass ToolSpec
-│   │   ├── clock.py          # outil clock (SPEC stateless)
-│   │   └── conv_read_file.py # outil lecture fichier (make_spec, sandboxé)
+│   │   ├── clock.py          # heure courante (stateless)
+│   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
+│   │   ├── weather.py        # météo via open-meteo (stateless)
+│   │   └── wikipedia.py      # recherche + lecture Wikipedia (stateless)
 │   ├── persistence.py        # écriture artefacts disque + frontmatter
 │   ├── models.py             # dataclasses
 │   └── config.py             # paths, constantes, user_profile loading
 ├── tests/
+│   ├── conftest.py
 │   ├── smoke.py              # smoke test du flow complet (MockClient)
 │   └── demo_cli.py           # démo visuelle du rendu CLI
 └── conversations/            # créé au runtime, un sous-dossier par conversation
@@ -139,4 +152,4 @@ jeanmichel/
 
 ## État
 
-MVP en construction. Premier slice ciblé : Jean-Michel délègue à `summarizer` pour résumer un texte fourni par l'humain.
+MVP fonctionnel. Agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, synthesizer. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page). API web non démarrée.
