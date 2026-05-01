@@ -7,21 +7,29 @@ from jeanmichel.prompts import tools_payload_for_agent
 from jeanmichel.tools.clock import SPEC as CLOCK_SPEC
 
 
-def test_control_tools_always_present():
-    payload = tools_payload_for_agent([], {})
+def test_control_tools_router_has_all_three():
+    payload = tools_payload_for_agent("router", [], {})
     names = {e["function"]["name"] for e in payload}
     assert {"return_to_user", "delegate_to", "ask_human"} <= names
 
 
+def test_control_tools_finalizer_has_only_return():
+    payload = tools_payload_for_agent("finalizer", [], {})
+    names = {e["function"]["name"] for e in payload}
+    assert "return_to_user" in names
+    assert "delegate_to" not in names
+    assert "ask_human" not in names
+
+
 def test_granted_tool_appears_in_payload():
     registry = {"clock": CLOCK_SPEC}
-    payload = tools_payload_for_agent(["clock"], registry)
+    payload = tools_payload_for_agent("router", ["clock"], registry)
     names = {e["function"]["name"] for e in payload}
     assert "clock" in names
 
 
 def test_unknown_grant_silently_skipped():
-    payload = tools_payload_for_agent(["ghost"], {})
+    payload = tools_payload_for_agent("router", ["ghost"], {})
     names = {e["function"]["name"] for e in payload}
     assert "ghost" not in names
 

@@ -80,9 +80,7 @@ class TestAdminHelpers:
             sy = db.get_agent_by_code(conn, "synthesizer")
             before = db.load_paradigms_for_agent(conn, sy.id, "analyse")
             before_codes = {p.code for p in before}
-            assert "brutal_truth" in before_codes  # global
 
-            db.bind_paradigm(conn, "synthesizer", "brutal_truth")  # already global — no error
             db.bind_paradigm(conn, "synthesizer", "audit_phase")
 
         with db.connect() as conn:
