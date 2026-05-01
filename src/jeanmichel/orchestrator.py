@@ -145,6 +145,7 @@ class Orchestrator:
         self.conv_folder: Path | None = None
         self.user_language: str = "und"
         self.turn_index: int = -1
+        self._last_response_artifact: str | None = None
 
     # ---- Public API ------------------------------------------------------
 
@@ -343,9 +344,17 @@ class Orchestrator:
                                 depth=depth + 1,
                                 sender=agent_code,
                             )
+                            child_artifact = self._last_response_artifact
                         except KeyError:
                             child_answer = f"[error] unknown agent: {child_code}"
-                        tool_responses.append(f"[delegate_to:{child_code}] {child_answer}")
+                            child_artifact = None
+                        artifact_note = (
+                            f"(artifact: {child_artifact}) "
+                            if child_artifact else ""
+                        )
+                        tool_responses.append(
+                            f"[delegate_to:{child_code}] {artifact_note}{child_answer}"
+                        )
                         continue
 
                     # ---- Native Python tools --------------------------------
@@ -455,7 +464,8 @@ class Orchestrator:
     # ---- Misc ------------------------------------------------------------
 
     def _record_response(self, req_id: str, agent_code: str, text: str) -> None:
-        self._write_artifact(req_id, agent_code, "response", text)
+        filename = self._write_artifact(req_id, agent_code, "response", text)
+        self._last_response_artifact = filename
 
     def _write_artifact(self, request_id: str, agent_code: str,
                         kind: str, body: str) -> str:

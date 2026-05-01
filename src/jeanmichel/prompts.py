@@ -45,7 +45,14 @@ CONTROL_TOOLS_SCHEMA: list[dict[str, Any]] = [
                     "support_files": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Paths relative to the conversation folder.",
+                        "description": (
+                            "Paths relative to the conversation folder that the "
+                            "receiving agent should read with conv_read_file. "
+                            "When forwarding a specialist's output to a finalizer, "
+                            "pass the specialist's response artifact filename here "
+                            "(shown as '(artifact: FILENAME)' in tool results) "
+                            "instead of copying the content into the briefing."
+                        ),
                     },
                     "expected": {"type": "string", "description": "Expected outcome shape."},
                 },
@@ -154,6 +161,10 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"One question only. `why` is mandatory.\n"
         f"- If task belongs to another specialist: call delegate_to(...). "
         f"Multiple parallel delegate_to calls allowed in the same turn.\n"
+        f"- When a delegate_to result shows '(artifact: FILENAME)', pass that "
+        f"FILENAME in support_files when forwarding to a finalizer. "
+        f"The finalizer calls conv_read_file(FILENAME) to read the content. "
+        f"Do NOT copy specialist output inline into the briefing.\n"
         f"- If task is yours and complete: call return_to_user(answer).\n"
         f"- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"
     )
