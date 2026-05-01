@@ -237,24 +237,8 @@ def main(argv: list[str] | None = None) -> int:
         key_bindings=kb,
     )
 
-    while True:
-        try:
-            user_input = session.prompt(
-                HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
-                multiline=True,
-                prompt_continuation=lambda width, line_number, wrap_count: " " * width,
-            )
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]bye.[/]")
-            return 0
-        if user_input.strip().lower() in {"exit", "quit"}:
-            console.print("[dim]bye.[/]")
-            return 0
-        if not user_input.strip():
-            continue
-
-        orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
-                            ask_human_callback=make_ask_human(console, session))
+    orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
+                        ask_human_callback=make_ask_human(console, session))
 
     while True:
         try:
