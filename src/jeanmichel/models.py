@@ -33,6 +33,7 @@ class Conversation:
     folder_path: str
     user_language: str | None
     title: str | None = None
+    mode: str = "analyse"
 
 
 @dataclass
@@ -46,6 +47,7 @@ class Request:
     inbound_briefing: str | None
     expected_outcome: str | None
     status: str = "pending"
+    turn_index: int = 0
 
 
 @dataclass

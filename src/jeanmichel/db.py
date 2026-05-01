@@ -60,8 +60,8 @@ def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
 
 # ---- Paradigms ------------------------------------------------------------
 
-def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int) -> list[Paradigm]:
-    """Globals + paradigms explicitly bound to this agent, ordered."""
+def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int, mode: str) -> list[Paradigm]:
+    """Globals + paradigms explicitly bound to this agent, filtered by mode, ordered."""
     rows = conn.execute(
         """
         SELECT s.code AS section_code, c.code AS category_code, c.title AS category_title,
@@ -72,9 +72,11 @@ def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int) -> list[Pa
         WHERE p.active = 1 AND c.active = 1 AND s.active = 1
           AND ( p.is_global = 1
                 OR p.id IN (SELECT paradigm_id FROM agent_paradigms WHERE agent_id = ?) )
+          AND ( NOT EXISTS (SELECT 1 FROM paradigm_modes pm WHERE pm.paradigm_id = p.id)
+                OR EXISTS  (SELECT 1 FROM paradigm_modes pm WHERE pm.paradigm_id = p.id AND pm.mode = ?) )
         ORDER BY s.order_priority, c.order_priority, p.order_priority, p.id
         """,
-        (agent_id,),
+        (agent_id, mode),
     ).fetchall()
     return [Paradigm(**dict(r)) for r in rows]
 
@@ -93,15 +95,16 @@ def load_tool_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
 # ---- Conversations --------------------------------------------------------
 
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,
-                        user_language: str | None, title: str | None = None) -> Conversation:
+                        user_language: str | None, mode: str = "analyse",
+                        title: str | None = None) -> Conversation:
     now = _now()
     conn.execute(
-        "INSERT INTO conversations (id, title, folder_path, user_language, status, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, 'active', ?, ?)",
-        (conv_id, title, folder_path, user_language, now, now),
+        "INSERT INTO conversations (id, title, folder_path, user_language, status, mode, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
+        (conv_id, title, folder_path, user_language, mode, now, now),
     )
     return Conversation(id=conv_id, folder_path=folder_path,
-                        user_language=user_language, title=title)
+                        user_language=user_language, title=title, mode=mode)
 
 
 # ---- Requests -------------------------------------------------------------
@@ -109,14 +112,15 @@ def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str
 def create_request(conn: sqlite3.Connection, *, req_id: str, conv_id: str,
                    parent_id: str | None, depth: int, agent_id: int,
                    inbound_briefing: str | None, expected_outcome: str | None,
-                   dispatch_group_id: str | None = None) -> Request:
+                   dispatch_group_id: str | None = None,
+                   turn_index: int = 0) -> Request:
     now = _now()
     conn.execute(
         "INSERT INTO requests (id, conversation_id, parent_request_id, dispatch_group_id, "
-        "depth, agent_id, inbound_briefing, expected_outcome, status, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+        "depth, agent_id, inbound_briefing, expected_outcome, turn_index, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
         (req_id, conv_id, parent_id, dispatch_group_id, depth, agent_id,
-         inbound_briefing, expected_outcome, now),
+         inbound_briefing, expected_outcome, turn_index, now),
     )
     return Request(id=req_id, conversation_id=conv_id, parent_request_id=parent_id,
                    dispatch_group_id=dispatch_group_id, depth=depth, agent_id=agent_id,

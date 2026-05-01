@@ -17,6 +17,7 @@ USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
 # ---- Runtime constants ----------------------------------------------------
 
 MAX_RECURSION_DEPTH = 5
+MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get("JEANMICHEL_MODEL", "gemma4:latest")
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 

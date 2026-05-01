@@ -12,7 +12,11 @@ class TestAgents:
         with db.connect() as conn:
             agents = db.list_active_agents(conn)
         codes = {a.code for a in agents}
-        assert codes == {"jean-michel", "summarizer", "synthesizer", "weather-specialist", "wikipedia-specialist"}
+        assert codes == {
+            "jean-michel", "summarizer", "synthesizer",
+            "weather-specialist", "wikipedia-specialist",
+            "comparator-specialist", "archivist",
+        }
 
     def test_get_agent_by_code(self, tmp_env):
         with db.connect() as conn:
@@ -74,7 +78,7 @@ class TestAdminHelpers:
     def test_bind_and_unbind_paradigm(self, tmp_env):
         with db.connect() as conn:
             sy = db.get_agent_by_code(conn, "synthesizer")
-            before = db.load_paradigms_for_agent(conn, sy.id)
+            before = db.load_paradigms_for_agent(conn, sy.id, "analyse")
             before_codes = {p.code for p in before}
             assert "brutal_truth" in before_codes  # global
 
@@ -83,13 +87,13 @@ class TestAdminHelpers:
 
         with db.connect() as conn:
             sy = db.get_agent_by_code(conn, "synthesizer")
-            after = {p.code for p in db.load_paradigms_for_agent(conn, sy.id)}
+            after = {p.code for p in db.load_paradigms_for_agent(conn, sy.id, "analyse")}
         assert "audit_phase" in after
 
         with db.connect() as conn:
             db.unbind_paradigm(conn, "synthesizer", "audit_phase")
             sy = db.get_agent_by_code(conn, "synthesizer")
-            final = {p.code for p in db.load_paradigms_for_agent(conn, sy.id)}
+            final = {p.code for p in db.load_paradigms_for_agent(conn, sy.id, "analyse")}
         assert "audit_phase" not in final
 
     def test_bind_unknown_paradigm_raises(self, tmp_env):
@@ -111,7 +115,7 @@ class TestAdminHelpers:
         with db.connect() as conn:
             sy = db.get_agent_by_code(conn, "synthesizer")
             db.bind_paradigm(conn, "synthesizer", "test_paradigm")
-            paradigms = db.load_paradigms_for_agent(conn, sy.id)
+            paradigms = db.load_paradigms_for_agent(conn, sy.id, "analyse")
         assert any(p.code == "test_paradigm" for p in paradigms)
 
     def test_create_paradigm_unknown_category_raises(self, tmp_env):

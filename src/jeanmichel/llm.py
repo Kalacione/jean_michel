@@ -37,6 +37,7 @@ class OllamaClient:
             "model": self.model,
             "messages": messages,
             "options": {"temperature": temperature},
+            "keep_alive": "30m",
             "stream": False,
         }
         if tools:

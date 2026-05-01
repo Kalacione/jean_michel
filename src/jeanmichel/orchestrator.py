@@ -100,6 +100,16 @@ class OrchestrationFailed:
     reason: str
 
 
+@dataclass
+class TurnStarted:
+    turn_index: int
+
+
+@dataclass
+class SummaryUpdated:
+    path: str
+
+
 # ---- Helpers --------------------------------------------------------------
 
 def _detect_language(text: str) -> str:
@@ -122,42 +132,54 @@ class Orchestrator:
     """
 
     def __init__(self, llm: LLMClient, profile: UserProfile,
+                 mode: str = "analyse",
                  conv_id: str | None = None,
                  ask_human_callback=None) -> None:
+        assert mode in config.MODES, f"Unknown mode: {mode!r}"
         ensure_dirs()
         self.llm = llm
         self.profile = profile
+        self.mode = mode
         self.conv_id = conv_id or _new_uuid()
         self.ask_human_callback = ask_human_callback
         self.conv_folder: Path | None = None
         self.user_language: str = "und"
+        self.turn_index: int = -1
 
     # ---- Public API ------------------------------------------------------
 
     def run(self, user_input: str) -> Generator[object]:
         """Process one user input. Yields events; the CLI consumes them."""
         self.user_language = _detect_language(user_input)
-        started = datetime.now(UTC)
-        folder_name = conversation_folder_name(self.conv_id, started)
-        self.conv_folder = config.CONVERSATIONS_DIR / folder_name
-        self.conv_folder.mkdir(parents=True, exist_ok=True)
 
-        with db.connect() as conn:
-            db.create_conversation(
-                conn, self.conv_id, str(self.conv_folder), self.user_language,
+        if self.conv_folder is None:
+            # First turn — create the conversation.
+            started = datetime.now(UTC)
+            folder_name = conversation_folder_name(self.conv_id, started)
+            self.conv_folder = config.CONVERSATIONS_DIR / folder_name
+            self.conv_folder.mkdir(parents=True, exist_ok=True)
+            with db.connect() as conn:
+                db.create_conversation(
+                    conn, self.conv_id, str(self.conv_folder),
+                    self.user_language, mode=self.mode,
+                )
+            self.turn_index = 0
+            yield ConversationStarted(
+                conversation_id=self.conv_id,
+                folder_path=str(self.conv_folder),
+                user_language=self.user_language,
             )
+        else:
+            # Subsequent turns.
+            self.turn_index += 1
+            yield TurnStarted(turn_index=self.turn_index)
 
-        append_to_journal(self.conv_folder, f"## User\n{user_input}\n")
-        yield ConversationStarted(
-            conversation_id=self.conv_id,
-            folder_path=str(self.conv_folder),
-            user_language=self.user_language,
-        )
+        enriched_input = self._prefix_summary(user_input)
+        append_to_journal(self.conv_folder, f"## User (turn {self.turn_index})\n{user_input}\n")
 
-        # Root request goes to jean-michel.
         answer = yield from self._run_request(
                 agent_code="jean-michel",
-                inbound_text=user_input,
+                inbound_text=enriched_input,
                 expected_outcome="Address the human request fully.",
                 support_files=[],
                 parent_request_id=None,
@@ -167,6 +189,9 @@ class Orchestrator:
 
         append_to_journal(self.conv_folder, f"## Jean-Michel\n{answer}\n")
         yield FinalAnswer(text=answer)
+
+        if self.mode in {"chat", "vocal"}:
+            yield from self._run_archivist(user_input, answer)
 
     # ---- Internal --------------------------------------------------------
 
@@ -183,7 +208,7 @@ class Orchestrator:
 
         with db.connect() as conn:
             agent = db.get_agent_by_code(conn, agent_code)
-            paradigms = db.load_paradigms_for_agent(conn, agent.id)
+            paradigms = db.load_paradigms_for_agent(conn, agent.id, self.mode)
             available_agents = db.list_active_agents(conn)
             tool_grants = db.load_tool_grants(conn, agent.id)
             req_id = _new_uuid()
@@ -196,6 +221,7 @@ class Orchestrator:
                 agent_id=agent.id,
                 inbound_briefing=inbound_text,
                 expected_outcome=expected_outcome,
+                turn_index=self.turn_index,
             )
             db.update_request_status(conn, req_id, "running")
 
@@ -222,6 +248,8 @@ class Orchestrator:
             request_id=req_id,
             parent_request_id=parent_request_id,
             depth=depth,
+            mode=self.mode,
+            turn_index=self.turn_index,
             sender=sender,
             expected_outcome=expected_outcome,
             support_files=support_files,
@@ -286,6 +314,11 @@ class Orchestrator:
                         continue
 
                     if call.name == "delegate_to":
+                        child_code = call.arguments.get("agent_code", "")
+                        if child_code == "archivist":
+                            msg = "REJECTED: archivist is an internal component and cannot be called via delegate_to."
+                            tool_responses.append(f"[delegate_to] {msg}")
+                            continue
                         if depth + 1 > MAX_RECURSION_DEPTH:
                             msg = (f"REJECTED: recursion depth {depth + 1} exceeds "
                                    f"limit {MAX_RECURSION_DEPTH}. You must conclude "
@@ -293,7 +326,6 @@ class Orchestrator:
                             yield RecursionLimitReached(agent_code=agent_code, depth=depth + 1)
                             tool_responses.append(f"[delegate_to] {msg}")
                             continue
-                        child_code = call.arguments.get("agent_code", "")
                         briefing = call.arguments.get("briefing", "")
                         expected = call.arguments.get("expected", "")
                         sup_files = call.arguments.get("support_files") or []
@@ -349,6 +381,55 @@ class Orchestrator:
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "failed", completed=True)
         return msg
+
+    # ---- Summary helpers ------------------------------------------------
+
+    def _prefix_summary(self, user_input: str) -> str:
+        if self.mode == "analyse" or self.turn_index == 0:
+            return user_input
+        assert self.conv_folder is not None
+        summary_path = self.conv_folder / "summary.md"
+        if not summary_path.exists():
+            return user_input
+        summary = summary_path.read_text(encoding="utf-8").strip()
+        return (
+            "## Conversation summary so far\n"
+            f"{summary}\n\n"
+            "## New user turn\n"
+            f"{user_input}"
+        )
+
+    def _run_archivist(self, last_user: str, last_answer: str) -> Generator[object, None, None]:
+        assert self.conv_folder is not None
+        summary_path = self.conv_folder / "summary.md"
+        previous_summary = ""
+        if summary_path.exists():
+            previous_summary = summary_path.read_text(encoding="utf-8")
+
+        briefing = (
+            "Update the running summary.\n\n"
+            f"## Previous summary\n{previous_summary or '(none)'}\n\n"
+            f"## Latest user turn\n{last_user}\n\n"
+            f"## Latest assistant answer\n{last_answer}\n\n"
+            "Produce the new summary as the value of return_to_user. "
+            "Follow the archivist_format paradigm strictly."
+        )
+
+        try:
+            new_summary = yield from self._run_request(
+                agent_code="archivist",
+                inbound_text=briefing,
+                expected_outcome="Updated running summary, structured per archivist_format.",
+                support_files=[],
+                parent_request_id=None,
+                depth=0,
+                sender="orchestrator",
+            )
+        except Exception:  # noqa: BLE001
+            return  # Keep previous summary on failure; do not block the user.
+
+        summary_path.write_text(new_summary, encoding="utf-8")
+        yield SummaryUpdated(path=str(summary_path))
 
     # ---- ask_human handling ---------------------------------------------
 

@@ -151,7 +151,7 @@ def _show_agents(db_path: Path) -> None:
         rows = []
         for a in agents:
             grants = db.load_tool_grants(conn, a.id)
-            paradigms = db.load_paradigms_for_agent(conn, a.id)
+            paradigms = db.load_paradigms_for_agent(conn, a.id, "analyse")
             rows.append((a, len(grants), len(paradigms)))
 
     t = Table(box=box.ROUNDED, header_style="bold cyan")
@@ -179,7 +179,7 @@ def _show_agent(db_path: Path, code: str) -> None:
             console.print(f"[red]{e}[/red]")
             return
         grants = db.load_tool_grants(conn, agent.id)
-        paradigms = db.load_paradigms_for_agent(conn, agent.id)
+        paradigms = db.load_paradigms_for_agent(conn, agent.id, "analyse")
         bound_rows = conn.execute(
             "SELECT p.code FROM paradigms p "
             "JOIN agent_paradigms ap ON ap.paradigm_id = p.id "

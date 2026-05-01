@@ -28,9 +28,11 @@ from .orchestrator import (
     OrchestrationFailed,
     Orchestrator,
     RecursionLimitReached,
+    SummaryUpdated,
     ThoughtCaptured,
     ToolCallEmitted,
     ToolResponseRecorded,
+    TurnStarted,
 )
 
 # ---- Style palette --------------------------------------------------------
@@ -55,9 +57,9 @@ SPLASH = r"""
 """
 
 
-def render_splash(console: Console, model: str) -> None:
+def render_splash(console: Console, model: str, mode: str = "analyse") -> None:
     console.print(Text(SPLASH, style="bold cyan"))
-    console.print(f"[dim]model: {model} • Enter=newline  Alt+Enter=send  Ctrl-D=quit[/]\n")
+    console.print(f"[dim]model: {model} · mode: {mode} • Enter=newline  Alt+Enter=send  Ctrl-D=quit[/]\n")
 
 
 # ---- Event renderer -------------------------------------------------------
@@ -126,6 +128,15 @@ def render_events(console: Console, events: Iterable[object],
         elif isinstance(ev, HumanAnswerReceived):
             console.print("  [dim]↳ human answered.[/]")
 
+        elif isinstance(ev, TurnStarted):
+            console.print(Rule(
+                Text(f"turn {ev.turn_index}", style="dim"),
+                style="dim",
+            ))
+
+        elif isinstance(ev, SummaryUpdated):
+            console.print("[dim]· summary updated[/]")
+
         elif isinstance(ev, RecursionLimitReached):
             console.print(
                 f"[{C_WARN}]⚠ recursion limit reached at depth {ev.depth} "
@@ -174,6 +185,18 @@ def make_ask_human(console: Console, session: PromptSession):
     return _ask
 
 
+# ---- Pre-warm -------------------------------------------------------------
+
+def _prewarm(llm: OllamaClient, model: str, console: Console) -> None:
+    console.print(f"[dim]warming up {model}\u2026[/]", end="")
+    try:
+        llm.chat(system="You are a warmup probe.", user="ok",
+                 tools=[], temperature=0.0, thinking=False)
+        console.print(" [dim]ready.[/]")
+    except Exception as e:  # noqa: BLE001
+        console.print(f" [yellow]warmup failed: {e}[/]")
+
+
 # ---- Main loop ------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
@@ -182,10 +205,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="Ollama model tag (default: %(default)s).")
     parser.add_argument("--show-thoughts", action="store_true",
                         help="Display the agent's thought channel.")
+    parser.add_argument("--mode", choices=["analyse", "chat", "vocal"], default="analyse",
+                        help="Conversation mode (default: analyse).")
     args = parser.parse_args(argv)
 
     console = Console()
-    render_splash(console, args.model)
+    render_splash(console, args.model, args.mode)
 
     profile = UserProfile.load()
     try:
@@ -193,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as e:
         console.print(f"[{C_WARN}]{e}[/]")
         return 2
+
+    if args.mode in {"chat", "vocal"}:
+        _prewarm(llm, args.model, console)
 
     kb = KeyBindings()
 
@@ -225,15 +253,34 @@ def main(argv: list[str] | None = None) -> int:
         if not user_input.strip():
             continue
 
-        orch = Orchestrator(llm=llm, profile=profile,
+        orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
                             ask_human_callback=make_ask_human(console, session))
+
+    while True:
+        try:
+            user_input = session.prompt(
+                HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
+                multiline=True,
+                prompt_continuation=lambda width, line_number, wrap_count: " " * width,
+            )
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]bye.[/]")
+            return 0
+        if user_input.strip().lower() in {"exit", "quit"}:
+            console.print("[dim]bye.[/]")
+            return 0
+        if not user_input.strip():
+            continue
+
         try:
             render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts)
         except Exception as e:  # noqa: BLE001
-            console.print(f"[{C_WARN}]✖ orchestration failed: {e}[/]")
+            console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
             return 1
-        console.print()
 
+        if args.mode == "analyse":
+            break  # single-shot in analyse mode
+        console.print()
 
 if __name__ == "__main__":
     sys.exit(main())

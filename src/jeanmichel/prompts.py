@@ -79,6 +79,8 @@ class PromptContext:
     request_id: str
     parent_request_id: str | None
     depth: int
+    mode: str
+    turn_index: int
     sender: str
     expected_outcome: str | None
     support_files: list[str]
@@ -130,6 +132,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"- request_id: {ctx.request_id}\n"
         f"- parent_request_id: {ctx.parent_request_id or 'none'}\n"
         f"- recursion_depth: {ctx.depth}/{MAX_RECURSION_DEPTH}\n"
+        f"- mode: {ctx.mode}\n"
+        f"- turn_index: {ctx.turn_index}\n"
         f"- conversation_folder: {ctx.conversation_folder}\n\n"
         f"## Machine\n"
         f"- os: {platform.system()} {platform.release()}\n"
