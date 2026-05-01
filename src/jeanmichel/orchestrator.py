@@ -7,6 +7,7 @@ orchestrator internals.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -14,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config, db
-from .config import MAX_RECURSION_DEPTH, UserProfile, ensure_dirs
+from .config import MAX_RECURSION_DEPTH, MAX_STEPS_PER_REQUEST, UserProfile, ensure_dirs
 from .llm import LLMClient
 from .models import LLMResponse
 from .persistence import (
@@ -127,8 +128,9 @@ def _new_uuid() -> str:
 # ---- Orchestrator ---------------------------------------------------------
 
 class Orchestrator:
-    """Owns one conversation. Use `run(user_input)` once; subsequent messages
-    create new requests inside the same conversation via `continue_with(...)`.
+    """Owns one conversation. The CLI invokes `run(user_input)` once per
+    human turn; the orchestrator persists state in DB + filesystem and yields
+    events as it progresses.
     """
 
     def __init__(self, llm: LLMClient, profile: UserProfile,
@@ -145,7 +147,6 @@ class Orchestrator:
         self.conv_folder: Path | None = None
         self.user_language: str = "und"
         self.turn_index: int = -1
-        self._last_response_artifact: str | None = None
         self._turn_exchanges: list[tuple[str, str]] = []
 
     # ---- Public API ------------------------------------------------------
@@ -180,15 +181,15 @@ class Orchestrator:
         enriched_input = self._prefix_summary(user_input)
         append_to_journal(self.conv_folder, f"## User (turn {self.turn_index})\n{user_input}\n")
 
-        answer = yield from self._run_request(
-                agent_code="jean-michel",
-                inbound_text=enriched_input,
-                expected_outcome="Address the human request fully.",
-                support_files=[],
-                parent_request_id=None,
-                depth=0,
-                sender="human",
-            )
+        answer, _artifact = yield from self._run_request(
+            agent_code="jean-michel",
+            inbound_text=enriched_input,
+            expected_outcome="Address the human request fully.",
+            support_files=[],
+            parent_request_id=None,
+            depth=0,
+            sender="human",
+        )
 
         append_to_journal(self.conv_folder, f"## Jean-Michel\n{answer}\n")
         yield FinalAnswer(text=answer)
@@ -201,11 +202,12 @@ class Orchestrator:
     def _run_request(self, *, agent_code: str, inbound_text: str,
                      expected_outcome: str, support_files: list[str],
                      parent_request_id: str | None, depth: int,
-                     sender: str) -> Generator[object, None, str]:
+                     sender: str) -> Generator[object, None, tuple[str, str | None]]:
         """Run a single agent request, recursively if it delegates.
 
-        Returns the agent's final string output (the value passed to
-        return_to_user).
+        Returns (answer, artifact_filename) — the answer text and the filename
+        of the response artifact written to disk (or None if no artifact was
+        produced).
         """
         assert self.conv_folder is not None
 
@@ -233,11 +235,8 @@ class Orchestrator:
         registry = build_registry(self.conv_folder)
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
-        # We rebuild the user message each turn (KISS, matches the Gemma 4
-        # multi-turn rule of stripping previous thoughts between turns).
         running_user_text = inbound_text
-        max_steps = 8  # safety net against tool-loops within a single request
-        seen_ask = False  # at most one ask_human per full request (across all steps)
+        seen_ask = False  # at most one ask_human across all steps of this request
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -262,12 +261,12 @@ class Orchestrator:
             available_agents=available_agents,
         )
         system = render_system_prompt(ctx)
-        tools_payload = tools_payload_for_agent(tool_grants, registry)
+        tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry)
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
 
         try:
-            for _step in range(max_steps):
+            for _step in range(MAX_STEPS_PER_REQUEST):
                 response: LLMResponse = self.llm.chat(
                     system=system,
                     user=running_user_text,
@@ -283,10 +282,10 @@ class Orchestrator:
                 # No tool calls: model produced free text. Treat as implicit return_to_user.
                 if not response.tool_calls:
                     final = response.content.strip() or "(empty response)"
-                    self._record_response(req_id, agent_code, final)
+                    artifact = self._write_artifact(req_id, agent_code, "response", final)
                     with db.connect() as conn:
                         db.update_request_status(conn, req_id, "completed", completed=True)
-                    return final
+                    return final, artifact
 
                 tool_responses: list[str] = []
                 for call in response.tool_calls:
@@ -298,35 +297,46 @@ class Orchestrator:
                     # ---- Control tools --------------------------------------
                     if call.name == "return_to_user":
                         answer = (call.arguments.get("answer") or "").strip()
-                        self._record_response(req_id, agent_code, answer)
+                        artifact = self._write_artifact(req_id, agent_code, "response", answer)
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
-                        return answer
+                        return answer, artifact
 
                     if call.name == "ask_human":
                         if seen_ask:
-                            msg = "REJECTED: only one ask_human is allowed per turn."
-                            tool_responses.append(f"[ask_human] {msg}")
+                            tool_responses.append(json.dumps({
+                                "tool": "ask_human",
+                                "error": "Only one ask_human is allowed per request.",
+                            }))
                             continue
                         seen_ask = True
                         answer = yield from self._handle_ask_human(
                             req_id, agent_code, call.arguments,
                         )
-                        tool_responses.append(f"[ask_human] human answer: {answer}")
+                        tool_responses.append(json.dumps({
+                            "tool": "ask_human",
+                            "human_answer": answer,
+                        }))
                         continue
 
                     if call.name == "delegate_to":
                         child_code = call.arguments.get("agent_code", "")
                         if child_code == "archivist":
-                            msg = "REJECTED: archivist is an internal component and cannot be called via delegate_to."
-                            tool_responses.append(f"[delegate_to] {msg}")
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": "archivist is an internal component and cannot be called via delegate_to.",
+                            }))
                             continue
                         if depth + 1 > MAX_RECURSION_DEPTH:
-                            msg = (f"REJECTED: recursion depth {depth + 1} exceeds "
-                                   f"limit {MAX_RECURSION_DEPTH}. You must conclude "
-                                   f"with the information at hand.")
                             yield RecursionLimitReached(agent_code=agent_code, depth=depth + 1)
-                            tool_responses.append(f"[delegate_to] {msg}")
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    f"Recursion depth {depth + 1} exceeds limit "
+                                    f"{MAX_RECURSION_DEPTH}. Conclude with the "
+                                    f"information at hand."
+                                ),
+                            }))
                             continue
                         briefing = call.arguments.get("briefing", "")
                         expected = call.arguments.get("expected", "")
@@ -336,7 +346,7 @@ class Orchestrator:
                         self._write_artifact(req_id, agent_code, "briefing",
                             f"to: {child_code}\nexpected: {expected}\n\n{briefing}")
                         try:
-                            child_answer = yield from self._run_request(
+                            child_answer, child_artifact = yield from self._run_request(
                                 agent_code=child_code,
                                 inbound_text=briefing,
                                 expected_outcome=expected,
@@ -345,39 +355,44 @@ class Orchestrator:
                                 depth=depth + 1,
                                 sender=agent_code,
                             )
-                            child_artifact = self._last_response_artifact
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "agent": child_code,
+                                "artifact": child_artifact,
+                                "answer": child_answer,
+                            }))
                         except KeyError:
-                            child_answer = f"[error] unknown agent: {child_code}"
-                            child_artifact = None
-                        artifact_note = (
-                            f"(artifact: {child_artifact}) "
-                            if child_artifact else ""
-                        )
-                        tool_responses.append(
-                            f"[delegate_to:{child_code}] {artifact_note}{child_answer}"
-                        )
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "agent": child_code,
+                                "error": f"unknown agent: {child_code}",
+                            }))
                         continue
 
                     # ---- Native Python tools --------------------------------
                     spec = registry.get(call.name)
                     if spec is None:
-                        tool_responses.append(f"[{call.name}] REJECTED: unknown tool.")
+                        tool_responses.append(json.dumps({
+                            "tool": call.name, "error": "unknown tool",
+                        }))
                         continue
                     try:
                         result = spec.handler(**call.arguments)
                     except TypeError as e:
-                        result = f'{{"error": "Bad arguments: {e}"}}'
+                        result = json.dumps({"error": f"Bad arguments: {e}"})
                     except Exception as e:  # noqa: BLE001
-                        result = f'{{"error": "Tool failed: {e}"}}'
+                        result = json.dumps({"error": f"Tool failed: {e}"})
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
                     self._write_artifact(req_id, agent_code, "tool_response",
                         f"**{call.name}**\n\n```\n{result}\n```")
-                    tool_responses.append(f"[{call.name}] {result}")
+                    tool_responses.append(result)
 
                 # Feed all tool responses back to the model on the next iteration.
                 running_user_text = (
-                    "[ORCHESTRATOR] Tool results below. Resume execution of your current task.\n\n"
+                    "[ORCHESTRATOR] Tool results below (one JSON object per "
+                    "tool call, in the order of your calls). Resume execution "
+                    "of your current task.\n\n"
                     + "\n".join(tool_responses)
                 )
 
@@ -387,10 +402,10 @@ class Orchestrator:
             raise
 
         msg = "[orchestrator] step budget exhausted within a single request."
-        self._record_response(req_id, agent_code, msg)
+        artifact = self._write_artifact(req_id, agent_code, "response", msg)
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "failed", completed=True)
-        return msg
+        return msg, artifact
 
     # ---- Summary helpers ------------------------------------------------
 
@@ -432,7 +447,7 @@ class Orchestrator:
         )
 
         try:
-            new_summary = yield from self._run_request(
+            new_summary, _artifact = yield from self._run_request(
                 agent_code="archivist",
                 inbound_text=briefing,
                 expected_outcome="Updated running summary, structured per archivist_format.",
@@ -444,7 +459,19 @@ class Orchestrator:
         except Exception:  # noqa: BLE001
             return  # Keep previous summary on failure; do not block the user.
 
+        # Persist the canonical summary.md and record it as a DB artifact.
         summary_path.write_text(new_summary, encoding="utf-8")
+        # We attach the summary.md artifact to the most recent request of this
+        # conversation (the archivist's request just above).
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM requests WHERE conversation_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (self.conv_id,),
+            ).fetchone()
+            if row is not None:
+                db.record_artifact(conn, row["id"], "summary.md", "summary")
+
         yield SummaryUpdated(path=str(summary_path))
 
     # ---- ask_human handling ---------------------------------------------
@@ -475,10 +502,6 @@ class Orchestrator:
         return answer
 
     # ---- Misc ------------------------------------------------------------
-
-    def _record_response(self, req_id: str, agent_code: str, text: str) -> None:
-        filename = self._write_artifact(req_id, agent_code, "response", text)
-        self._last_response_artifact = filename
 
     def _write_artifact(self, request_id: str, agent_code: str,
                         kind: str, body: str) -> str:

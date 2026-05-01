@@ -12,67 +12,88 @@ from .config import MAX_RECURSION_DEPTH, UserProfile
 from .models import Agent, Paradigm
 from .tools import ToolSpec
 
-# ---- Control tool declarations (always available to LLM agents) -----------
+# ---- Control tool declarations -------------------------------------------
+#
+# Each control tool declares which agent roles may use it. The orchestrator's
+# system prompt only exposes the relevant tools to each agent, so a finalizer
+# (synthesizer, archivist) does not see delegate_to / ask_human.
 
-CONTROL_TOOLS_SCHEMA: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "ask_human",
-            "description": "Pause the request and ask the human a single question. "
-                           "`why` is mandatory and must explain what is blocked without it.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string"},
-                    "why": {"type": "string"},
+_ASK_HUMAN: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "ask_human",
+        "description": (
+            "Pause the request and ask the human a single question. "
+            "`why` is mandatory and must explain what is blocked without it."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "why": {"type": "string"},
+            },
+            "required": ["question", "why"],
+        },
+    },
+}
+
+_DELEGATE_TO: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "delegate_to",
+        "description": (
+            "Delegate a subtask to another specialist agent. "
+            "Multiple delegate_to calls in the same turn run in parallel "
+            "(when the orchestrator supports it).\n"
+            "The tool result is a structured object: "
+            "{agent, artifact, answer, error?}. "
+            "Pass the `artifact` value as a support_file when forwarding the "
+            "specialist's output to a finalizer (the finalizer reads it via "
+            "conv_read_file). Do NOT copy the `answer` content into the "
+            "next briefing — pass the artifact path instead."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent_code": {"type": "string"},
+                "briefing": {"type": "string", "description": "Mission text in English."},
+                "support_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Filenames (relative to the conversation folder) the "
+                        "receiving agent should read with conv_read_file."
+                    ),
                 },
-                "required": ["question", "why"],
+                "expected": {"type": "string", "description": "Expected outcome shape."},
             },
+            "required": ["agent_code", "briefing", "expected"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "delegate_to",
-            "description": "Delegate a subtask to another specialist agent. "
-                           "Multiple delegate_to calls in the same turn run in parallel.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "agent_code": {"type": "string"},
-                    "briefing": {"type": "string", "description": "Mission text in English."},
-                    "support_files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Paths relative to the conversation folder that the "
-                            "receiving agent should read with conv_read_file. "
-                            "When forwarding a specialist's output to a finalizer, "
-                            "pass the specialist's response artifact filename here "
-                            "(shown as '(artifact: FILENAME)' in tool results) "
-                            "instead of copying the content into the briefing."
-                        ),
-                    },
-                    "expected": {"type": "string", "description": "Expected outcome shape."},
-                },
-                "required": ["agent_code", "briefing", "expected"],
-            },
+}
+
+_RETURN_TO_USER: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "return_to_user",
+        "description": "Deliver the final answer to the human. Use the human's detected language.",
+        "parameters": {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "return_to_user",
-            "description": "Deliver the final answer to the human. Use the human's detected language.",
-            "parameters": {
-                "type": "object",
-                "properties": {"answer": {"type": "string"}},
-                "required": ["answer"],
-            },
-        },
-    },
-]
+}
+
+# Per-role grants for control tools.
+# - router: full set
+# - specialist: full set (may delegate further, may need clarification)
+# - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
+_CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
+    "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
+    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
+    "finalizer":  [_RETURN_TO_USER],
+}
 
 
 @dataclass
@@ -109,6 +130,32 @@ def render_directives(paradigms: list[Paradigm]) -> str:
     return "\n".join(out).strip()
 
 
+def _render_output_contract(role: str) -> str:
+    """The OUTPUT CONTRACT block adapts to the agent's role."""
+    if role == "finalizer":
+        return (
+            "# OUTPUT CONTRACT\n"
+            "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
+            "- Produce the deliverable and return it via return_to_user(answer).\n"
+            "- You do not delegate, you do not call ask_human. Work with the inputs provided.\n"
+            "- Inter-agent text: English. Human-facing output: see ## Human detected language.\n"
+        )
+    # router or specialist
+    return (
+        "# OUTPUT CONTRACT\n"
+        "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
+        "- If you must clarify with the user: call ask_human(question, why). "
+        "One question only. `why` is mandatory.\n"
+        "- If task belongs to another specialist: call delegate_to(...). "
+        "Multiple parallel delegate_to calls allowed in the same turn.\n"
+        "- A delegate_to result is a structured object {agent, artifact, answer}. "
+        "When forwarding to a finalizer, pass the `artifact` filename in support_files. "
+        "Do NOT copy specialist `answer` content inline into the next briefing.\n"
+        "- If task is yours and complete: call return_to_user(answer).\n"
+        "- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"
+    )
+
+
 def render_system_prompt(ctx: PromptContext) -> str:
     """Render the consolidated system block."""
     a = ctx.agent
@@ -118,6 +165,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
     specialists = [
         ag for ag in ctx.available_agents
         if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
+        and ag.code != "archivist"  # archivist is orchestrator-only, never user-callable
     ]
     agents_block = (
         "\n".join(f"- {ag.code}: {ag.mission}" for ag in specialists)
@@ -155,25 +203,15 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"{agents_block}\n\n"
         f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"
-        f"# OUTPUT CONTRACT\n"
-        f"- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
-        f"- If you must clarify with the user: call ask_human(question, why). "
-        f"One question only. `why` is mandatory.\n"
-        f"- If task belongs to another specialist: call delegate_to(...). "
-        f"Multiple parallel delegate_to calls allowed in the same turn.\n"
-        f"- When a delegate_to result shows '(artifact: FILENAME)', pass that "
-        f"FILENAME in support_files when forwarding to a finalizer. "
-        f"The finalizer calls conv_read_file(FILENAME) to read the content. "
-        f"Do NOT copy specialist output inline into the briefing.\n"
-        f"- If task is yours and complete: call return_to_user(answer).\n"
-        f"- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"
+        f"{_render_output_contract(a.role)}"
     )
 
 
-def tools_payload_for_agent(tool_grants: list[str],
+def tools_payload_for_agent(agent_role: str,
+                            tool_grants: list[str],
                             registry: dict[str, ToolSpec]) -> list[dict[str, Any]]:
-    """Build the tools payload (control tools + agent-granted native tools)."""
-    payload = list(CONTROL_TOOLS_SCHEMA)
+    """Build the tools payload (control tools filtered by role + native tools)."""
+    payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
     for tool_name in tool_grants:
         spec = registry.get(tool_name)
         if spec is None:

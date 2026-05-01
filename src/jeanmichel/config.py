@@ -16,7 +16,13 @@ USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
 
 # ---- Runtime constants ----------------------------------------------------
 
+# Hard cap on delegation chain depth. Enforced by the orchestrator.
 MAX_RECURSION_DEPTH = 5
+
+# Hard cap on tool-call iterations within a single agent request. Prevents
+# tool-loop runaway when an agent gets stuck (e.g. retrying a failing tool).
+MAX_STEPS_PER_REQUEST = 8
+
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get("JEANMICHEL_MODEL", "gemma4:latest")
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
