@@ -146,12 +146,14 @@ class Orchestrator:
         self.user_language: str = "und"
         self.turn_index: int = -1
         self._last_response_artifact: str | None = None
+        self._turn_exchanges: list[tuple[str, str]] = []
 
     # ---- Public API ------------------------------------------------------
 
     def run(self, user_input: str) -> Generator[object]:
         """Process one user input. Yields events; the CLI consumes them."""
         self.user_language = _detect_language(user_input)
+        self._turn_exchanges = []
 
         if self.conv_folder is None:
             # First turn — create the conversation.
@@ -235,6 +237,7 @@ class Orchestrator:
         # multi-turn rule of stripping previous thoughts between turns).
         running_user_text = inbound_text
         max_steps = 8  # safety net against tool-loops within a single request
+        seen_ask = False  # at most one ask_human per full request (across all steps)
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -285,8 +288,6 @@ class Orchestrator:
                         db.update_request_status(conn, req_id, "completed", completed=True)
                     return final
 
-                # Enforce: at most one ask_human per turn.
-                seen_ask = False
                 tool_responses: list[str] = []
                 for call in response.tool_calls:
                     yield ToolCallEmitted(agent_code=agent_code, tool_name=call.name,
@@ -415,10 +416,16 @@ class Orchestrator:
         if summary_path.exists():
             previous_summary = summary_path.read_text(encoding="utf-8")
 
+        exchanges_block = ""
+        if self._turn_exchanges:
+            exchanges_block = (
+                "\n\n## Clarifications exchanged during this turn\n"
+                + "\n".join(f"- Q: {q}\n  A: {a}" for q, a in self._turn_exchanges)
+            )
         briefing = (
             "Update the running summary.\n\n"
             f"## Previous summary\n{previous_summary or '(none)'}\n\n"
-            f"## Latest user turn\n{last_user}\n\n"
+            f"## Latest user turn\n{last_user}{exchanges_block}\n\n"
             f"## Latest assistant answer\n{last_answer}\n\n"
             "Produce the new summary as the value of return_to_user. "
             "Follow the archivist_format paradigm strictly."
@@ -458,6 +465,12 @@ class Orchestrator:
         self._write_artifact(req_id, agent_code, "human_answer", answer)
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "running")
+        self._turn_exchanges.append((question, answer))
+        assert self.conv_folder is not None
+        append_to_journal(
+            self.conv_folder,
+            f"## Clarification (agent: {agent_code})\n**Q:** {question}\n**A:** {answer}\n",
+        )
         yield HumanAnswerReceived(answer=answer)
         return answer
 
