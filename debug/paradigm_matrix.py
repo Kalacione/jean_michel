@@ -46,6 +46,11 @@ def _build_initial_data(db_path: Path) -> dict:
         for row in conn.execute("SELECT agent_id, paradigm_id FROM agent_paradigms").fetchall():
             bindings.setdefault(row["paradigm_id"], []).append(row["agent_id"])
 
+        # Mode restrictions: {paradigm_id: [mode, ...]}
+        mode_restrictions: dict[int, list[str]] = {}
+        for row in conn.execute("SELECT paradigm_id, mode FROM paradigm_modes").fetchall():
+            mode_restrictions.setdefault(row["paradigm_id"], []).append(row["mode"])
+
         # sections → categories → paradigms
         sections_raw = conn.execute(
             "SELECT id, code, title FROM sections WHERE active=1 ORDER BY order_priority, id"
@@ -76,6 +81,7 @@ def _build_initial_data(db_path: Path) -> dict:
                         "order_priority": p["order_priority"],
                         "category_id": p["category_id"],
                         "bound_agent_ids": bindings.get(p["id"], []),
+                        "mode_restrictions": mode_restrictions.get(p["id"], []),
                     }
                     for p in paradigms_raw
                 ]
@@ -165,6 +171,15 @@ def _apply(db_path: Path, payload: dict) -> None:
                 (int(agent_id), int(paradigm_id)),
             )
 
+        # 6. Mode restrictions (atomic replace)
+        for paradigm_id, modes in payload.get("modes_updates", []):
+            conn.execute("DELETE FROM paradigm_modes WHERE paradigm_id=?", (int(paradigm_id),))
+            for mode in modes:
+                conn.execute(
+                    "INSERT OR IGNORE INTO paradigm_modes (paradigm_id, mode) VALUES (?,?)",
+                    (int(paradigm_id), mode),
+                )
+
         conn.commit()
 
 
@@ -249,6 +264,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     input[type=checkbox] { cursor: pointer; width: 1rem; height: 1rem; }
     input[type=checkbox]:disabled { cursor: default; opacity: 0.5; }
+    th.mode-col { font-size: 0.75em; letter-spacing: 0.03em; }
+    td.mode-sep, th.mode-sep { border-left: 2px solid var(--border, #ccc); }
 
     .toolbar { display: flex; align-items: center; gap: 0.75rem;
                margin: 1.5rem 0 1rem; flex-wrap: wrap; }
@@ -325,6 +342,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     bindings_remove: new Set(),   // "agentId:paradigmId"
     global_updates:  new Map(),   // paradigmId (number) → 0|1
     active_updates:  new Map(),   // paradigmId (number) → 0|1
+    modes_updates:   new Map(),   // paradigmId (number) → Set<string> (new desired modes)
     new_paradigms:   [],
   };
 
@@ -358,11 +376,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     )
   );
 
+  // Quick lookup: mode_restrictions per paradigm id
+  const DB_MODES = new Map();
+  DB.sections.forEach(sec =>
+    sec.categories.forEach(cat =>
+      cat.paradigms.forEach(p => DB_MODES.set(p.id, p.mode_restrictions || []))
+    )
+  );
+
   function hasPending() {
     return pending.bindings_add.size > 0
         || pending.bindings_remove.size > 0
         || pending.global_updates.size > 0
         || pending.active_updates.size > 0
+        || pending.modes_updates.size > 0
         || pending.new_paradigms.length > 0;
   }
 
@@ -375,6 +402,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     pending.bindings_remove.clear();
     pending.global_updates.clear();
     pending.active_updates.clear();
+    pending.modes_updates.clear();
     pending.new_paradigms = [];
     document.getElementById("status-msg").textContent = "";
     document.getElementById("status-msg").className = "";
@@ -429,6 +457,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     updateApplyButton();
   }
 
+  function effectiveModes(paradigmId) {
+    if (pending.modes_updates.has(paradigmId)) {
+      return pending.modes_updates.get(paradigmId);
+    }
+    return new Set(DB_MODES.get(paradigmId) || []);
+  }
+
+  function onModeToggle(paradigmId, mode, checked) {
+    const current = effectiveModes(paradigmId);
+    const newSet = new Set(current);
+    if (checked) newSet.add(mode);
+    else newSet.delete(mode);
+    const dbSet = new Set(DB_MODES.get(paradigmId) || []);
+    const equal = newSet.size === dbSet.size && [...newSet].every(m => dbSet.has(m));
+    if (equal) pending.modes_updates.delete(paradigmId);
+    else pending.modes_updates.set(paradigmId, newSet);
+    updateApplyButton();
+  }
+
   function onActiveToggle(paradigmId, checked) {
     const wasInDb = DB_ACTIVE.get(paradigmId) === 1;
     if (checked !== wasInDb) {
@@ -450,21 +497,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     // Build combined sections structure with pending new appended
     const sections = DB.sections;
 
+    const MODES_LIST = ['analyse', 'chat', 'vocal'];
+    const MODES_SHORT = { analyse: 'An', chat: 'Ch', vocal: 'Vo' };
+
     let html = '<table><thead><tr>';
     html += '<th style="text-align:left">Paradigme</th>';
-    html += '<th title="Global — appliqué à tous les agents">G</th>';
+    html += '<th title="Global \u2014 appliqu\u00e9 \u00e0 tous les agents">G</th>';
     html += '<th title="Actif">On</th>';
+    MODES_LIST.forEach((m, i) => {
+      const cls = i === 0 ? 'mode-col mode-sep' : 'mode-col';
+      html += `<th class="${cls}" title="Restreindre au mode ${m}">${MODES_SHORT[m]}</th>`;
+    });
     agents.forEach(a => {
       html += `<th title="${escHtml(a.code)}">${escHtml(a.name)}</th>`;
     });
     html += '</tr></thead><tbody>';
 
     sections.forEach(sec => {
-      html += `<tr class="section-row"><td class="label" colspan="${3 + agents.length}">`
+      html += `<tr class="section-row"><td class="label" colspan="${3 + MODES_LIST.length + agents.length}">`
             + `&#9654; ${escHtml(sec.title.toUpperCase())}</td></tr>`;
 
       sec.categories.forEach(cat => {
-        html += `<tr class="category-row"><td class="label" colspan="${3 + agents.length}">`
+        html += `<tr class="category-row"><td class="label" colspan="${3 + MODES_LIST.length + agents.length}">`
               + `&nbsp;&nbsp;&#8212; ${escHtml(cat.title)}</td></tr>`;
 
         cat.paradigms.forEach(p => {
@@ -489,6 +543,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                + `onchange="onActiveToggle(${p.id}, this.checked)" `
                + `title="Actif / inactif"></td>`;
 
+          // Mode restriction checkboxes (unchecked all = all modes)
+          const activeModes = effectiveModes(p.id);
+          MODES_LIST.forEach((m, i) => {
+            const cls = i === 0 ? ' class="mode-sep"' : '';
+            const chk = activeModes.has(m) ? 'checked' : '';
+            html += `<td${cls}><input type="checkbox" ${chk} `
+                 + `onchange="onModeToggle(${p.id}, '${m}', this.checked)" `
+                 + `title="Restreindre au mode ${m}"></td>`;
+          });
+
           // Per-agent checkboxes
           agents.forEach(a => {
             if (isGlobal) {
@@ -508,15 +572,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     // Pending new paradigms
     if (pending.new_paradigms.length > 0) {
-      html += `<tr class="section-row"><td class="label" colspan="${3 + agents.length}">`
+      html += `<tr class="section-row"><td class="label" colspan="${3 + MODES_LIST.length + agents.length}">`
             + `&#9654; EN ATTENTE D'AJOUT</td></tr>`;
       pending.new_paradigms.forEach((p, idx) => {
         html += `<tr class="new-row">`;
         html += `<td class="label">&nbsp;&nbsp;&nbsp;&nbsp;${escHtml(p.title)}`
               + `<span class="badge-new">nouveau</span></td>`;
         const gChecked = p.is_global ? "checked" : "";
-        html += `<td><input type="checkbox" ${gChecked} disabled title="Défini à la création"></td>`;
+        html += `<td><input type="checkbox" ${gChecked} disabled title="D\u00e9fini \u00e0 la cr\u00e9ation"></td>`;
         html += `<td><input type="checkbox" checked disabled title="Sera actif"></td>`;
+        MODES_LIST.forEach((m, i) => {
+          const cls = i === 0 ? ' class="mode-sep"' : '';
+          html += `<td${cls}><input type="checkbox" disabled title="Configurable apr\u00e8s validation"></td>`;
+        });
         agents.forEach(() => {
           html += p.is_global
             ? `<td><input type="checkbox" checked disabled title="Via global"></td>`
@@ -603,6 +671,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       bindings_remove: [...pending.bindings_remove].map(k => k.split(":").map(Number)),
       global_updates:  [...pending.global_updates.entries()],
       active_updates:  [...pending.active_updates.entries()],
+      modes_updates:   [...pending.modes_updates.entries()].map(([id, set]) => [id, [...set]]),
       new_paradigms:   pending.new_paradigms,
     };
 
