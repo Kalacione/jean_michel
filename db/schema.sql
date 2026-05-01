@@ -76,6 +76,12 @@ CREATE TABLE agent_tools (
 );
 CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
 
+CREATE TABLE paradigm_modes (
+  paradigm_id INTEGER NOT NULL REFERENCES paradigms(id) ON DELETE CASCADE,
+  mode        TEXT    NOT NULL CHECK (mode IN ('analyse','chat','vocal')),
+  PRIMARY KEY (paradigm_id, mode)
+);
+
 -- =============================================================
 -- RUNTIME
 -- =============================================================
@@ -86,6 +92,8 @@ CREATE TABLE conversations (
   folder_path    TEXT NOT NULL,
   user_language  TEXT,                        -- detected via langdetect
   status         TEXT NOT NULL DEFAULT 'active',
+  mode           TEXT NOT NULL DEFAULT 'analyse'
+                 CHECK (mode IN ('analyse','chat','vocal')),
   created_at     TEXT NOT NULL,
   modified_at    TEXT NOT NULL
 );
@@ -99,6 +107,7 @@ CREATE TABLE requests (
   agent_id           INTEGER NOT NULL REFERENCES agents(id),
   inbound_briefing   TEXT,
   expected_outcome   TEXT,
+  turn_index         INTEGER NOT NULL DEFAULT 0,  -- top-level turn counter (0 = first root request)
   status             TEXT NOT NULL DEFAULT 'pending'
                      CHECK (status IN ('pending','running','awaiting_human',
                                        'completed','failed','cancelled')),
@@ -550,3 +559,108 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id)
 SELECT a.id, p.id FROM agents a, paradigms p
 WHERE a.code = 'jean-michel'
   AND p.code IN ('comparison_routing');
+
+-- =============================================================
+-- ARCHIVIST agent
+-- =============================================================
+
+INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at) VALUES
+  ('archivist', 'Archivist', 'finalizer',
+   'Maintain a structured running summary of the conversation. Resolve contradictions, surface evolving threads, in a direct factual tone. Called exclusively by the orchestrator after each user turn in chat/vocal modes.',
+   1, 0.1, 1, datetime('now'), datetime('now'));
+
+-- archival category + paradigms for archivist ----------------
+
+INSERT INTO categories (section_id, code, title, order_priority, active, created_at, modified_at) VALUES
+  ((SELECT id FROM sections WHERE code='process'),
+   'archival', 'Archival', 70, 1, datetime('now'), datetime('now'));
+
+INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='archival'),
+ 'archivist_format', 'Archivist summary format',
+ '- Structure the summary under exactly four headings:
+  ## Established facts
+  ## Open threads
+  ## Resolved contradictions
+  ## User preferences observed
+- Each heading must be present even if empty (write "(none)" in that case).
+- Use bullet points under each heading. No prose, no transitions.',
+ 'Enforces a stable, parseable format for the running summary.', 0, 10, 1, datetime('now'), datetime('now')),
+
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='process' AND c.code='archival'),
+ 'archivist_tone', 'Archivist tone',
+ '- Direct, factual, no narration, no transitions.
+- No introductory or concluding sentences.
+- Compressed bullet points — enough to reconstruct context, nothing more.
+- Keep the full summary under 1500 words.',
+ 'Prevents verbose prose that would bloat the summary injected into future turns.', 0, 20, 1, datetime('now'), datetime('now'));
+
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'archivist'
+  AND p.code IN ('archivist_format', 'archivist_tone');
+
+-- =============================================================
+-- MODE-SPECIFIC paradigms
+-- =============================================================
+
+INSERT INTO paradigms (category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+
+-- communication / style — chat mode only
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='communication' AND c.code='style'),
+ 'followup_proposals', 'Follow-up proposals',
+ '- After delivering the answer, propose 2 to 3 specific angles the user might want to explore further.
+- Format them as a short list, no preamble.
+- If the answer is fully self-contained and no useful angle remains, do not force proposals.',
+ NULL, 0, 30, 1, datetime('now'), datetime('now')),
+
+-- communication / style — vocal mode only
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='communication' AND c.code='style'),
+ 'concise_output', 'Concise output',
+ '- Keep the user-facing answer under 4 short sentences.
+- Headline first, details on demand.
+- Offer to expand specific points: "Want me to detail X?".',
+ NULL, 0, 40, 1, datetime('now'), datetime('now')),
+
+-- communication / style — chat + vocal
+((SELECT c.id FROM categories c JOIN sections s ON s.id=c.section_id WHERE s.code='communication' AND c.code='style'),
+ 'no_context_recap', 'No context recap',
+ '- A running summary is provided. Do not paraphrase or repeat what the user already knows.
+- Address the new turn directly.',
+ NULL, 0, 50, 1, datetime('now'), datetime('now'));
+
+-- Mode-specific paradigm bindings ----------------------------
+
+-- followup_proposals → jean-michel, chat only
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'jean-michel' AND p.code = 'followup_proposals';
+
+-- concise_output → jean-michel + all specialists, vocal only
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code IN ('jean-michel','summarizer','synthesizer',
+                 'weather-specialist','wikipedia-specialist','comparator-specialist')
+  AND p.code = 'concise_output';
+
+-- no_context_recap → jean-michel, chat + vocal
+INSERT INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id FROM agents a, paradigms p
+WHERE a.code = 'jean-michel' AND p.code = 'no_context_recap';
+
+-- paradigm_modes entries (absence = all modes) ---------------
+
+-- followup_proposals: chat only
+INSERT INTO paradigm_modes (paradigm_id, mode)
+SELECT id, 'chat' FROM paradigms WHERE code = 'followup_proposals';
+
+-- concise_output: vocal only
+INSERT INTO paradigm_modes (paradigm_id, mode)
+SELECT id, 'vocal' FROM paradigms WHERE code = 'concise_output';
+
+-- no_context_recap: chat + vocal
+INSERT INTO paradigm_modes (paradigm_id, mode)
+SELECT id, 'chat' FROM paradigms WHERE code = 'no_context_recap';
+INSERT INTO paradigm_modes (paradigm_id, mode)
+SELECT id, 'vocal' FROM paradigms WHERE code = 'no_context_recap';
