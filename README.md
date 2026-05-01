@@ -38,6 +38,12 @@ Sections actuelles : `communication`, `reasoning`, `process`, `code`, `safety`.
 
 Voir `schema.sql` pour les seeds.
 
+**Nota** : en plus des paradigmes en BDD, une partie des règles de comportement est hardcodée directement dans `prompts.py` :
+- La description des outils de contrôle (`delegate_to`, `ask_human`, `return_to_user`) dans `CONTROL_TOOLS_SCHEMA` — notamment les instructions sur l'utilisation de `support_files` et `conv_read_file`.
+- Le bloc `# OUTPUT CONTRACT` injecté en fin de chaque prompt système — qui précise les conditions d'appel de chaque outil de contrôle.
+
+Ces deux zones sont intentionnellement hors BDD car elles définissent le protocole structurel du système (quelles fonctions appeler et dans quelles conditions), pas le comportement métier ou le style. Toute modification de ce protocole nécessite une intervention dans `prompts.py`.
+
 ## Squelette de prompt
 
 Bloc unique `system` consolidé, contenant identité, contexte, directives, déclarations d'outils et contrat de sortie. Le mode pensée (`<|think|>`) est activé par défaut, désactivé pour les agents triviaux.
