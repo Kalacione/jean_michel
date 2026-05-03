@@ -96,12 +96,18 @@ class TestDelegation:
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "Résumé: Hello."}),
             ]),
+            # archivist post-turn
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={
+                    "answer": "## Established facts\n- Hello.\n## Open threads\n(none)\n## Resolved contradictions\n(none)\n## User preferences observed\n(none)",
+                }),
+            ]),
         ], tmp_env)
         events = list(orch.run("résume hello world"))
         agents_started = [e for e in events if isinstance(e, AgentStarted)]
-        assert len(agents_started) == 2
-        assert agents_started[0].agent_code == "jean-michel"
-        assert agents_started[1].agent_code == "summarizer"
+        codes = [e.agent_code for e in agents_started]
+        assert "jean-michel" in codes
+        assert "summarizer" in codes
         fa = next(e for e in events if isinstance(e, FinalAnswer))
         assert "Résumé" in fa.text
 
@@ -138,14 +144,25 @@ class TestModes:
             ).fetchone()
         assert row["mode"] == "analyse"
 
-    def test_analyse_mode_no_summary_file(self, tmp_env):
+    def test_analyse_mode_creates_summary_after_first_turn(self, tmp_env):
         orch = _orch([
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "ok"}),
             ]),
+            # archivist post-turn
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={
+                    "answer": (
+                        "## Established facts\n- ok\n"
+                        "## Open threads\n(none)\n"
+                        "## Resolved contradictions\n(none)\n"
+                        "## User preferences observed\n(none)"
+                    ),
+                }),
+            ]),
         ], tmp_env, mode="analyse")
         list(orch.run("hello"))
-        assert not (orch.conv_folder / "summary.md").exists()
+        assert (orch.conv_folder / "summary.md").exists()
 
     def test_chat_mode_two_turns_produces_summary(self, tmp_env):
         # First turn: jean-michel answers, archivist writes summary
@@ -247,13 +264,20 @@ class TestConversationLifecycle:
 
     def test_analyse_multi_turn_same_folder(self, tmp_env):
         """In analyse mode, two run() calls must use the same conversation folder."""
+        _archivist = LLMResponse(thinking="", content="", tool_calls=[
+            ToolCall(name="return_to_user", arguments={
+                "answer": "## Established facts\n(none)\n## Open threads\n(none)\n## Resolved contradictions\n(none)\n## User preferences observed\n(none)",
+            }),
+        ])
         script = [
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "first"}),
             ]),
+            _archivist,
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "second"}),
             ]),
+            _archivist,
         ]
         orch = _orch(script, tmp_env, mode="analyse")
         orch.bootstrap_conversation()
@@ -264,13 +288,20 @@ class TestConversationLifecycle:
 
     def test_analyse_multi_turn_turn_index_increments(self, tmp_env):
         """Turn index must increment on subsequent turns in analyse mode."""
+        _archivist = LLMResponse(thinking="", content="", tool_calls=[
+            ToolCall(name="return_to_user", arguments={
+                "answer": "## Established facts\n(none)\n## Open threads\n(none)\n## Resolved contradictions\n(none)\n## User preferences observed\n(none)",
+            }),
+        ])
         script = [
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "a"}),
             ]),
+            _archivist,
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "b"}),
             ]),
+            _archivist,
         ]
         orch = _orch(script, tmp_env, mode="analyse")
         orch.bootstrap_conversation()

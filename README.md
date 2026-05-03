@@ -29,7 +29,7 @@ L'**orchestrateur** (code Python pur, pas un LLM) construit les prompts à la vo
 
 Le mode est choisi au démarrage via `--mode {analyse,chat,vocal}` (default `analyse`). Il est fixé pour toute la durée de la conversation.
 
-- **`analyse`** — la CLI reste ouverte entre les questions (même dossier de conversation, pas de summary entre tours, pas d'archivist). Mode par défaut.
+- **`analyse`** — la CLI reste ouverte entre les questions (même dossier, summary maintenu entre tours, pas d'archivist narratif ni de follow-ups). Mode par défaut.
 - **`chat`** — conversation continue. Après chaque réponse, la CLI redonne la main à l'humain. L'archivist met à jour `summary.md` après chaque tour, qui est ré-injecté en préfixe du tour suivant. Jean-Michel propose 2-3 axes de creusage en fin de réponse.
 - **`vocal`** — dérivé de `chat` mais avec réponses concises (< 4 phrases courtes), prêt pour synthèse vocale future. Certains paradigmes incompatibles avec la concision (steelman, hold_tension, depth_over_speed, etc.) sont automatiquement filtrés.
 
@@ -161,7 +161,7 @@ Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dan
 ./jm.sh --build-docker  # (optionnel) builde l'image sandbox Docker
 ```
 
-En mode `analyse`, pas de summary injecté entre les tours (contrairement à `chat`/`vocal`).
+En mode `analyse`, le summary est maintenu (archivist actif) mais les follow-ups narratifs et la concision vocale ne s'appliquent pas.
 
 À l'EOF (Ctrl-D) ou `exit`/`quit`, la conversation passe `status='closed'` en BDD. `--resume` ne reprend que les conversations `active` ou `awaiting_human`.
 

@@ -252,7 +252,7 @@ class Orchestrator:
         append_to_journal(self.conv_folder, f"## Jean-Michel\n{answer}\n")
         yield FinalAnswer(text=answer)
 
-        if self.mode in {"chat", "vocal"}:
+        if self.mode in {"chat", "vocal", "analyse"}:
             yield from self._run_archivist(user_input, answer)
 
     # ---- Internal --------------------------------------------------------
@@ -482,7 +482,7 @@ class Orchestrator:
     # ---- Summary helpers ------------------------------------------------
 
     def _prefix_summary(self, user_input: str) -> str:
-        if self.mode == "analyse" or self.turn_index == 0:
+        if self.turn_index == 0:
             return user_input
         assert self.conv_folder is not None
         summary_path = self.conv_folder / "summary.md"
