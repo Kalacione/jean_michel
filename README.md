@@ -18,6 +18,8 @@ Agents actifs :
 - **wikipedia-specialist** (specialist) — recherche et extraction d'articles Wikipedia
 - **comparator-specialist** (specialist) — orchestre des recherches en plusieurs entités et produit un verdict comparatif structuré
 - **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une analyse structurée sans verdict
+- **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace de la conversation
+- **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
 - **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
 - **archivist** (finalizer) — invoqué uniquement par l'orchestrateur en modes `chat`/`vocal`, met à jour le `summary.md` de la conversation après chaque tour
 
@@ -107,12 +109,25 @@ Chaque fichier porte un frontmatter YAML minimal (`conversation_id`, `request_id
 
 Tri lexicographique = tri chronologique.
 
+## Workspace agents
+
+Les agents `document-builder` et `workspace-manager` peuvent manipuler des fichiers dans un sous-dossier `workspace/` de leur conversation. Ce dossier est sandboxé : impossible d'écrire dans les artefacts root ni d'en sortir par path traversal.
+
+Outils disponibles : `workspace_create_file`, `workspace_str_replace`, `workspace_view`, `workspace_list`.
+
+L'accès est opt-in par agent via deux grants BDD :
+- `agent_tools` — liste les outils accordés
+- `agent_workspace_grants` — active l'écriture (sans cette ligne, l'agent est read-only)
+
+Quota : 256 Mo par workspace. Les fichiers workspace ne sont **pas** tracés dans la table `artifacts` — le filesystem est l'inventaire.
+
 ## Stack
 
 - Python 3.14 dans un venv local.
 - SQLite (source de vérité, `jeanmichel.db`).
 - Ollama 0.21+ (thinking natif depuis 0.9).
 - CLI dynamique (`rich`, `prompt_toolkit`).
+- Docker (optionnel, pour la sandbox d'exécution de code).
 - API web prévue ultérieurement (FastAPI).
 
 ## Installation
@@ -177,10 +192,15 @@ jeanmichel/
 │   ├── tools/                # sous-package outils natifs Python
 │   │   ├── __init__.py       # build_registry(conv_folder) → dict[str, ToolSpec]
 │   │   ├── _base.py          # dataclass ToolSpec
+│   │   ├── _workspace.py     # primitives partagées (path validation, quota)
 │   │   ├── clock.py          # heure courante (stateless)
 │   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
 │   │   ├── weather.py        # météo via open-meteo (stateless)
-│   │   └── wikipedia.py      # recherche + lecture Wikipedia (stateless)
+│   │   ├── wikipedia.py      # recherche + lecture Wikipedia (stateless)
+│   │   ├── workspace_create_file.py  # création fichier dans workspace (context-bound)
+│   │   ├── workspace_str_replace.py  # édition atomique (context-bound)
+│   │   ├── workspace_view.py         # lecture fichier/dossier (context-bound)
+│   │   └── workspace_list.py         # arbre workspace 2 niveaux (context-bound)
 │   ├── persistence.py        # écriture artefacts disque + frontmatter
 │   ├── models.py             # dataclasses
 │   └── config.py             # paths, constantes, user_profile loading
@@ -193,4 +213,4 @@ jeanmichel/
 
 ## État
 
-MVP fonctionnel. 8 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page). API web non démarrée.
+10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list). Sandbox Docker : non démarrée (phase 2). API web : non démarrée.
