@@ -132,19 +132,14 @@ Cela s'applique au comparator-specialist (lié au paradigme 14) et à jean-miche
 
 **Cause :** Table `agent_tools` : le synthesizer (id=3) n'a aucune ligne. Il reçoit des `support_files` mais ne peut pas les lire. Il "simule" la lecture en pensée → hallucination garantie.
 
-**Correctif — schema.sql et migration :**
+**Correctif — `schema.sql` directement (on repartira de zéro en BDD) :**
 
 ```sql
--- À ajouter dans les seeds agent_tools
+-- Dans les seeds agent_tools, ajouter :
 INSERT INTO agent_tools (agent_id, tool_code) VALUES (3, 'conv_read_file');
 ```
 
-Et dans `db/migrate_NNN_synthesizer_conv_read_file.sql` :
-
-```sql
-INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
-SELECT a.id, 'conv_read_file' FROM agents a WHERE a.code = 'synthesizer';
-```
+Pas de migration — modifier `schema.sql` et réinitialiser la BDD (`rm jeanmichel.db && sqlite3 jeanmichel.db < db/schema.sql`).
 
 **Vérification secondaire :** document-builder a déjà `conv_read_file` ✓. Le comparator-specialist n'a aucun outil non-contrôle — il n'a pas besoin de `conv_read_file` car il passe les artifacts en `support_files` aux agents suivants sans lire lui-même. C'est correct.
 
@@ -160,22 +155,27 @@ Deux mécanismes complémentaires :
 
 **a) Déduplication des tool_calls identiques (anti-boucle) :**
 
-```python
-_seen_calls: set[str] = set()
+On enregistre uniquement les appels ayant produit un résultat **non-erreur**. Un appel qui a échoué (erreur réseau, page introuvable) peut être légitimement retenté ; un appel qui a réussi ne doit jamais être répété à l'identique.
 
-# Dans la boucle, avant d'exécuter un outil :
+```python
+_successful_calls: set[str] = set()  # appels ayant produit un résultat utilisable
+
+# Après exécution d'un outil natif, avant d'ajouter à tool_responses :
 call_fingerprint = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
-if call_fingerprint in _seen_calls:
+if call_fingerprint in _successful_calls:
     tool_responses.append(json.dumps({
         "tool": call.name,
         "error": (
-            "Duplicate call detected. You already called this tool with identical "
-            "arguments. The result will not change. Use the previous result or "
-            "reformulate your query."
+            "Duplicate call detected. This exact call already produced a result earlier "
+            "in this request. Re-running it will not change the output. "
+            "Use the previous result or reformulate your query with different arguments."
         ),
     }))
     continue
-_seen_calls.add(call_fingerprint)
+
+# result = spec.handler(...) — exécution normale
+if not (isinstance(result, str) and '"error"' in result):
+    _successful_calls.add(call_fingerprint)  # enregistrer seulement si succès
 ```
 
 **b) Escalade orchestrateur si step budget épuisé ET au moins un `ask_human` a eu lieu :**
@@ -243,7 +243,7 @@ Et dans la description de l'outil `delegate_to` (dans prompts.py, `_DELEGATE_TO`
 }
 ```
 
-#### Problème 2 — Le wikipedia-specialist est explicitement instruit de "répondre en français" dans son prompt système
+#### Problème 2 — La directive "detected language" ne distingue pas le travail interne de la sortie humaine
 
 La ligne dans `render_system_prompt()` :
 
@@ -252,32 +252,27 @@ f"Detected language — use for ALL human-facing output "
 f"(return_to_user answer, ask_human question and why): {ctx.detected_language}\n\n"
 ```
 
-La directive dit "ALL human-facing output". Pour un spécialiste intermédiaire, sa `return_to_user` va au parent (comparator ou orchestrateur), pas à l'humain. Pourtant il interprète cette directive comme "rédige en français" ce qui inclut ses requêtes Wikipedia.
+La directive est correcte dans son intention mais insuffisamment précise. Elle dit "human-facing output" mais ne précise pas explicitement que **tout le reste** (raisonnement, requêtes d'outils, briefings émis vers d'autres agents) doit rester en anglais. Le LLM, voyant la langue détectée en haut du prompt, l'applique trop largement — y compris à ses requêtes Wikipedia.
 
-**Correctif — prompts.py, `render_system_prompt()` :**
+**⚠️ À ne PAS modifier :** La directive de langue détectée reste intacte et s'applique à tous les agents à toutes les profondeurs. Elle est nécessaire pour que les spécialistes puissent poser leurs `ask_human` dans la langue de l'humain, quel que soit leur niveau de récursion.
 
-Différencier selon le `sender` :
+**Correctif — `prompts.py`, `render_system_prompt()` :**
+
+Ajouter une ligne **immédiatement après** la directive de langue détectée pour expliciter la règle de travail interne :
 
 ```python
-if ctx.sender == "human" or ctx.depth == 0:
-    lang_note = (
-        f"Detected language — use for ALL output "
-        f"(return_to_user, ask_human): {ctx.detected_language}"
-    )
-else:
-    lang_note = (
-        f"Human language: {ctx.detected_language}. "
-        f"Your return_to_user and ask_human must use this language. "
-        f"All internal reasoning, tool queries, and briefings: English only."
-    )
+f"Detected language — use for ALL human-facing output "
+f"(return_to_user answer, ask_human question and why): {ctx.detected_language}\n"
+f"Working language for everything else (reasoning, tool queries, "
+f"briefings to other agents): English only.\n\n"
 ```
 
-Ou plus directement, ajouter un paragraphe dédié au bloc `## Human` pour les agents à depth > 0 :
-
-```
-Working language: English (reasoning, tool queries, briefings to other agents).
-Human-facing output only (return_to_user, ask_human): fr
-```
+Le contrat devient explicite :
+- `ask_human` → langue humaine détectée ✓
+- `return_to_user` → langue humaine détectée ✓  
+- Raisonnement interne (thinking) → anglais
+- Requêtes d'outils (`wikipedia_search`, etc.) → anglais
+- Briefings `delegate_to` → anglais (déjà dans l'OUTPUT CONTRACT, maintenant répété ici au plus près de la directive)
 
 #### Problème 3 — `wikipedia_search_strategy` (paradigme 26) dit de traduire en anglais, mais la directive "detected language" la contredit
 
@@ -305,13 +300,13 @@ Ajouter en tête de son contenu :
 
 | Composant | Changement |
 |---|---|
-| orchestrator.py | Retour structuré `{status, partial_clarifications}` au lieu de string brute en cas de step budget exhausted |
-| orchestrator.py | Step budget compte uniquement les appels LLM — `ask_human` hors compteur |
-| orchestrator.py | `_seen_calls: set[str]` — déduplication des tool calls identiques avec erreur explicite |
-| orchestrator.py + prompts.py | `PromptContext.turn_clarifications` → bloc `## Prior clarifications` dans le prompt système |
-| prompts.py | Directive langue différenciée `depth==0` vs `depth>0` : "internal reasoning in English" explicité |
-| prompts.py — `_DELEGATE_TO` description | Ajouter "Do NOT include language instructions in briefings" |
-| schema.sql — paradigme `briefing_contract` (id=14) | Interdire les directives de langue dans les briefings + propager `partial_clarifications` en cas de re-délégation |
-| schema.sql — paradigme `wikipedia_search_strategy` (id=26) | "All queries MUST be in English, this takes precedence over any language directive" |
-| schema.sql — `agent_tools` | `INSERT (synthesizer_id, 'conv_read_file')` |
-| `db/migrate_NNN.sql` | Migration idempotente pour le grant synthesizer |
+| `orchestrator.py` | Retour structuré `{status, partial_clarifications}` au lieu de string brute en cas de step budget exhausted |
+| `orchestrator.py` | Step budget compte uniquement les appels LLM — `ask_human` hors compteur |
+| `orchestrator.py` | `_successful_calls: set[str]` — déduplication des tool calls ayant déjà produit un résultat non-erreur |
+| `orchestrator.py` + `prompts.py` | `PromptContext.turn_clarifications` → bloc `## Prior clarifications` dans le prompt système |
+| `prompts.py` | Ajouter ligne "Working language for everything else: English only" immédiatement après la directive de langue détectée (la directive de langue elle-même reste inchangée) |
+| `prompts.py` — `_DELEGATE_TO` description | Ajouter "Do NOT include language instructions in briefings" |
+| `schema.sql` — paradigme `briefing_contract` (id=14) | Interdire les directives de langue dans les briefings + propager `partial_clarifications` en cas de re-délégation |
+| `schema.sql` — paradigme `wikipedia_search_strategy` (id=26) | Ajouter en tête : "All queries MUST be in English, this takes precedence over any language directive" |
+| `schema.sql` — seeds `agent_tools` | `INSERT INTO agent_tools VALUES (3, 'conv_read_file')` — synthesizer |
+| `schema.sql` + `rm jeanmichel.db` | Pas de migration — reconstruire la BDD depuis le schéma modifié |
