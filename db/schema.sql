@@ -93,6 +93,23 @@ CREATE TABLE agent_tools (
 );
 CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
 
+-- Grants for workspace write access. Presence of a row = the agent may
+-- create/edit files in its conversation's workspace/ folder. Read-only
+-- agents (no row here) can still call workspace_view and workspace_list.
+CREATE TABLE agent_workspace_grants (
+  agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  PRIMARY KEY (agent_id)
+);
+
+-- Grants for sandbox commands per agent. Each row authorizes a specific
+-- binary (e.g. 'python3', 'jq', 'cat') for an agent. The bash_sandbox tool
+-- checks this list before exec'ing. Absence of a row = command refused.
+CREATE TABLE agent_sandbox_grants (
+  agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  command        TEXT NOT NULL,
+  PRIMARY KEY (agent_id, command)
+);
+
 -- =============================================================
 -- DDL — RUNTIME
 -- =============================================================
@@ -143,6 +160,25 @@ CREATE TABLE artifacts (
 );
 
 CREATE INDEX idx_artifacts_request ON artifacts(request_id);
+
+-- Structured audit trail for sandbox command executions. Complements the
+-- tool_response artifact (which captures the same info in the conversational
+-- flow) by allowing queryable analysis a posteriori: "what commands did
+-- agent X run in conversation Y", performance metrics, security audit, etc.
+-- The bash_sandbox tool inserts one row per execution attempt (including
+-- refused ones — refused commands have exit_code IS NULL).
+CREATE TABLE sandbox_executions (
+  id             INTEGER PRIMARY KEY,
+  request_id     TEXT NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+  command        TEXT NOT NULL,
+  exit_code      INTEGER,                       -- NULL if refused before exec
+  duration_ms    INTEGER,
+  stdout_path    TEXT,                          -- relative to workspace, optional
+  stderr_path    TEXT,                          -- relative to workspace, optional
+  created_at     TEXT NOT NULL
+);
+
+CREATE INDEX idx_sandbox_exec_request ON sandbox_executions(request_id);
 
 -- =============================================================
 -- SEEDS — SECTIONS
