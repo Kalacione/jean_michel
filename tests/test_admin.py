@@ -92,7 +92,7 @@ class TestAdminListings:
 
     def test_paradigms_shows_active_status(self, tmp_env, monkeypatch):
         out = self._capture(monkeypatch, tmp_env / "jeanmichel.db", "paradigms")
-        assert "✓" in out  # at least one active paradigm
+        assert "communication.precision" in out  # at least one active paradigm with section.category
 
     def test_paradigms_with_agent_shows_global_marker(self, tmp_env, monkeypatch):
         out = self._capture(monkeypatch, tmp_env / "jeanmichel.db", "paradigms", "jean-michel")

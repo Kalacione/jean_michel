@@ -8,7 +8,7 @@ from jeanmichel import db
 
 
 class TestAgents:
-    def test_list_active_agents_returns_five(self, tmp_env):
+    def test_list_active_agents_returns_all(self, tmp_env):
         with db.connect() as conn:
             agents = db.list_active_agents(conn)
         codes = {a.code for a in agents}
@@ -16,6 +16,7 @@ class TestAgents:
             "jean-michel", "summarizer", "synthesizer",
             "weather-specialist", "wikipedia-specialist",
             "comparator-specialist", "archivist",
+            "critical-thinker", "document-builder", "workspace-manager",
         }
 
     def test_get_agent_by_code(self, tmp_env):
