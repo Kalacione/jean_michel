@@ -358,9 +358,13 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
   agent handles output language automatically from its own system prompt. Including language
   instructions in briefings contaminates inter-agent tool queries (e.g. causes Wikipedia
   searches in the wrong language).
-- When translating entity names from the human''s language into the briefing, always include
-  the original term in parentheses: e.g. "walrus (morse)", "rhinoceros (rhinocéros)".
-  This allows downstream specialists to verify the translation.
+- ALL non-English terms MUST be translated to English in the briefing. This applies to
+  common nouns (clothing, animals, food, concepts, objects) without exception.
+  Only proper nouns (person names, place names, brand names) and specialized technical
+  terms with no standard English equivalent may be left in the original language.
+  In all cases, include the original term in parentheses alongside the translation:
+  e.g. "boxer shorts (caleçon)", "briefs (slip)", "walrus (morse)", "rhinoceros (rhinocéros)".
+  This allows downstream specialists to search and verify in the correct language.
 - Independent subtasks may be emitted as multiple delegate_to calls in the same turn.
 - If a delegation returns {"status": "step_budget_exhausted", "partial_clarifications": "..."},
   do NOT re-delegate with the exact same briefing. Incorporate the partial_clarifications
