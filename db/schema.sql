@@ -168,8 +168,11 @@ INSERT INTO categories (id, section_id, code, title, order_priority, active, cre
   ( 4, 1, 'restrictions',   'Restrictions',   40, 1, datetime('now'), datetime('now')),
   -- reasoning
   ( 5, 2, 'sources',        'Sources',        10, 1, datetime('now'), datetime('now')),
-  ( 6, 2, 'analysis',       'Analysis',       20, 1, datetime('now'), datetime('now')),
-  ( 7, 2, 'bias_detection', 'Bias detection', 30, 1, datetime('now'), datetime('now')),
+  -- analysis and bias_detection are kept for historical referential integrity
+  -- but have no active paradigms after migration 004 — their content moved to
+  -- the critical_thinking section. Marked active=0.
+  ( 6, 2, 'analysis',       'Analysis',       20, 0, datetime('now'), datetime('now')),
+  ( 7, 2, 'bias_detection', 'Bias detection', 30, 0, datetime('now'), datetime('now')),
   -- process (generic)
   ( 8, 3, 'audit',          'Audit',          10, 1, datetime('now'), datetime('now')),
   ( 9, 3, 'sprint',         'Sprint',         20, 1, datetime('now'), datetime('now')),
@@ -263,24 +266,12 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  NULL,
  1, 10, 1, datetime('now'), datetime('now'));
 
--- reasoning / analysis
-INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
-( 8,  6, 'depth_over_speed', 'Depth over speed',
- '- Full structural analysis before any decision.
-- Always look for causes, consequences, and side effects.
-- Depth over speed.
-- Acknowledge limits openly.',
- 'Encourages thoroughness. Inappropriate for tool-driven specialists and the archivist (which must be terse). Restricted to analyse+chat — vocal needs concision.',
- 0, 10, 1, datetime('now'), datetime('now'));
+-- reasoning / analysis : empty after migration 004 — depth_over_speed moved
+-- to critical_thinking/thinking_discipline. The category itself is kept
+-- inactive for referential integrity.
 
--- reasoning / bias_detection
-INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
-( 9,  7, 'spot_traps', 'Spot logical traps',
- '- Actively hunt for logical traps, false certainties, and cognitive biases in your own reasoning.
-- Flag confirmation bias, anchoring, and motivated reasoning when detected.
-- Prefer "I do not know" over a confident wrong answer.',
- NULL,
- 1, 10, 1, datetime('now'), datetime('now'));
+-- reasoning / bias_detection : empty after migration 004 — spot_traps moved
+-- to critical_thinking/bias_hygiene. The category itself is kept inactive.
 
 -- process / audit
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
@@ -477,10 +468,10 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
 (31, 22, 'archivist_format', 'Archivist summary format',
  '- Structure the summary under exactly four headings:
-  ## Established facts
-  ## Open threads
-  ## Resolved contradictions
-  ## User preferences observed
+  `## Established facts`
+  `## Open threads`
+  `## Resolved contradictions`
+  `## User preferences observed`
 - Each heading must be present even if empty (write "(none)" in that case).
 - Use bullet points under each heading. No prose, no transitions.',
  'Enforces a stable, parseable format for the running summary.',
@@ -521,7 +512,7 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 (36, 10, 'parse_briefing_first', 'Parse the briefing first',
  '- Read and interpret the inbound briefing in full before any tool call.
 - Identify: the concrete deliverable, the entity or topic, the time window if any, the language to reply in.
-- If a critical parameter is missing AND cannot be inferred from the ## Human context, escalate via ask_human; otherwise proceed.',
+- If a critical parameter is missing AND cannot be inferred from the `## Human context`, escalate via ask_human; otherwise proceed.',
  'Forces tool-driven specialists to ground their first action in the briefing, replacing audit_phase which was code-tier.',
  0, 5, 1, datetime('now'), datetime('now'));
 
@@ -558,6 +549,13 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 
 -- critical_thinking / bias_hygiene
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+( 9, 24, 'spot_traps', 'Spot logical traps',
+ '- Actively hunt for logical traps, false certainties, and cognitive biases in your own reasoning.
+- Flag confirmation bias, anchoring, and motivated reasoning when detected.
+- Prefer "I do not know" over a confident wrong answer.',
+ 'Umbrella bias-detection paradigm. Sits ahead of the specific bias antidotes that follow.',
+ 1, 5, 1, datetime('now'), datetime('now')),
+
 (41, 24, 'confirmation_bias_check', 'Confirmation bias check',
  '- Before concluding, deliberately seek evidence that would contradict your current position.
 - If your reasoning only collected supporting evidence, your reasoning is incomplete.
@@ -693,6 +691,14 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  'Antidote to incantatory thinking. Forces shortcut expansion into explicit reasoning.',
  1, 20, 1, datetime('now'), datetime('now')),
 
+( 8, 28, 'depth_over_speed', 'Depth over speed',
+ '- Full structural analysis before any decision.
+- Always look for causes, consequences, and side effects.
+- Depth over speed.
+- Acknowledge limits openly.',
+ 'Encourages thoroughness. Inappropriate for tool-driven specialists and the archivist (which must be terse). Restricted to analyse+chat — vocal needs concision.',
+ 0, 25, 1, datetime('now'), datetime('now')),
+
 (59, 28, 'slow_question_slow_answer', 'Slow question, slow answer',
  '- Match the depth of your answer to the depth of the question.
 - A complex question deserves a structured, evidence-based answer — not a fast confident one.
@@ -718,13 +724,13 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
 (62, 22, 'critical_thinker_format', 'Critical-thinker output format',
  '- Structure the critical analysis under exactly four headings:
-  ## Claims identified
+  `## Claims identified`
     Each main claim, stated in the strongest possible form (steelman).
-  ## Assumptions surfaced
+  `## Assumptions surfaced`
     Unstated premises the claims rest on.
-  ## Biases and shortcuts detected
+  `## Biases and shortcuts detected`
     Cognitive biases, manipulation patterns, framing effects observed.
-  ## Evidence quality
+  `## Evidence quality`
     What is verifiable, what is not, what would be needed to verify.
 - No verdict, no recommendation. The analysis ends with the observation, not with a position.
 - If the claim cannot be examined (insufficient information), say so under "Evidence quality".',
