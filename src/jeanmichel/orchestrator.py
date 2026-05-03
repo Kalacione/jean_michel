@@ -216,6 +216,7 @@ class Orchestrator:
             paradigms = db.load_paradigms_for_agent(conn, agent.id, self.mode)
             available_agents = db.list_active_agents(conn)
             tool_grants = db.load_tool_grants(conn, agent.id)
+            has_workspace_write = db.has_workspace_grant(conn, agent.id)
             req_id = _new_uuid()
             db.create_request(
                 conn,
@@ -232,7 +233,7 @@ class Orchestrator:
 
         yield AgentStarted(agent_code=agent_code, request_id=req_id, depth=depth)
 
-        registry = build_registry(self.conv_folder)
+        registry = build_registry(self.conv_folder, has_workspace_write=has_workspace_write)
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
         running_user_text = inbound_text

@@ -92,6 +92,24 @@ def load_tool_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
     return [r[0] for r in rows]
 
 
+def has_workspace_grant(conn: sqlite3.Connection, agent_id: int) -> bool:
+    """Return True if the agent has write access to the workspace."""
+    row = conn.execute(
+        "SELECT 1 FROM agent_workspace_grants WHERE agent_id = ?",
+        (agent_id,),
+    ).fetchone()
+    return row is not None
+
+
+def load_sandbox_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
+    """Return the list of sandbox commands granted to this agent."""
+    rows = conn.execute(
+        "SELECT command FROM agent_sandbox_grants WHERE agent_id = ? ORDER BY command",
+        (agent_id,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 # ---- Conversations --------------------------------------------------------
 
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,

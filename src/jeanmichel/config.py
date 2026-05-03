@@ -23,6 +23,9 @@ MAX_RECURSION_DEPTH = 5
 # tool-loop runaway when an agent gets stuck (e.g. retrying a failing tool).
 MAX_STEPS_PER_REQUEST = 8
 
+# Workspace soft quota per conversation, in bytes.
+WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
+
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get("JEANMICHEL_MODEL", "gemma4:latest")
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
