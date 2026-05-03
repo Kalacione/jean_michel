@@ -29,7 +29,7 @@ L'**orchestrateur** (code Python pur, pas un LLM) construit les prompts à la vo
 
 Le mode est choisi au démarrage via `--mode {analyse,chat,vocal}` (default `analyse`). Il est fixé pour toute la durée de la conversation.
 
-- **`analyse`** — comportement one-shot. Une requête, une réponse, fin. Pas de continuité, pas de summary, pas d'archivist. Mode par défaut.
+- **`analyse`** — la CLI reste ouverte entre les questions (même dossier de conversation, pas de summary entre tours, pas d'archivist). Mode par défaut.
 - **`chat`** — conversation continue. Après chaque réponse, la CLI redonne la main à l'humain. L'archivist met à jour `summary.md` après chaque tour, qui est ré-injecté en préfixe du tour suivant. Jean-Michel propose 2-3 axes de creusage en fin de réponse.
 - **`vocal`** — dérivé de `chat` mais avec réponses concises (< 4 phrases courtes), prêt pour synthèse vocale future. Certains paradigmes incompatibles avec la concision (steelman, hold_tension, depth_over_speed, etc.) sont automatiquement filtrés.
 
@@ -152,11 +152,18 @@ Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dan
 
 ```bash
 ./jm.sh --install       # crée le venv + initialise la BDD
-./jm.sh                 # lance le CLI en interactif (mode analyse par défaut)
-./jm.sh --mode chat     # conversation continue
+./jm.sh                 # lance le CLI (mode analyse, nouvelle conversation)
+./jm.sh --mode chat     # conversation continue avec mémoire narrative
 ./jm.sh --mode vocal    # réponses concises
+./jm.sh --resume        # reprend la dernière conversation active
+./jm.sh --resume <id>   # reprend une conversation spécifique (id ou préfixe)
+./jm.sh --list-conv     # liste les conversations actives et exit
 ./jm.sh --build-docker  # (optionnel) builde l'image sandbox Docker
 ```
+
+En mode `analyse`, pas de summary injecté entre les tours (contrairement à `chat`/`vocal`).
+
+À l'EOF (Ctrl-D) ou `exit`/`quit`, la conversation passe `status='closed'` en BDD. `--resume` ne reprend que les conversations `active` ou `awaiting_human`.
 
 Override du Python : `PYTHON_BIN=/path/to/python3.14 ./jm.sh --install`.
 
@@ -236,4 +243,4 @@ jeanmichel/
 
 ## État
 
-10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). API web : non démarrée.
+10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
