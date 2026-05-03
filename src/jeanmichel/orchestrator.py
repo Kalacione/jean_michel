@@ -151,23 +151,81 @@ class Orchestrator:
 
     # ---- Public API ------------------------------------------------------
 
+    def bootstrap_conversation(self) -> None:
+        """Create the conversation folder and DB row. Idempotent.
+
+        Called once at CLI startup, before any user input. After this call,
+        self.conv_folder is set and the conversation row exists in DB with
+        status='active'.
+        """
+        if self.conv_folder is not None:
+            return  # already bootstrapped
+        started = datetime.now(UTC)
+        folder_name = conversation_folder_name(self.conv_id, started)
+        self.conv_folder = config.CONVERSATIONS_DIR / folder_name
+        self.conv_folder.mkdir(parents=True, exist_ok=True)
+        with db.connect() as conn:
+            db.create_conversation(
+                conn, self.conv_id, str(self.conv_folder),
+                user_language=None, mode=self.mode,
+            )
+
+    def resume_conversation(self, folder_path: str, user_language: str) -> None:
+        """Reattach to an existing conversation folder.
+
+        Sets self.conv_folder to the existing path, restores turn_index from
+        the highest turn_index in DB requests, and re-activates the row if
+        it was 'closed'.
+        """
+        self.conv_folder = Path(folder_path)
+        if not self.conv_folder.exists():
+            raise FileNotFoundError(f"Conversation folder missing: {folder_path}")
+        self.user_language = user_language
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(turn_index) AS max_turn FROM requests "
+                "WHERE conversation_id=? AND parent_request_id IS NULL",
+                (self.conv_id,),
+            ).fetchone()
+            self.turn_index = (row["max_turn"] if row["max_turn"] is not None else -1)
+            conn.execute(
+                "UPDATE conversations SET status='active', "
+                "modified_at=datetime('now') WHERE id=? AND status='closed'",
+                (self.conv_id,),
+            )
+
+    def close_conversation(self) -> None:
+        """Mark the conversation as closed in DB. Safe to call multiple times."""
+        if self.conv_folder is None:
+            return
+        with db.connect() as conn:
+            # If a request is awaiting_human, keep that status.
+            row = conn.execute(
+                "SELECT 1 FROM requests WHERE conversation_id=? "
+                "AND status='awaiting_human' LIMIT 1",
+                (self.conv_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "UPDATE conversations SET status='closed', "
+                    "modified_at=datetime('now') WHERE id=?",
+                    (self.conv_id,),
+                )
+
     def run(self, user_input: str) -> Generator[object]:
         """Process one user input. Yields events; the CLI consumes them."""
         self.user_language = _detect_language(user_input)
         self._turn_exchanges = []
 
         if self.conv_folder is None:
-            # First turn — create the conversation.
-            started = datetime.now(UTC)
-            folder_name = conversation_folder_name(self.conv_id, started)
-            self.conv_folder = config.CONVERSATIONS_DIR / folder_name
-            self.conv_folder.mkdir(parents=True, exist_ok=True)
-            with db.connect() as conn:
-                db.create_conversation(
-                    conn, self.conv_id, str(self.conv_folder),
-                    self.user_language, mode=self.mode,
-                )
+            # CLI did not call bootstrap_conversation() — create lazily (backward compat).
+            self.bootstrap_conversation()
+
+        if self.turn_index == -1:
+            # First turn of this conversation.
             self.turn_index = 0
+            with db.connect() as conn:
+                db.update_conversation_language(conn, self.conv_id, self.user_language)
             yield ConversationStarted(
                 conversation_id=self.conv_id,
                 folder_path=str(self.conv_folder),

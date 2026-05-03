@@ -144,6 +144,39 @@ def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str
                         user_language=user_language, title=title, mode=mode)
 
 
+def update_conversation_language(conn: sqlite3.Connection, conv_id: str, language: str) -> None:
+    """Update the detected language of an existing conversation."""
+    conn.execute(
+        "UPDATE conversations SET user_language=?, modified_at=datetime('now') WHERE id=?",
+        (language, conv_id),
+    )
+
+
+def list_active_conversations(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
+    """Return recent active or awaiting_human conversations, newest first."""
+    return conn.execute(
+        "SELECT id, mode, status, user_language, created_at, modified_at "
+        "FROM conversations "
+        "WHERE status IN ('active', 'awaiting_human') "
+        "ORDER BY modified_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
+def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite3.Row | None:
+    """Look up a conversation by exact id or by id prefix."""
+    row = conn.execute(
+        "SELECT id, folder_path, mode, user_language, status FROM conversations WHERE id=?",
+        (conv_id_or_prefix,),
+    ).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT id, folder_path, mode, user_language, status FROM conversations WHERE id LIKE ?",
+            (conv_id_or_prefix + "%",),
+        ).fetchone()
+    return row
+
+
 # ---- Requests -------------------------------------------------------------
 
 def create_request(conn: sqlite3.Connection, *, req_id: str, conv_id: str,

@@ -17,6 +17,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from .config import DEFAULT_OLLAMA_MODEL, UserProfile
+from . import db
 from .llm import OllamaClient
 from .orchestrator import (
     AgentStarted,
@@ -207,9 +208,36 @@ def main(argv: list[str] | None = None) -> int:
                         help="Display the agent's thought channel.")
     parser.add_argument("--mode", choices=["analyse", "chat", "vocal"], default="analyse",
                         help="Conversation mode (default: analyse).")
+    parser.add_argument("--resume", nargs="?", const="__last__", default=None,
+                        metavar="CONV_ID",
+                        help="Resume a conversation. Without CONV_ID: resumes the "
+                             "most recent active conversation.")
+    parser.add_argument("--list-conv", action="store_true",
+                        help="List recent active conversations and exit.")
     args = parser.parse_args(argv)
 
     console = Console()
+
+    # ---- --list-conv (no LLM needed) -------------------------------------
+    if args.list_conv:
+        from rich.table import Table
+        with db.connect() as conn:
+            rows = db.list_active_conversations(conn)
+        if not rows:
+            console.print("[dim]No active conversation.[/]")
+            return 0
+        table = Table(title="Active conversations", show_lines=True)
+        for col in ("conv_id (prefix)", "mode", "status", "lang", "created", "last activity"):
+            table.add_column(col, no_wrap=True)
+        for r in rows:
+            table.add_row(
+                r["id"][:12], r["mode"], r["status"],
+                r["user_language"] or "?",
+                r["created_at"][:16], r["modified_at"][:16],
+            )
+        console.print(table)
+        return 0
+
     render_splash(console, args.model, args.mode)
 
     profile = UserProfile.load()
@@ -237,8 +265,34 @@ def main(argv: list[str] | None = None) -> int:
         key_bindings=kb,
     )
 
-    orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
-                        ask_human_callback=make_ask_human(console, session))
+    # ---- --resume --------------------------------------------------------
+    if args.resume is not None:
+        with db.connect() as conn:
+            if args.resume == "__last__":
+                rows = db.list_active_conversations(conn, limit=1)
+                row = rows[0] if rows else None
+            else:
+                row = db.get_conversation(conn, args.resume)
+        if row is None:
+            console.print("[red]Conversation not found or already closed.[/]")
+            return 1
+        if row["status"] not in {"active", "awaiting_human"}:
+            console.print(f"[red]Conversation {row['id'][:12]} is '{row['status']}' — cannot resume.[/]")
+            return 1
+        orch = Orchestrator(llm=llm, profile=profile, mode=row["mode"],
+                            conv_id=row["id"],
+                            ask_human_callback=make_ask_human(console, session))
+        orch.resume_conversation(
+            folder_path=row["folder_path"],
+            user_language=row["user_language"] or "und",
+        )
+        args.mode = row["mode"]
+        console.print(f"[dim]Resumed conversation {row['id'][:12]} (mode: {row['mode']})[/]\n")
+    else:
+        # New conversation — bootstrap the folder before first input.
+        orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
+                            ask_human_callback=make_ask_human(console, session))
+        orch.bootstrap_conversation()
 
     while True:
         try:
@@ -249,9 +303,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye.[/]")
+            orch.close_conversation()
             return 0
         if user_input.strip().lower() in {"exit", "quit"}:
             console.print("[dim]bye.[/]")
+            orch.close_conversation()
             return 0
         if not user_input.strip():
             continue
@@ -262,8 +318,6 @@ def main(argv: list[str] | None = None) -> int:
             console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
             return 1
 
-        if args.mode == "analyse":
-            break  # single-shot in analyse mode
         console.print()
 
 if __name__ == "__main__":
