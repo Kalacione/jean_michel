@@ -184,3 +184,50 @@ Si un nouvel agent ne doit jamais être appelé par un autre LLM (uniquement par
 2. **Exclusion de la liste `## Available specialists`** : `prompts.py:render_system_prompt` filtre l'agent de la liste injectée dans le contexte des autres agents.
 
 Ces deux protections sont complémentaires. Modifier `prompts.py` et `orchestrator.py` ensemble pour ajouter un nouvel agent de ce type.
+
+### Accès workspace et sandbox Docker
+
+Un agent peut manipuler des fichiers dans le `workspace/` de sa conversation et exécuter des commandes dans un sandbox Docker isolé. L'accès est entièrement contrôlé par la BDD — rien n'est hardcodé en Python.
+
+**Workspace (lecture seule)** — `workspace_view` et `workspace_list` sont disponibles sans grant spécial, du moment que l'agent les a dans `agent_tools`.
+
+**Workspace (écriture)** — `workspace_create_file` et `workspace_str_replace` requièrent en plus une ligne dans `agent_workspace_grants`.
+
+**Sandbox Docker** — `bash_sandbox` requiert :
+- une ligne dans `agent_tools` avec `tool_code='bash_sandbox'`,
+- une ligne dans `agent_sandbox_grants` par binaire autorisé (premier mot de la commande vérifié avant tout `docker exec`).
+
+Prérequis système : image Docker buildée (`./jm.sh --build-docker`, une seule fois).
+
+Exemple complet — créer un agent `code-runner` avec workspace write et sandbox Python :
+
+```sql
+-- 1. Agent
+INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at)
+VALUES (
+  'code-runner', 'Code Runner', 'specialist',
+  'Execute Python code inside the Docker sandbox and return results.',
+  1, 0.1, 1, datetime('now'), datetime('now')
+);
+
+-- 2. Grants outils
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT a.id, t.tool_code
+FROM agents a,
+     (VALUES ('workspace_create_file'), ('workspace_str_replace'),
+             ('workspace_view'), ('workspace_list'), ('bash_sandbox')) AS t(tool_code)
+WHERE a.code = 'code-runner';
+
+-- 3. Grant workspace write
+INSERT INTO agent_workspace_grants (agent_id)
+SELECT id FROM agents WHERE code = 'code-runner';
+
+-- 4. Grants sandbox (un binaire par ligne)
+INSERT INTO agent_sandbox_grants (agent_id, command) VALUES
+  ((SELECT id FROM agents WHERE code='code-runner'), 'python3'),
+  ((SELECT id FROM agents WHERE code='code-runner'), 'cat'),
+  ((SELECT id FROM agents WHERE code='code-runner'), 'ls'),
+  ((SELECT id FROM agents WHERE code='code-runner'), 'jq');
+```
+
+Reporter ces INSERTs dans `db/schema.sql` (convention projet : le schema est la source de vérité, pas la BDD live).

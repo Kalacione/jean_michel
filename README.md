@@ -121,6 +121,24 @@ L'accès est opt-in par agent via deux grants BDD :
 
 Quota : 256 Mo par workspace. Les fichiers workspace ne sont **pas** tracés dans la table `artifacts` — le filesystem est l'inventaire.
 
+## Sandbox
+
+L'outil `bash_sandbox` exécute des commandes shell dans un container Docker isolé, monté sur le workspace de la conversation.
+
+Prérequis : `./jm.sh --build-docker` (une seule fois, ou après modification du Dockerfile).
+
+Grants requis en BDD par agent :
+- `agent_tools` — ligne avec `tool_code='bash_sandbox'`
+- `agent_sandbox_grants` — une ligne par binaire autorisé (ex. `python3`, `jq`, `cat`)
+
+Garanties matérielles :
+- `--network=none` — pas d'accès internet
+- `--cap-drop=ALL` — aucune capability Linux
+- Utilisateur non-root
+- Limites mémoire (512 Mo) et CPU (1 vCPU)
+
+Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dans la table `sandbox_executions` (queryable a posteriori). Le `tool_response` artifact dans le flux conversationnel capture les mêmes données en contexte.
+
 ## Stack
 
 - Python 3.14 dans un venv local.
@@ -133,10 +151,11 @@ Quota : 256 Mo par workspace. Les fichiers workspace ne sont **pas** tracés dan
 ## Installation
 
 ```bash
-./jm.sh --install     # crée le venv + initialise la BDD
-./jm.sh               # lance le CLI en interactif (mode analyse par défaut)
-./jm.sh --mode chat   # conversation continue
-./jm.sh --mode vocal  # réponses concises
+./jm.sh --install       # crée le venv + initialise la BDD
+./jm.sh                 # lance le CLI en interactif (mode analyse par défaut)
+./jm.sh --mode chat     # conversation continue
+./jm.sh --mode vocal    # réponses concises
+./jm.sh --build-docker  # (optionnel) builde l'image sandbox Docker
 ```
 
 Override du Python : `PYTHON_BIN=/path/to/python3.14 ./jm.sh --install`.
@@ -179,6 +198,9 @@ jeanmichel/
 │   ├── admin.py              # administration DB
 │   ├── clean_convs.py        # purge des anciennes conversations
 │   └── paradigm_matrix.py    # visualisation matrice agents × paradigmes × modes
+├── docker/
+│   └── sandbox/
+│       └── Dockerfile        # image Ubuntu 24.04 pour la sandbox d'exécution
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
 │   ├── GEMMA4.md             # référence des tokens et comportements Gemma 4
@@ -200,7 +222,8 @@ jeanmichel/
 │   │   ├── workspace_create_file.py  # création fichier dans workspace (context-bound)
 │   │   ├── workspace_str_replace.py  # édition atomique (context-bound)
 │   │   ├── workspace_view.py         # lecture fichier/dossier (context-bound)
-│   │   └── workspace_list.py         # arbre workspace 2 niveaux (context-bound)
+│   │   ├── workspace_list.py         # arbre workspace 2 niveaux (context-bound)
+│   │   └── bash_sandbox.py           # exécution Docker sandboxée (context-bound)
 │   ├── persistence.py        # écriture artefacts disque + frontmatter
 │   ├── models.py             # dataclasses
 │   └── config.py             # paths, constantes, user_profile loading
@@ -213,4 +236,4 @@ jeanmichel/
 
 ## État
 
-10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list). Sandbox Docker : non démarrée (phase 2). API web : non démarrée.
+10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). API web : non démarrée.
