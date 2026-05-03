@@ -353,11 +353,19 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
 (14, 11, 'briefing_contract', 'Briefing contract',
  '- A delegate_to call must include: a clear mission, the expected outcome, and the relevant support_files paths.
-- Briefings between agents are written in English.
+- Briefings between agents are written in English. NEVER include language instructions
+  ("reply in French", "the answer must be in French", etc.) in a briefing — the receiving
+  agent handles output language automatically from its own system prompt. Including language
+  instructions in briefings contaminates inter-agent tool queries (e.g. causes Wikipedia
+  searches in the wrong language).
 - When translating entity names from the human''s language into the briefing, always include
   the original term in parentheses: e.g. "walrus (morse)", "rhinoceros (rhinocéros)".
   This allows downstream specialists to verify the translation.
-- Independent subtasks may be emitted as multiple delegate_to calls in the same turn.',
+- Independent subtasks may be emitted as multiple delegate_to calls in the same turn.
+- If a delegation returns {"status": "step_budget_exhausted", "partial_clarifications": "..."},
+  do NOT re-delegate with the exact same briefing. Incorporate the partial_clarifications
+  verbatim under a "Known clarifications from human:" key and reformulate the mission
+  with the updated information.',
  'Concerns delegate_to authoring. Only relevant for agents that emit delegate_to (router and comparator).',
  0, 10, 1, datetime('now'), datetime('now'));
 
@@ -454,16 +462,18 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  0, 20, 1, datetime('now'), datetime('now')),
 
 (26, 20, 'wikipedia_search_strategy', 'Iterative search strategy',
- '- If the entity name is not in English, translate it to its English equivalent before
+ '- Wikipedia uses the English edition by default. ALL search queries MUST be in English,
+  regardless of the detected human language or any language directive elsewhere in this
+  prompt. This rule takes precedence over all other language instructions.
+- If the entity name is not in English, translate it to its English equivalent before
   forming the search query (e.g. French "morse" → "walrus", "dauphin" → "dolphin",
-  "rhinocéros" → "rhinoceros"). Wikipedia defaults to the English edition — searching
-  with non-English terms returns irrelevant results.
+  "rhinocéros" → "rhinoceros", "caleçon" → "boxer shorts", "slip" → "briefs").
 - Start with the most specific search terms matching the question.
 - From the search results, choose the most directly relevant article title.
 - Prefer dedicated articles (e.g. "Leaning Tower of Pisa") over broad ones (e.g. "Pisa").
 - If wikipedia_get_page returns a disambiguation error, pick the most relevant option from the list and retry.
 - If the first search yields no useful results, reformulate with alternative keywords.',
- 'Guides the specialist to find the right page efficiently.',
+ 'Guides the specialist to find the right page efficiently. English-first rule takes precedence over detected language.',
  0, 30, 1, datetime('now'), datetime('now'));
 
 -- process / comparison — comparator-specialist + jean-michel
@@ -1251,11 +1261,12 @@ INSERT INTO agent_tools (agent_id, tool_code) VALUES
   (1, 'clock'),
   (1, 'conv_read_file'),
   (2, 'conv_read_file'),
+  (3, 'conv_read_file'),
   (4, 'weather'),
   (5, 'wikipedia_search'),
   (5, 'wikipedia_get_page');
 -- Note: comparator-specialist has no native tools; it operates via delegate_to.
--- Note: synthesizer and archivist have no native tools either.
+-- Note: archivist has no native tools.
 
 -- =============================================================
 -- SEEDS — document-builder (id=9) + workspace-manager (id=10)

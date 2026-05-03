@@ -309,6 +309,7 @@ class Orchestrator:
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
         running_user_text = inbound_text
         seen_ask = False  # at most one ask_human across all steps of this request
+        _successful_calls: set[str] = set()  # fingerprints of native tool calls that succeeded
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -331,6 +332,7 @@ class Orchestrator:
             inbound_text=inbound_text,
             tool_registry=registry,
             available_agents=available_agents,
+            turn_clarifications=list(self._turn_exchanges),
         )
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry)
@@ -338,7 +340,8 @@ class Orchestrator:
             f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
 
         try:
-            for _step in range(MAX_STEPS_PER_REQUEST):
+            llm_steps = 0
+            while llm_steps < MAX_STEPS_PER_REQUEST:
                 response: LLMResponse = self.llm.chat(
                     system=system,
                     user=running_user_text,
@@ -346,6 +349,7 @@ class Orchestrator:
                     temperature=agent.temperature,
                     thinking=agent.thinking_mode,
                 )
+                llm_steps += 1
 
                 if response.thinking:
                     self._write_artifact(req_id, agent_code, "thought", response.thinking)
@@ -382,9 +386,13 @@ class Orchestrator:
                             }))
                             continue
                         seen_ask = True
+                        llm_steps -= 1  # ask_human is I/O, not an LLM step
                         answer = yield from self._handle_ask_human(
                             req_id, agent_code, call.arguments,
                         )
+                        # Refresh turn_clarifications in the prompt after human reply.
+                        ctx.turn_clarifications = list(self._turn_exchanges)
+                        system = render_system_prompt(ctx)
                         tool_responses.append(json.dumps({
                             "tool": "ask_human",
                             "human_answer": answer,
@@ -448,12 +456,29 @@ class Orchestrator:
                             "tool": call.name, "error": "unknown tool",
                         }))
                         continue
+                    call_fingerprint = (
+                        f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+                    )
+                    if call_fingerprint in _successful_calls:
+                        tool_responses.append(json.dumps({
+                            "tool": call.name,
+                            "error": (
+                                "Duplicate call detected. This exact call already produced "
+                                "a result earlier in this request. Re-running it will not "
+                                "change the output. Use the previous result or reformulate "
+                                "your query with different arguments."
+                            ),
+                        }))
+                        continue
                     try:
                         result = spec.handler(**call.arguments)
                     except TypeError as e:
                         result = json.dumps({"error": f"Bad arguments: {e}"})
                     except Exception as e:  # noqa: BLE001
                         result = json.dumps({"error": f"Tool failed: {e}"})
+                    # Register as successful only if the result is not an error.
+                    if not (isinstance(result, str) and '"error"' in result):
+                        _successful_calls.add(call_fingerprint)
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
                     self._write_artifact(req_id, agent_code, "tool_response",
@@ -473,11 +498,23 @@ class Orchestrator:
                 db.update_request_status(conn, req_id, "failed", completed=True)
             raise
 
-        msg = "[orchestrator] step budget exhausted within a single request."
-        artifact = self._write_artifact(req_id, agent_code, "response", msg)
+        exchanges_summary = "; ".join(
+            f"Q: {q} → A: {a}" for q, a in self._turn_exchanges
+        ) or None
+        error_payload = json.dumps({
+            "status": "step_budget_exhausted",
+            "agent": agent_code,
+            "partial_clarifications": exchanges_summary,
+            "error": (
+                "The agent exhausted its step budget without producing a result."
+                + (f" Human clarified during this request: {exchanges_summary}"
+                   if exchanges_summary else "")
+            ),
+        })
+        artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "failed", completed=True)
-        return msg, artifact
+        return error_payload, None
 
     # ---- Summary helpers ------------------------------------------------
 

@@ -60,7 +60,14 @@ _DELEGATE_TO: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "agent_code": {"type": "string"},
-                "briefing": {"type": "string", "description": "Mission text in English."},
+                "briefing": {
+                    "type": "string",
+                    "description": (
+                        "Mission text in English. "
+                        "Do NOT include language instructions — "
+                        "the receiving agent handles output language automatically."
+                    ),
+                },
                 "support_files": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -119,6 +126,7 @@ class PromptContext:
     inbound_text: str
     tool_registry: dict[str, ToolSpec]
     available_agents: list[Agent]
+    turn_clarifications: list[tuple[str, str]]  # (question, answer) pairs from ask_human this turn
 
 
 def render_directives(paradigms: list[Paradigm]) -> str:
@@ -161,6 +169,14 @@ def _render_output_contract(role: str) -> str:
     )
 
 
+def _render_prior_clarifications(clarifications: list[tuple[str, str]]) -> str:
+    """Render the clarifications exchanged so far this turn, or empty string."""
+    if not clarifications:
+        return ""
+    lines = "\n".join(f'- Q: "{q}" → A: "{a}"' for q, a in clarifications)
+    return f"## Prior clarifications this turn\n{lines}\n\n"
+
+
 def render_system_prompt(ctx: PromptContext) -> str:
     """Render the consolidated system block."""
     a = ctx.agent
@@ -186,7 +202,9 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"## Human\n"
         f"{ctx.user_profile.render()}\n"
         f"Detected language — use for ALL human-facing output "
-        f"(return_to_user answer, ask_human question and why): {ctx.detected_language}\n\n"
+        f"(return_to_user answer, ask_human question and why): {ctx.detected_language}\n"
+        f"Working language for everything else (internal reasoning, tool queries, "
+        f"briefings to other agents): English only.\n\n"
         f"## Conversation\n"
         f"- conversation_id: {ctx.conversation_id}\n"
         f"- request_id: {ctx.request_id}\n"
@@ -204,7 +222,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"expected: {ctx.expected_outcome or '(unspecified)'}\n"
         f"support_files:\n{support_files_block}\n\n"
         f"{ctx.inbound_text}\n\n"
-        f"## Available specialists\n"
+        + _render_prior_clarifications(ctx.turn_clarifications)
+        + f"## Available specialists\n"
         f"{agents_block}\n\n"
         f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"

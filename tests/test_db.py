@@ -43,11 +43,11 @@ class TestToolGrants:
             grants = db.load_tool_grants(conn, sm.id)
         assert grants == ["conv_read_file"]
 
-    def test_synthesizer_has_no_tools(self, tmp_env):
+    def test_synthesizer_has_conv_read_file(self, tmp_env):
         with db.connect() as conn:
             sy = db.get_agent_by_code(conn, "synthesizer")
             grants = db.load_tool_grants(conn, sy.id)
-        assert grants == []
+        assert grants == ["conv_read_file"]
 
 
 class TestAdminHelpers:
