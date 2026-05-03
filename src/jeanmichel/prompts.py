@@ -23,7 +23,11 @@ _ASK_HUMAN: dict[str, Any] = {
     "function": {
         "name": "ask_human",
         "description": (
-            "Pause the request and ask the human a single question. "
+            "Pause the request and ask the human for clarification. "
+            "Use a single, focused call per request. If multiple "
+            "questions are genuinely needed and share the same "
+            "blocker, group them in `question` as a coherent list "
+            "with one shared `why`. "
             "`why` is mandatory and must explain what is blocked without it."
         ),
         "parameters": {
@@ -145,7 +149,8 @@ def _render_output_contract(role: str) -> str:
         "# OUTPUT CONTRACT\n"
         "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
         "- If you must clarify with the user: call ask_human(question, why). "
-        "One question only. `why` is mandatory.\n"
+        "Only one ask_human call per request; group related questions "
+        "sharing the same blocker into a single call. `why` is mandatory.\n"
         "- If task belongs to another specialist: call delegate_to(...). "
         "Multiple parallel delegate_to calls allowed in the same turn.\n"
         "- A delegate_to result is a structured object {agent, artifact, answer}. "
