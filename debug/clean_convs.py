@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -97,7 +98,37 @@ def main() -> None:
             conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
             deleted += 1
 
+    # Collect remaining active conversation IDs for orphan container cleanup.
+    with db.connect() as conn:
+        active_rows = conn.execute("SELECT id FROM conversations").fetchall()
+    active_ids = {r[0] for r in active_rows}
+    _cleanup_orphan_containers(active_ids)
+
     print(f"\nDeleted {deleted} conversation(s)." + (f" {errors} error(s)." if errors else ""))
+
+
+def _cleanup_orphan_containers(active_conv_ids: set[str]) -> None:
+    """Remove sandbox containers whose conversation no longer exists in DB."""
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--filter", "name=jm-sandbox-", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return  # Docker not available or timed out — skip silently.
+
+    removed = 0
+    for line in result.stdout.splitlines():
+        name = line.strip()
+        if not name.startswith("jm-sandbox-"):
+            continue
+        conv_id = name[len("jm-sandbox-"):]
+        if conv_id not in active_conv_ids:
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            removed += 1
+
+    if removed:
+        print(f"Removed {removed} orphan sandbox container(s).")
 
 
 if __name__ == "__main__":

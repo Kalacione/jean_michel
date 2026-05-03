@@ -40,6 +40,7 @@ Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
+  --build-docker [TAG]        Build the sandbox Docker image (default tag: jeanmichel-sandbox:24.04)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
@@ -203,6 +204,12 @@ cmd_test() {
   exec python -m pytest "${PROJECT_ROOT}/tests" -v "$@"
 }
 
+cmd_build_docker() {
+  local image_tag="${1:-jeanmichel-sandbox:24.04}"
+  docker build -t "${image_tag}" "${PROJECT_ROOT}/docker/sandbox/"
+  echo "Sandbox image built: ${image_tag}"
+}
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -244,6 +251,10 @@ case "${COMMAND}" in
   --test)
     shift
     cmd_test "$@"
+    ;;
+  --build-docker)
+    shift
+    cmd_build_docker "$@"
     ;;
   "")
     cmd_cli

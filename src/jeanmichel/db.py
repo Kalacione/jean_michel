@@ -110,6 +110,25 @@ def load_sandbox_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
     return [r[0] for r in rows]
 
 
+def record_sandbox_execution(
+    conn: sqlite3.Connection,
+    request_id: str,
+    command: str,
+    exit_code: int | None,
+    duration_ms: int,
+) -> None:
+    """Insert an audit row for a sandbox command execution.
+
+    exit_code=None means the command was refused before execution.
+    """
+    conn.execute(
+        "INSERT INTO sandbox_executions "
+        "(request_id, command, exit_code, duration_ms, created_at) "
+        "VALUES (?, ?, ?, ?, datetime('now'))",
+        (request_id, command, exit_code, duration_ms),
+    )
+
+
 # ---- Conversations --------------------------------------------------------
 
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,

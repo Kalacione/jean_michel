@@ -217,6 +217,7 @@ class Orchestrator:
             available_agents = db.list_active_agents(conn)
             tool_grants = db.load_tool_grants(conn, agent.id)
             has_workspace_write = db.has_workspace_grant(conn, agent.id)
+            sandbox_grants = db.load_sandbox_grants(conn, agent.id)
             req_id = _new_uuid()
             db.create_request(
                 conn,
@@ -233,7 +234,19 @@ class Orchestrator:
 
         yield AgentStarted(agent_code=agent_code, request_id=req_id, depth=depth)
 
-        registry = build_registry(self.conv_folder, has_workspace_write=has_workspace_write)
+        # request_id_provider is a closure so bash_sandbox can record audit rows
+        # against the *current* req_id without receiving it as a tool argument.
+        _current_req_id = req_id
+        def _req_id_provider() -> str:
+            return _current_req_id
+
+        registry = build_registry(
+            self.conv_folder,
+            has_workspace_write=has_workspace_write,
+            conv_id=self.conv_id,
+            request_id_provider=_req_id_provider,
+            sandbox_grants=sandbox_grants if sandbox_grants else None,
+        )
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
         running_user_text = inbound_text
@@ -519,3 +532,17 @@ class Orchestrator:
         with db.connect() as conn:
             db.record_artifact(conn, request_id, filename, kind)
         return filename
+
+    def cleanup_sandbox(self) -> None:
+        """Stop and remove the sandbox container for this conversation, if running."""
+        import subprocess
+        container_name = f"jm-sandbox-{self.conv_id}"
+        result = subprocess.run(
+            ["docker", "inspect", "--format", "{{.State.Running}}", container_name],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+            )

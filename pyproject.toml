@@ -45,6 +45,11 @@ packages = ["src/jeanmichel"]
 line-length = 100
 target-version = "py314"
 
+[tool.pytest.ini_options]
+markers = [
+    "docker: tests that require a running Docker daemon",
+]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 ignore = ["E501"]
