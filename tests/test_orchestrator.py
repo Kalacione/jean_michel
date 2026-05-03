@@ -216,3 +216,162 @@ class TestModes:
         fa = next(e for e in events if isinstance(e, FinalAnswer))
         # Should still answer (REJECTED fed back as tool_response, agent recovers)
         assert fa.text == "done"
+
+
+class TestConversationLifecycle:
+    """Tests for bootstrap_conversation, close_conversation, resume_conversation."""
+
+    def test_bootstrap_conversation_creates_folder(self, tmp_env):
+        orch = _orch([], tmp_env)
+        orch.bootstrap_conversation()
+        assert orch.conv_folder is not None
+        assert orch.conv_folder.exists()
+
+    def test_bootstrap_conversation_idempotent(self, tmp_env):
+        orch = _orch([], tmp_env)
+        orch.bootstrap_conversation()
+        folder_first = orch.conv_folder
+        orch.bootstrap_conversation()
+        assert orch.conv_folder == folder_first
+
+    def test_bootstrap_creates_db_row(self, tmp_env):
+        from jeanmichel import db as jmdb
+        orch = _orch([], tmp_env)
+        orch.bootstrap_conversation()
+        with jmdb.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM conversations WHERE id=?", (orch.conv_id,)
+            ).fetchone()
+        assert row is not None
+        assert row["status"] == "active"
+
+    def test_analyse_multi_turn_same_folder(self, tmp_env):
+        """In analyse mode, two run() calls must use the same conversation folder."""
+        script = [
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "first"}),
+            ]),
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "second"}),
+            ]),
+        ]
+        orch = _orch(script, tmp_env, mode="analyse")
+        orch.bootstrap_conversation()
+        list(orch.run("question 1"))
+        folder_after_turn1 = orch.conv_folder
+        list(orch.run("question 2"))
+        assert orch.conv_folder == folder_after_turn1
+
+    def test_analyse_multi_turn_turn_index_increments(self, tmp_env):
+        """Turn index must increment on subsequent turns in analyse mode."""
+        script = [
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "a"}),
+            ]),
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "b"}),
+            ]),
+        ]
+        orch = _orch(script, tmp_env, mode="analyse")
+        orch.bootstrap_conversation()
+        list(orch.run("q1"))
+        assert orch.turn_index == 0
+        events2 = list(orch.run("q2"))
+        assert orch.turn_index == 1
+        assert any(isinstance(e, TurnStarted) and e.turn_index == 1 for e in events2)
+
+    def test_close_conversation_sets_status_closed(self, tmp_env):
+        from jeanmichel import db as jmdb
+        orch = _orch([
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "ok"}),
+            ]),
+        ], tmp_env)
+        list(orch.run("hi"))
+        orch.close_conversation()
+        with jmdb.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM conversations WHERE id=?", (orch.conv_id,)
+            ).fetchone()
+        assert row["status"] == "closed"
+
+    def test_close_conversation_noop_if_awaiting_human(self, tmp_env):
+        """close_conversation must NOT override awaiting_human status."""
+        from jeanmichel import db as jmdb
+        orch = _orch([
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "ok"}),
+            ]),
+        ], tmp_env)
+        list(orch.run("hi"))
+        # Manually set a request to awaiting_human to simulate ask_human in flight.
+        with jmdb.connect() as conn:
+            jm = jmdb.get_agent_by_code(conn, "jean-michel")
+            conn.execute(
+                "INSERT INTO requests (id, conversation_id, depth, agent_id, status, created_at) "
+                "VALUES ('fake-req', ?, 0, ?, 'awaiting_human', datetime('now'))",
+                (orch.conv_id, jm.id),
+            )
+        orch.close_conversation()
+        with jmdb.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM conversations WHERE id=?", (orch.conv_id,)
+            ).fetchone()
+        # Conversation must remain active (not closed) because a request is awaiting_human.
+        assert row["status"] != "closed"
+
+    def test_resume_conversation_restores_state(self, tmp_env):
+        """resume_conversation must reattach conv_folder and restore turn_index."""
+        script = [
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "t0"}),
+            ]),
+        ]
+        orch = _orch(script, tmp_env, mode="analyse")
+        list(orch.run("first"))
+        conv_id = orch.conv_id
+        folder_path = str(orch.conv_folder)
+
+        # Simulate a new session: fresh Orchestrator with same conv_id.
+        orch2 = Orchestrator(
+            llm=MockClient(script=[
+                LLMResponse(thinking="", content="", tool_calls=[
+                    ToolCall(name="return_to_user", arguments={"answer": "resumed"}),
+                ]),
+            ]),
+            profile=PROFILE,
+            mode="analyse",
+            conv_id=conv_id,
+        )
+        orch2.resume_conversation(folder_path=folder_path, user_language="fr")
+        assert orch2.conv_folder is not None
+        assert orch2.turn_index == 0  # turn 0 was completed in original session
+
+        events = list(orch2.run("second"))
+        fa = next(e for e in events if isinstance(e, FinalAnswer))
+        assert fa.text == "resumed"
+        assert orch2.turn_index == 1  # incremented from 0
+
+    def test_close_then_resume_reactivates(self, tmp_env):
+        from jeanmichel import db as jmdb
+        orch = _orch([
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "ok"}),
+            ]),
+        ], tmp_env)
+        list(orch.run("hi"))
+        orch.close_conversation()
+
+        orch2 = Orchestrator(
+            llm=MockClient(script=[]),
+            profile=PROFILE,
+            mode="analyse",
+            conv_id=orch.conv_id,
+        )
+        orch2.resume_conversation(str(orch.conv_folder), user_language="fr")
+
+        with jmdb.connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM conversations WHERE id=?", (orch.conv_id,)
+            ).fetchone()
+        assert row["status"] == "active"

@@ -168,3 +168,49 @@ class TestConversations:
             db.update_request_status(conn, "r1", "completed", completed=True)
             row = conn.execute("SELECT status FROM requests WHERE id='r1'").fetchone()
         assert row[0] == "completed"
+
+    def test_update_conversation_language(self, tmp_env):
+        with db.connect() as conn:
+            db.create_conversation(conn, "lang1", "/tmp/lang1", None)
+            db.update_conversation_language(conn, "lang1", "fr")
+            row = conn.execute(
+                "SELECT user_language FROM conversations WHERE id='lang1'"
+            ).fetchone()
+        assert row[0] == "fr"
+
+    def test_list_active_conversations_excludes_closed(self, tmp_env):
+        with db.connect() as conn:
+            db.create_conversation(conn, "active1", "/tmp/a1", "fr")
+            db.create_conversation(conn, "closed1", "/tmp/c1", "en")
+            conn.execute("UPDATE conversations SET status='closed' WHERE id='closed1'")
+            rows = db.list_active_conversations(conn)
+        ids = [r["id"] for r in rows]
+        assert "active1" in ids
+        assert "closed1" not in ids
+
+    def test_list_active_conversations_includes_awaiting_human(self, tmp_env):
+        with db.connect() as conn:
+            db.create_conversation(conn, "await1", "/tmp/aw1", "fr")
+            conn.execute("UPDATE conversations SET status='awaiting_human' WHERE id='await1'")
+            rows = db.list_active_conversations(conn)
+        ids = [r["id"] for r in rows]
+        assert "await1" in ids
+
+    def test_get_conversation_by_exact_id(self, tmp_env):
+        with db.connect() as conn:
+            db.create_conversation(conn, "exact123456", "/tmp/exact", "fr")
+            row = db.get_conversation(conn, "exact123456")
+        assert row is not None
+        assert row["id"] == "exact123456"
+
+    def test_get_conversation_by_prefix(self, tmp_env):
+        with db.connect() as conn:
+            db.create_conversation(conn, "prefix123456", "/tmp/prefix", "fr")
+            row = db.get_conversation(conn, "prefix12")
+        assert row is not None
+        assert row["id"] == "prefix123456"
+
+    def test_get_conversation_unknown_returns_none(self, tmp_env):
+        with db.connect() as conn:
+            row = db.get_conversation(conn, "doesnotexist")
+        assert row is None
