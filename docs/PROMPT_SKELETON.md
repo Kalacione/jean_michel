@@ -23,6 +23,10 @@ in the human's detected language.
 - `ask_human` interrupts the flow; the orchestrator pauses the request,
   collects the answer, then resumes with the human answer injected into
   `running_user_text` for the next LLM turn.
+- The `OUTPUT CONTRACT` block is **role-adapted**: routers and specialists
+  receive the full set of control tools (`ask_human`, `delegate_to`,
+  `return_to_user`); finalizers receive only `return_to_user`. The contract
+  text rendered in the system prompt mirrors the tools the agent actually has.
 
 ## Skeleton
 
@@ -45,7 +49,9 @@ Detected language for user-facing reply: {detected_language}
 - conversation_id: {conv.id}
 - request_id: {req.id}
 - parent_request_id: {req.parent_id_or_none}
-- recursion_depth: {req.depth}/5
+- recursion_depth: {req.depth}/{MAX_RECURSION_DEPTH}
+- mode: {conv.mode}
+- turn_index: {req.turn_index}
 - conversation_folder: {conv.folder_path}
 
 ## Machine
@@ -61,19 +67,26 @@ support_files:
 {inbound_text}
 
 ## Available specialists
-{list of active agents with code and mission, excluding self}
+{list of active agents with code and mission, excluding self and excluding archivist}
 
 # DIRECTIVES
 {paradigms rendered as `## {category.title}` blocks containing the `content`
  of each paradigm, in deterministic order:
  sections.order_priority -> categories.order_priority -> paradigms.order_priority}
 
-# OUTPUT CONTRACT
+# OUTPUT CONTRACT  (router / specialist variant)
 - Reflect first in your thought channel; surface assumptions, traps, biases.
 - If you must clarify with the user: call ask_human(question, why). One question only. `why` is mandatory.
 - If task belongs to another specialist: call delegate_to(...). Multiple parallel delegate_to calls allowed in the same turn for independent subtasks.
+- A delegate_to result is a structured object `{agent, artifact, answer}`. When forwarding to a finalizer, pass the `artifact` filename in support_files. Do NOT copy specialist `answer` content inline into the next briefing.
 - If task is yours and complete: call return_to_user(answer).
-- Inter-agent briefings: English. User-facing answer: {detected_language}.
+- Inter-agent briefings: English. Human-facing output: see ## Human detected language.
+
+# OUTPUT CONTRACT  (finalizer variant)
+- Reflect first in your thought channel; surface assumptions, traps, biases.
+- Produce the deliverable and return it via return_to_user(answer).
+- You do not delegate, you do not call ask_human. Work with the inputs provided.
+- Inter-agent text: English. Human-facing output: see ## Human detected language.
 ```
 
 ### API call shape (what the orchestrator sends to Ollama)
@@ -86,6 +99,7 @@ client.chat(
         {"role": "user",   "content": <inbound_text or tool results>},
     ],
     tools   = [...],   # JSON-schema array — Ollama renders as <|tool>declaration...
+                       # filtered by role: finalizers get only return_to_user
     think   = True,    # Ollama injects <|think|> in the system block
     options = {"temperature": agent.temperature},
     stream  = False,
@@ -103,7 +117,9 @@ content with `<|turn>user … <turn|>` internally. We never write those tokens.
   this rule — the orchestrator preserves the thinking block when it resumes.
 - **Long agent chains** (depth ≥ 3): inject a `## Prior reasoning summary`
   block produced by the `synthesizer` instead of raw thoughts, to avoid
-  cyclical reasoning.
+  cyclical reasoning. *(Planned — not yet implemented; the orchestrator
+  currently relies on the per-turn briefing to carry context. This remains
+  an active design goal as agent chains grow longer.)*
 
 ## Why this shape
 
@@ -113,6 +129,22 @@ content with `<|turn>user … <turn|>` internally. We never write those tokens.
 - **Tools via `tools` API parameter**: Ollama renders `<|tool>declaration...`
   tokens from the JSON-schema array we pass. Injecting them manually in the
   system text would duplicate declarations and break tool calling.
+- **Tools filtered by role**: a finalizer only receives `return_to_user`. This
+  is enforced both in the JSON tool list passed to Ollama AND in the OUTPUT
+  CONTRACT text — keeping the two consistent prevents the model from being
+  told it can call a tool it doesn't have.
+- **`mode` in CONTEXT**: the agent sees the conversation mode (`analyse`,
+  `chat`, `vocal`) but does not branch on it itself — mode-specific paradigms
+  filtered by `paradigm_modes` do that work. The `mode` field is informational.
+- **`turn_index` in CONTEXT**: lets agents know whether they are at the
+  opening turn of a conversation or further along. Combined with the
+  re-injected `summary.md` (chat/vocal modes), this is how continuity is
+  carried.
+- **`Available specialists` excludes archivist**: the archivist is invoked
+  exclusively by the orchestrator after each user turn in chat/vocal modes;
+  it is not a delegate target. Hiding it from the list prevents the router
+  from attempting `delegate_to(archivist)` (also rejected at the orchestrator
+  level as a defense-in-depth).
 - `IDENTITY → CONTEXT → DIRECTIVES → OUTPUT CONTRACT` order: identity before
   context, context before rules, contract last. Anchors what the model "is"
   before what it "can do".
@@ -121,5 +153,3 @@ content with `<|turn>user … <turn|>` internally. We never write those tokens.
 - `inbound_text` in the system block (not only in the user message): the
   mission is immutable for the lifetime of a request — the user message
   changes each tool-call iteration, the system prompt does not.
-- `Available specialists` in the system block: prevents the router from
-  hallucinating agent names that don't exist in the DB.
