@@ -9,6 +9,8 @@ VALUES ('mon-specialist', 'Mon Specialist', 'specialist', '<mission>', 1, 0.2, 1
 ```
 `role` ∈ `router | specialist | finalizer`. Ne pas créer de second routeur.
 
+Voir la section "Cas particuliers" en fin de doc pour le choix entre `specialist` et `finalizer`.
+
 **2. DB — Paradigmes (si nécessaire)**
 
 Si les paradigmes globaux suffisent, passer directement au point 4.
@@ -18,6 +20,8 @@ Nouvelle catégorie :
 INSERT INTO categories (section_id, code, title, order_priority, active, created_at, modified_at)
 VALUES ((SELECT id FROM sections WHERE code='process'), 'mon_domaine', 'Mon Domaine', 50, 1, datetime('now'), datetime('now'));
 ```
+
+Sections existantes : `communication`, `reasoning`, `critical_thinking`, `process`, `code`, `safety`. Choisir celle qui correspond le mieux. Pour un paradigme de discipline cognitive ou de garde-fou de raisonnement, `critical_thinking` est probablement le bon foyer.
 
 Nouveau paradigme (`is_global=0` pour un paradigme domaine-spécifique) :
 ```sql
@@ -44,7 +48,7 @@ WHERE a.code = 'mon-specialist'
 INSERT INTO agent_tools (agent_id, tool_code)
 SELECT id, 'nom_de_loutil' FROM agents WHERE code='mon-specialist';
 ```
-Les outils de contrôle (`delegate_to`, `ask_human`, `return_to_user`) sont **toujours disponibles** — ne pas les lister ici.
+Les outils de contrôle (`delegate_to`, `ask_human`, `return_to_user`) sont **toujours disponibles** selon le rôle de l'agent — ne pas les lister ici.
 
 **5. Miroir schema.sql** — reporter les mêmes INSERTs à la fin de `db/schema.sql`.
 
@@ -117,6 +121,7 @@ def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
 - [ ] Agent INSERT dans DB + schema.sql
 - [ ] Catégorie + paradigme INSERT si domaine nouveau (DB + schema.sql)
 - [ ] `agent_paradigms` bindings (DB + schema.sql)
+- [ ] `paradigm_modes` restrictions si le paradigme ne s'applique pas à tous les modes (DB + schema.sql)
 - [ ] `agent_tools` grants si outil Python (DB + schema.sql)
 - [ ] Fichier outil créé si nécessaire
 - [ ] `build_registry` mis à jour si nouvel outil
@@ -128,6 +133,54 @@ def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
 
 - Tool `name` = clé LLM-facing (ex. `conv_read_file`), pas le nom du module Python.
 - Les paradigmes globaux (`is_global=1`) s'appliquent à tous les agents — ne pas les rebinder.
+- Marquer un paradigme `is_global=1` doit être un choix conscient. Préférer un binding explicite si le paradigme ne sert que 2-3 agents : ça évite la pollution des prompts des autres agents.
 - Ne pas hardcoder de grants en Python : toujours passer par `agent_tools`.
 - `build_registry` expose TOUS les outils disponibles ; les grants DB filtrent ce que chaque agent voit dans son prompt.
-- Un agent sans grant d'outils Python reçoit quand même `delegate_to`, `ask_human`, `return_to_user`.
+- Un agent reçoit ses outils de contrôle selon son rôle (cf. cas particuliers ci-dessous).
+
+---
+
+## Cas particuliers
+
+### Restreindre un paradigme à certains modes
+
+Un paradigme peut s'appliquer uniquement dans certains modes via la table `paradigm_modes`. **Convention : absence de ligne = applicable à tous les modes.**
+
+```sql
+-- Paradigme actif uniquement en mode chat
+INSERT INTO paradigm_modes (paradigm_id, mode)
+SELECT id, 'chat' FROM paradigms WHERE code = 'mon_paradigme';
+
+-- Paradigme actif en chat ET vocal (deux lignes)
+INSERT INTO paradigm_modes (paradigm_id, mode) VALUES
+  ((SELECT id FROM paradigms WHERE code='mon_paradigme'), 'chat'),
+  ((SELECT id FROM paradigms WHERE code='mon_paradigme'), 'vocal');
+```
+
+Cas typiques :
+- Un paradigme de relance conversationnelle (« propose 2-3 axes de creusage ») → `chat` seulement.
+- Un paradigme de concision agressive (« réponse en moins de 4 phrases ») → `vocal` seulement.
+- Un paradigme demandant de la profondeur d'analyse → `analyse` + `chat`, exclu de `vocal`.
+
+### Choix du rôle : `specialist` vs `finalizer`
+
+| Rôle | Reçoit `delegate_to` | Reçoit `ask_human` | Reçoit `return_to_user` | Cas d'usage |
+|---|:-:|:-:|:-:|---|
+| `router` | ✓ | ✓ | ✓ | Réservé à jean-michel |
+| `specialist` | ✓ | ✓ | ✓ | Tout agent métier qui peut déléguer ou demander une clarification |
+| `finalizer` | ✗ | ✗ | ✓ | Agent purement mécanique : reçoit des inputs, produit un livrable final |
+
+Le filtrage est appliqué dans `prompts.py:tools_payload_for_agent` selon `agent.role`. Un finalizer ne voit donc que `return_to_user` dans son prompt — il ne peut techniquement pas déléguer ou demander à l'humain, et son `OUTPUT CONTRACT` rendu reflète cette restriction.
+
+Exemples actuels :
+- `synthesizer` est un finalizer : il fusionne plusieurs réponses de spécialistes en une réponse cohérente. Pas de raison de déléguer.
+- `archivist` est un finalizer : il met à jour le `summary.md` à partir d'inputs fournis par l'orchestrateur.
+
+### Agent invoqué uniquement par l'orchestrateur (pas via delegate_to)
+
+Si un nouvel agent ne doit jamais être appelé par un autre LLM (uniquement par du code orchestrateur, comme l'archivist), deux mécanismes le garantissent :
+
+1. **Liste blanche dans l'orchestrateur** : l'agent doit être ajouté à la liste des codes refusés dans `_run_request` quand reçus via `delegate_to`. Aujourd'hui codé en dur pour `archivist`.
+2. **Exclusion de la liste `## Available specialists`** : `prompts.py:render_system_prompt` filtre l'agent de la liste injectée dans le contexte des autres agents.
+
+Ces deux protections sont complémentaires. Modifier `prompts.py` et `orchestrator.py` ensemble pour ajouter un nouvel agent de ce type.
