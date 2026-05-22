@@ -338,7 +338,7 @@ class Orchestrator:
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry)
         self._write_artifact(req_id, agent_code, "prompt",
-            f"## System\n```\n{system}\n```\n\n## User\n```\n{running_user_text}\n```\n")
+            f"## System\n\n{system}\n\n---\n\n## User\n\n{running_user_text}\n")
 
         try:
             llm_steps = 0

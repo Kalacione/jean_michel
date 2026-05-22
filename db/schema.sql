@@ -1482,7 +1482,16 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 - workspace-manager can only manage files — it cannot execute code.
 - Never ask the user to run the code themselves unless the Docker sandbox is explicitly unavailable.',
  'Ensures code-write+run tasks are routed to the agent that can actually execute them.',
- 0, 40, 1, datetime('now'), datetime('now'));
+ 0, 40, 1, datetime('now'), datetime('now')),
+
+(99, 31, 'verify_execution_output', 'Verify execution output',
+ '- After bash_sandbox execution, do not rely on the script''s own stdout to confirm success.
+- A zero exit_code is necessary but not sufficient — call workspace_view on the expected output file to confirm its existence and content.
+- A non-zero exit_code is always a failure: diagnose from stderr before concluding.
+- Only report task complete after observing the actual output via a workspace tool.
+- If the expected output file is missing or has unexpected content, treat the task as incomplete and investigate.',
+ 'Prevents false-success reports where the script claimed to succeed but the output file was not actually created or has wrong content.',
+ 0, 15, 1, datetime('now'), datetime('now'));
 
 -- Bind routing paradigms to jean-michel (id=1)
 INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
@@ -1504,7 +1513,8 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
   (12, 79),  -- prefer_tool_over_parametric_for_volatile
   (12, 80),  -- no_permission_for_obvious_tools
   (12, 91),  -- workspace_tools_only
-  (12, 92);  -- report_before_acting
+  (12, 92),  -- report_before_acting
+  (12, 99);  -- verify_execution_output
 
 -- Agent tools
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
