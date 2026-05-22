@@ -159,6 +159,9 @@ def _render_output_contract(role: str) -> str:
     return (
         "# OUTPUT CONTRACT\n"
         "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
+        "- AGENTS ≠ TOOLS: Entries under 'Delegation targets' are agent codes. "
+        "They are NEVER callable as direct tool function names. "
+        "Use delegate_to(agent_code='...', briefing='...', expected='...') exclusively.\n"
         "- If you must clarify with the user: call ask_human(question, why). "
         "Only one ask_human call per request; group related questions "
         "sharing the same blocker into a single call. `why` is mandatory.\n"
@@ -226,7 +229,9 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"support_files:\n{support_files_block}\n\n"
         f"{ctx.inbound_text}\n\n"
         + _render_prior_clarifications(ctx.turn_clarifications)
-        + f"## Available specialists\n"
+        + f"## Delegation targets\n"
+        f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
+        f"Never use an agent code as a direct tool function name — it will always fail.\n"
         f"{agents_block}\n\n"
         f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"

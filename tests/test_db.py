@@ -17,7 +17,7 @@ class TestAgents:
             "weather-specialist", "wikipedia-specialist",
             "comparator-specialist", "archivist",
             "critical-thinker", "document-builder", "workspace-manager",
-            "meta-analyst",
+            "meta-analyst", "code-runner",
         }
 
     def test_get_agent_by_code(self, tmp_env):
