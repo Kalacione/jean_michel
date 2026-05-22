@@ -20,6 +20,7 @@ Agents actifs :
 - **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une analyse structurée sans verdict
 - **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace de la conversation
 - **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
+- **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect` et produit des propositions d'amélioration dans le workspace
 - **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
 - **archivist** (finalizer) — invoqué uniquement par l'orchestrateur en modes `chat`/`vocal`, met à jour le `summary.md` de la conversation après chaque tour
 
@@ -127,6 +128,15 @@ L'outil `bash_sandbox` exécute des commandes shell dans un container Docker iso
 
 Prérequis : `./jm.sh --build-docker` (une seule fois, ou après modification du Dockerfile).
 
+**Images disponibles :**
+
+| Tag | Contenu | Usage |
+|---|---|---|
+| `jeanmichel-sandbox:py-alpine` | Python 3.13 Alpine + jq + requests/numpy/tabulate | défaut |
+| `jeanmichel-sandbox:node-alpine` | Node 22 Alpine + TypeScript/ts-node | agents JS/TS |
+
+Chaque agent peut utiliser une image différente via la colonne `sandbox_image` de la table `agents` (NULL = image par défaut `py-alpine`).
+
 Grants requis en BDD par agent :
 - `agent_tools` — ligne avec `tool_code='bash_sandbox'`
 - `agent_sandbox_grants` — une ligne par binaire autorisé (ex. `python3`, `jq`, `cat`)
@@ -158,7 +168,9 @@ Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dan
 ./jm.sh --resume        # reprend la dernière conversation active
 ./jm.sh --resume <id>   # reprend une conversation spécifique (id ou préfixe)
 ./jm.sh --list-conv     # liste les conversations actives et exit
-./jm.sh --build-docker  # (optionnel) builde l'image sandbox Docker
+./jm.sh --build-docker              # (optionnel) builde l'image Python Alpine
+./jm.sh --build-docker node-alpine  # (optionnel) builde l'image Node Alpine
+./jm.sh --build-docker all          # (optionnel) builde toutes les images sandbox
 ```
 
 En mode `analyse`, le summary est maintenu (archivist actif) mais les follow-ups narratifs et la concision vocale ne s'appliquent pas.
@@ -198,7 +210,8 @@ jeanmichel/
 ├── pyproject.toml
 ├── user_profile.toml         # description libre de l'humain (édité localement)
 ├── db/
-│   └── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed consolidé)
+│   ├── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed consolidé)
+│   └── migrate_005_alpine_and_introspection.sql  # sandbox_image col + meta-analyst agent
 ├── debug/
 │   ├── inspect_conv.py       # inspection des artefacts d'une conversation
 │   ├── export_db.py          # dump SQL de la base de données
@@ -207,7 +220,8 @@ jeanmichel/
 │   └── paradigm_matrix.py    # visualisation matrice agents × paradigmes × modes
 ├── docker/
 │   └── sandbox/
-│       └── Dockerfile        # image Ubuntu 24.04 pour la sandbox d'exécution
+│       ├── Dockerfile        # Python 3.13 Alpine (défaut, tag py-alpine)
+│       └── Dockerfile.node   # Node 22 Alpine (tag node-alpine)
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
 │   ├── GEMMA4.md             # référence des tokens et comportements Gemma 4
@@ -224,6 +238,7 @@ jeanmichel/
 │   │   ├── _workspace.py     # primitives partagées (path validation, quota)
 │   │   ├── clock.py          # heure courante (stateless)
 │   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
+│   │   ├── self_inspect.py           # snapshot JSON de la config système (stateless)
 │   │   ├── weather.py        # météo via open-meteo (stateless)
 │   │   ├── wikipedia.py      # recherche + lecture Wikipedia (stateless)
 │   │   ├── workspace_create_file.py  # création fichier dans workspace (context-bound)
@@ -243,4 +258,4 @@ jeanmichel/
 
 ## État
 
-10 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, synthesizer, archivist. Outils natifs : clock, conv_read_file, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
+11 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, synthesizer, archivist. Outils natifs : clock, conv_read_file, self_inspect, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.

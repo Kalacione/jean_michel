@@ -231,3 +231,18 @@ INSERT INTO agent_sandbox_grants (agent_id, command) VALUES
 ```
 
 Reporter ces INSERTs dans `db/schema.sql` (convention projet : le schema est la source de vérité, pas la BDD live).
+
+### Choisir l'image Docker sandbox
+
+Par défaut, `bash_sandbox` utilise `jeanmichel-sandbox:py-alpine` (Python 3.13 Alpine). Pour un agent qui a besoin d'un runtime différent, renseigner la colonne `sandbox_image` de la table `agents` :
+
+```sql
+-- Exemple : agent Node.js utilisant l'image node-alpine
+UPDATE agents SET sandbox_image = 'jeanmichel-sandbox:node-alpine' WHERE code = 'mon-agent-node';
+```
+
+Images disponibles :
+- `jeanmichel-sandbox:py-alpine` — Python 3.13, jq, requests/numpy/tabulate (défaut)
+- `jeanmichel-sandbox:node-alpine` — Node 22, TypeScript, ts-node
+
+Build : `./jm.sh --build-docker all` (une seule fois, ou après modification d'un Dockerfile).
