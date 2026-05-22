@@ -28,7 +28,10 @@ _ASK_HUMAN: dict[str, Any] = {
             "questions are genuinely needed and share the same "
             "blocker, group them in `question` as a coherent list "
             "with one shared `why`. "
-            "`why` is mandatory and must explain what is blocked without it."
+            "`why` is mandatory and must explain what is blocked without it. "
+            "IMPORTANT: `question` and `why` MUST be written in the human's "
+            "detected language (see ## Human section), which may differ from "
+            "the internal working language (English)."
         ),
         "parameters": {
             "type": "object",
