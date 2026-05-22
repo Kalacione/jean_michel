@@ -21,6 +21,7 @@ Agents actifs :
 - **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace de la conversation
 - **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
 - **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect` et produit des propositions d'amélioration dans le workspace
+- **code-runner** (specialist) — écrit des scripts dans le workspace de la conversation et les exécute dans le sandbox Docker : cycle complet écriture → exécution en un seul tour
 - **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
 - **archivist** (finalizer) — invoqué uniquement par l'orchestrateur en modes `chat`/`vocal`, met à jour le `summary.md` de la conversation après chaque tour
 
@@ -112,7 +113,7 @@ Tri lexicographique = tri chronologique.
 
 ## Workspace agents
 
-Les agents `document-builder` et `workspace-manager` peuvent manipuler des fichiers dans un sous-dossier `workspace/` de leur conversation. Ce dossier est sandboxé : impossible d'écrire dans les artefacts root ni d'en sortir par path traversal.
+Les agents `document-builder`, `workspace-manager` et `code-runner` peuvent manipuler des fichiers dans un sous-dossier `workspace/` de leur conversation. Ce dossier est sandboxé : impossible d'écrire dans les artefacts root ni d'en sortir par path traversal.
 
 Outils disponibles : `workspace_create_file`, `workspace_str_replace`, `workspace_view`, `workspace_list`.
 
@@ -121,6 +122,16 @@ L'accès est opt-in par agent via deux grants BDD :
 - `agent_workspace_grants` — active l'écriture (sans cette ligne, l'agent est read-only)
 
 Quota : 256 Mo par workspace. Les fichiers workspace ne sont **pas** tracés dans la table `artifacts` — le filesystem est l'inventaire.
+
+### Cycle écriture + exécution
+
+`code-runner` est le seul agent qui combine workspace write et `bash_sandbox`. Il gère le cycle complet sans délégation intermédiaire :
+
+1. `workspace_create_file` — écrit le script dans `workspace/`
+2. `bash_sandbox` — l'exécute dans le container Docker monté sur ce même dossier
+3. Les fichiers produits (ex. `.md`, `.csv`) sont accessibles dans le workspace
+
+Jean-Michel route automatiquement vers `code-runner` quand la demande implique à la fois écriture et exécution de code.
 
 ## Sandbox
 
@@ -211,7 +222,8 @@ jeanmichel/
 ├── user_profile.toml         # description libre de l'humain (édité localement)
 ├── db/
 │   ├── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed consolidé)
-│   └── migrate_005_alpine_and_introspection.sql  # sandbox_image col + meta-analyst agent
+│   ├── migrate_005_alpine_and_introspection.sql  # sandbox_image col + meta-analyst agent
+│   └── migrate_006_code_runner.sql               # code-runner agent + routing fix (agents≠tools)
 ├── debug/
 │   ├── inspect_conv.py       # inspection des artefacts d'une conversation
 │   ├── export_db.py          # dump SQL de la base de données
@@ -258,4 +270,4 @@ jeanmichel/
 
 ## État
 
-11 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, synthesizer, archivist. Outils natifs : clock, conv_read_file, self_inspect, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
+12 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, code-runner, synthesizer, archivist. Outils natifs : clock, conv_read_file, self_inspect, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.

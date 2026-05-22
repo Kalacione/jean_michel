@@ -201,6 +201,9 @@ Prérequis système : image Docker buildée (`./jm.sh --build-docker`, une seule
 
 Exemple complet — créer un agent `code-runner` avec workspace write et sandbox Python :
 
+> **Note** : `code-runner` est déjà en production (id=12, `db/migrate_006_code_runner.sql`).
+> Cet exemple sert de référence pour créer un agent similaire.
+
 ```sql
 -- 1. Agent
 INSERT INTO agents (code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at)
