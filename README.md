@@ -74,7 +74,8 @@ Détails et rationale dans `docs/PROMPT_SKELETON.md`.
 
 Les agents communiquent par **tool calls natifs Gemma 4**, jamais par texte libre :
 
-- `delegate_to(agent_code, briefing, support_files, expected)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur. Le retour est un objet structuré `{agent, artifact, answer}` — l'agent appelant utilise le champ `artifact` (filename relatif au dossier de conversation) pour le passer en `support_files` au prochain delegate, sans recopier le contenu.
+- `delegate_to(agent_code, briefing, support_files, expected)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur. Le retour est un objet structuré `{agent, artifact, answer, converged?}` — l'agent appelant utilise le champ `artifact` (filename relatif au dossier de conversation) pour le passer en `support_files` au prochain delegate, sans recopier le contenu. Si `converged: true`, l'enfant a signalé qu'il a atteint sa limite de profondeur utile — ne pas re-déléguer la même question.
+- `signal_convergence(synthesis, open_questions?)` — exit structuré pour un agent à `depth >= 2` quand l'analyse a atteint son plafond et que continuer serait redondant. Différent de `return_to_user` : signale explicitement au parent que la profondeur est épuisée. Uniquement disponible à `recursion_depth >= 2`.
 - `ask_human(question, why)` — pause la requête, demande à l'humain. `why` obligatoire. Une seule question par requête.
 - `return_to_user(answer)` — réponse finale.
 
@@ -88,6 +89,8 @@ L'**archivist** est le seul agent non délégable : il est invoqué uniquement p
 - Au-delà de 5, l'orchestrateur rejette les nouvelles délégations avec un `tool_response` d'erreur explicite et force l'agent à conclure.
 - **Step budget** : `MAX_STEPS_PER_REQUEST = 8` itérations tool-call/tool-response par requête. Filet anti-tool-loop. Configurables dans `config.py`.
 - **`ask_human`** : une seule par requête. Toute tentative supplémentaire reçoit un `tool_response` d'erreur.
+- **Convergence gate** (`signal_convergence`) : à `depth >= 2`, `critical-thinker`, `meta-analyst` et `synthesizer` voient le tool `signal_convergence`. Paradigme `convergence_gate` (id=100) les instruit de l'utiliser quand l'analyse a atteint son plafond au lieu de continuer à déléguer. Évite les boucles d'analyse mutuelle sans nouvelles informations.
+- **Grounded analysis** : paradigme `grounded_analysis` (id=101) sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` (id=102) sur `jean-michel` — impose une phase de recherche avant de déléguer à un agent analytique sur une question factuelle complexe.
 
 ## Persistance
 
