@@ -288,6 +288,37 @@ class TestWikipedia:
             result = json.loads(WIKI_SEARCH.handler(query="anything"))
         assert "error" in result
 
+    def test_search_retries_on_busy_error_then_succeeds(self):
+        """Busy error on first attempt → retry → success on second attempt."""
+        busy = Exception('An unknown error occured: "Search is currently too busy. Please try again later."')
+        call_count = {"n": 0}
+
+        def _side_effect(query, results):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise busy
+            return _FAKE_SEARCH_RESULTS
+
+        with patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=_side_effect):
+            with patch("jeanmichel.tools.wikipedia.time.sleep") as mock_sleep:
+                result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
+
+        assert "results" in result
+        assert "error" not in result
+        assert call_count["n"] == 2
+        mock_sleep.assert_called_once()
+
+    def test_search_all_retries_exhausted_returns_error_with_hint(self):
+        """Busy error on all attempts → error JSON with a hint to use get_page."""
+        busy = Exception('Search is currently too busy. Please try again later.')
+
+        with patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=busy):
+            with patch("jeanmichel.tools.wikipedia.time.sleep"):
+                result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
+
+        assert "error" in result
+        assert "hint" in result
+
     def test_get_page_returns_content(self):
         with patch("jeanmichel.tools.wikipedia._wiki_get_page", return_value=_FAKE_PAGE):
             result = json.loads(WIKI_GET_PAGE.handler(title="Leaning Tower of Pisa"))

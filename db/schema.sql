@@ -1574,7 +1574,8 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
    '- BEFORE starting any research or analysis task, call workspace_list to check if a relevant file already exists. If it does, read it with workspace_view — do not redo work already done.
 - AFTER completing your work, write your findings to a workspace file so other agents can use them without re-running the same operation.
 - File naming convention: {agent-code}_{topic-slug}.{ext} — all lowercase, hyphens for spaces. Examples: wikipedia-specialist_ai-alignment.md, critical-thinker_ethics-analysis.md, code-runner_benchmark.py. No CamelCase, no generic names like report.md or output.md.
-- Keep workspace files concise and structured — they are reference material, not verbose reports.',
+- Keep workspace files concise and structured — they are reference material, not verbose reports.
+- CRITICAL: Never reference a workspace file path in a briefing or support_files unless you called workspace_create_file for that exact path in this same request. The file must physically exist before the downstream agent attempts to read it.',
    'Turns the workspace into a shared knowledge base across agents in a conversation, reducing redundant work and recursive loops.', 0, 75, 1, datetime('now'), datetime('now'));
 
 -- Agent-paradigm bindings (100-103)

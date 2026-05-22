@@ -11,8 +11,12 @@ wrapper functions so missing installs surface as clear error strings.
 from __future__ import annotations
 
 import json
+import time
 
 from ._base import ToolSpec
+
+_SEARCH_RETRIES = 2      # extra attempts after first failure
+_RETRY_DELAY_S = 0.5    # seconds between retries
 
 _MAX_CONTENT_CHARS = 12_000   # page content ceiling — pages can be 100 k+ chars
 _MAX_SUMMARY_CHARS = 2_000    # summary ceiling
@@ -51,11 +55,22 @@ def _wiki_get_page(title: str, language: str = "en") -> dict:
 # ---------------------------------------------------------------------------
 
 def _search_handler(query: str, results: int = 5) -> str:
-    try:
-        titles = _wiki_search(query, results=max(1, min(int(results), 10)))
-        return json.dumps({"query": query, "results": titles})
-    except Exception as e:
-        return json.dumps({"error": f"Wikipedia search failed: {e}"})
+    results_count = max(1, min(int(results), 10))
+    last_err: Exception | None = None
+    for attempt in range(_SEARCH_RETRIES + 1):
+        try:
+            titles = _wiki_search(query, results=results_count)
+            return json.dumps({"query": query, "results": titles})
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if "too busy" in str(e).lower() and attempt < _SEARCH_RETRIES:
+                time.sleep(_RETRY_DELAY_S)
+                continue
+            break
+    return json.dumps({
+        "error": f"Wikipedia search failed: {last_err}",
+        "hint": "If the article title is well-known, try wikipedia_get_page with the exact title directly.",
+    })
 
 
 def _get_page_handler(title: str, language: str = "en") -> str:
