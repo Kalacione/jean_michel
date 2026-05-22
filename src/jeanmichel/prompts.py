@@ -214,7 +214,10 @@ def _render_output_contract(role: str) -> str:
         "filename in support_files (conv_read_file). "
         "For data you fetched/wrote to the workspace, reference the workspace path "
         "in the briefing text — do NOT put workspace paths in support_files. "
-        "Do NOT copy specialist `answer` content inline into the next briefing.\n"
+        "Do NOT copy another agent's `answer` field inline into a subsequent briefing — "
+        "use the artifact filename instead. "
+        "Your own fetched data (tool results, retrieved content, etc.) MUST be "
+        "embedded directly in the briefing text when passing it to a downstream agent.\n"
         "- If task is yours and complete: call return_to_user(answer).\n"
         "- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"
     )

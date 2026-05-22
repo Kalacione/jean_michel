@@ -1660,3 +1660,18 @@ INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
 
 INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
   (11, 'conv_history_scan');
+
+-- =============================================================
+-- MIGRATION 017 — wikipedia_deliver_directly + output contract fix
+-- =============================================================
+
+-- Paradigme 105 : wikipedia-specialist retourne directement, ne délègue pas
+INSERT OR IGNORE INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+(105, 20, 'wikipedia_deliver_directly', 'Deliver findings directly',
+'- After fetching and extracting Wikipedia content, return it via return_to_user. Do not delegate to summarizer or document-builder to re-process what you already extracted.
+- You are the extraction specialist. Your output IS the deliverable.
+- Only delegate if explicitly asked to produce a formatted workspace document.',
+'Prevents unnecessary sub-delegation chains that break when files are not persisted.',
+0, 5, 1, datetime('now'), datetime('now'));
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (5, 105);
