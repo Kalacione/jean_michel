@@ -316,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts)
         except Exception as e:  # noqa: BLE001
             console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
+            orch.cleanup_sandbox()
             return 1
 
         console.print()

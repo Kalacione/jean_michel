@@ -195,7 +195,7 @@ class Orchestrator:
             )
 
     def close_conversation(self) -> None:
-        """Mark the conversation as closed in DB. Safe to call multiple times."""
+        """Mark the conversation as closed in DB and clean up the sandbox. Safe to call multiple times."""
         if self.conv_folder is None:
             return
         with db.connect() as conn:
@@ -211,6 +211,7 @@ class Orchestrator:
                     "modified_at=datetime('now') WHERE id=?",
                     (self.conv_id,),
                 )
+        self.cleanup_sandbox()
 
     def run(self, user_input: str) -> Generator[object]:
         """Process one user input. Yields events; the CLI consumes them."""
