@@ -1662,16 +1662,27 @@ INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
   (11, 'conv_history_scan');
 
 -- =============================================================
--- MIGRATION 017 — wikipedia_deliver_directly + output contract fix
+-- MIGRATION 017 — output contract fix (données fetchées dans briefing)
 -- =============================================================
 
--- Paradigme 105 : wikipedia-specialist retourne directement, ne délègue pas
+-- Paradigme 105 : ANNULÉ — mauvaise approche (wikipedia ne retourne pas directement)
 INSERT OR IGNORE INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
-(105, 20, 'wikipedia_deliver_directly', 'Deliver findings directly',
+(105, 20, 'wikipedia_deliver_directly', 'Deliver findings directly [ANNULÉ]',
 '- After fetching and extracting Wikipedia content, return it via return_to_user. Do not delegate to summarizer or document-builder to re-process what you already extracted.
 - You are the extraction specialist. Your output IS the deliverable.
 - Only delegate if explicitly asked to produce a formatted workspace document.',
 'Prevents unnecessary sub-delegation chains that break when files are not persisted.',
-0, 5, 1, datetime('now'), datetime('now'));
+0, 5, 0, datetime('now'), datetime('now'));
+
+-- Paradigme 106 : persist avant delegate — le vrai fix
+INSERT OR IGNORE INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+(106, 20, 'wikipedia_persist_before_delegate', 'Persist content before delegating to summarizer',
+'- After wikipedia_get_page, your NEXT call must be workspace_create_file to write the fetched content to the workspace. Do this before any delegate_to call.
+- Naming convention: {agent-code}_{topic-slug}.md (e.g. wikipedia-specialist_nazism.md)
+- Then delegate to summarizer with the workspace path in the briefing text: "The source material is in workspace file: <path>"
+- Never call delegate_to referencing a workspace path that you have not written in this same request.',
+'Ensures the file physically exists when summarizer tries to read it. Eliminates the hallucinated-file failure mode.',
+0, 6, 1, datetime('now'), datetime('now'));
 
 INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (5, 105);
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (5, 106);
