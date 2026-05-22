@@ -76,6 +76,7 @@ CREATE TABLE agents (
   thinking_mode  INTEGER NOT NULL DEFAULT 1,
   temperature    REAL NOT NULL DEFAULT 0.2,
   active         INTEGER NOT NULL DEFAULT 1,
+  sandbox_image  TEXT,                        -- Docker image override for bash_sandbox (NULL = system default)
   created_at     TEXT NOT NULL,
   modified_at    TEXT NOT NULL
 );
@@ -1384,3 +1385,78 @@ INSERT INTO agent_tools (agent_id, tool_code) VALUES
 
 -- Workspace write grants (both agents may create and edit workspace files)
 INSERT INTO agent_workspace_grants (agent_id) VALUES (9), (10);
+
+-- =============================================================
+-- SEEDS — meta-analyst (id=11)
+-- Introspection specialist: reads system state via self_inspect and
+-- produces analysis + improvement proposals as workspace documents.
+-- =============================================================
+
+-- Category (section process = id 3)
+INSERT INTO categories (id, section_id, code, title, order_priority, active, created_at, modified_at) VALUES
+  (32, 3, 'meta_analysis', 'Meta-analysis', 90, 1, datetime('now'), datetime('now'));
+
+-- Paradigms
+INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+(94, 32, 'inspect_before_proposing', 'Inspect before proposing',
+ '- Always call self_inspect before making any statement about the system configuration.
+- Never rely on your training data or prior context to describe the current agent roster, tool grants, or paradigm assignments.
+- Observe, then reason.',
+ 'Prevents hallucinating system state.',
+ 0, 10, 1, datetime('now'), datetime('now')),
+
+(95, 32, 'improvement_proposals_format', 'Structured improvement proposals',
+ '- Structure proposals as:
+  1. Observation — what you observed from self_inspect data.
+  2. Problem statement — what is sub-optimal and why.
+  3. Proposed change — concrete SQL INSERTs/UPDATEs or Python changes.
+  4. Risk assessment — what could break, what to test.
+- Never propose a change you cannot justify with data from self_inspect.
+- Proposals are written to workspace files, not returned inline.',
+ 'Enforces traceable, data-driven proposals.',
+ 0, 20, 1, datetime('now'), datetime('now')),
+
+(96, 32, 'no_self_modification', 'No self-modification',
+ '- You produce proposals — you do not execute them.
+- Never call workspace_create_file to write Python source files that would alter system behavior.
+- Write SQL proposals, human-readable analysis documents, and checklists only.',
+ 'Hard safety boundary: the meta-analyst observes and proposes, the human decides and applies.',
+ 0, 30, 1, datetime('now'), datetime('now'));
+
+-- Agent
+INSERT INTO agents (id, code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at) VALUES
+(11, 'meta-analyst', 'Meta-Analyst', 'specialist',
+ 'Analyze Jean-Michel''s own configuration, activity patterns, and conversation history to identify sub-optimal setups, missing tool grants, underused agents, and improvement opportunities. Produce structured proposals as workspace documents. Observe via self_inspect and workspace tools — never assume system state from memory.',
+ 1, 0.3, 1, datetime('now'), datetime('now'));
+
+-- Agent paradigms
+INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
+  (11,  4),   -- one_question_at_a_time
+  (11,  8),   -- depth_over_speed
+  (11, 36),   -- parse_briefing_first
+  (11, 39),   -- questioning_priority
+  (11, 41),   -- confirmation_bias_check
+  (11, 49),   -- assumption_surface
+  (11, 68),   -- address_then_clarify
+  (11, 73),   -- answer_in_layers
+  (11, 77),   -- plan_before_complex_action
+  (11, 80),   -- no_permission_for_obvious_tools
+  (11, 87),   -- resolve_source_conflicts
+  (11, 88),   -- document_workspace_output
+  (11, 89),   -- structure_before_writing
+  (11, 90),   -- faithful_to_sources
+  (11, 94),   -- inspect_before_proposing
+  (11, 95),   -- improvement_proposals_format
+  (11, 96);   -- no_self_modification
+
+-- Agent tools
+INSERT INTO agent_tools (agent_id, tool_code) VALUES
+  (11, 'self_inspect'),
+  (11, 'conv_read_file'),
+  (11, 'workspace_create_file'),
+  (11, 'workspace_str_replace'),
+  (11, 'workspace_view'),
+  (11, 'workspace_list');
+
+-- Workspace write grant (proposals are written as workspace documents)
+INSERT INTO agent_workspace_grants (agent_id) VALUES (11);
