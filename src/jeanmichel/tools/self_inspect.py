@@ -31,7 +31,7 @@ def _handler(scope: str = "full") -> str:
             "recent_summaries" — content of the last N conversation summary.md files.
             "full"             — agents + conversations (default).
     """
-    valid_scopes = ("agents", "paradigms", "conversations", "sandbox", "recent_summaries", "full")
+    valid_scopes = ("agents", "paradigms", "conversations", "sandbox", "recent_summaries", "architecture", "full")
     if scope not in valid_scopes:
         return json.dumps({"error": f"Invalid scope '{scope}'. Valid: {valid_scopes}"})
 
@@ -56,6 +56,9 @@ def _handler(scope: str = "full") -> str:
 
         if scope == "recent_summaries":
             result["recent_summaries"] = _recent_summaries_snapshot(conn)
+
+        if scope == "architecture":
+            result["architecture"] = _architecture_snapshot()
 
         conn.close()
         return json.dumps(result, indent=2)
@@ -234,6 +237,26 @@ def _sandbox_snapshot(conn: sqlite3.Connection) -> dict:
     }
 
 
+def _architecture_snapshot() -> dict:
+    """Return README.md and db/schema.sql to give agents awareness of their own architecture."""
+    root = config.REPO_ROOT
+    result: dict = {}
+
+    readme = root / "README.md"
+    if readme.exists():
+        result["readme"] = readme.read_text(encoding="utf-8")
+    else:
+        result["readme"] = None
+
+    schema = root / "db" / "schema.sql"
+    if schema.exists():
+        result["schema_sql"] = schema.read_text(encoding="utf-8")
+    else:
+        result["schema_sql"] = None
+
+    return result
+
+
 def _recent_summaries_snapshot(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
     """Return the content of summary.md for the N most recent conversations."""
     rows = conn.execute(
@@ -282,6 +305,8 @@ SPEC = ToolSpec(
         "scope='sandbox': execution audit (last 50 rows). "
         "scope='recent_summaries': content of the last 5 conversation summary.md files — "
         "use this to observe actual conversation quality and user needs. "
+        "scope='architecture': README.md + db/schema.sql — use this to understand the "
+        "system's real structure, table names, and column names before proposing changes. "
         "scope='full': agents + activity (default)."
     ),
     parameters={
@@ -289,11 +314,12 @@ SPEC = ToolSpec(
         "properties": {
             "scope": {
                 "type": "string",
-                "enum": ["agents", "paradigms", "conversations", "sandbox", "recent_summaries", "full"],
+                "enum": ["agents", "paradigms", "conversations", "sandbox", "recent_summaries", "architecture", "full"],
                 "description": (
                     "What data to return: "
                     "'agents', 'paradigms', 'conversations', 'sandbox', "
                     "'recent_summaries' (summary.md of last 5 conversations), "
+                    "'architecture' (README + DB schema — read this before proposing SQL changes), "
                     "or 'full' (agents + activity)."
                 ),
             },
