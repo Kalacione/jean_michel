@@ -13,55 +13,39 @@ Voir `ANALYSE.md` — 4 trous identifiés, 4 phases.
 
 ---
 
-### [ ] P4 — Paradigme `meta_analysis_routing` → jean-michel
-**Objectif** : Guider jean-michel à déléguer au meta-analyst toute tâche d'introspection système, sans tenter d'y accéder directement.
+### ✅ P4 — Paradigme `meta_analysis_routing` → jean-michel
+**Commit** : `907c484`
 
-- [ ] Insérer paradigme 104 (`meta_analysis_routing`) — catégorie 11 (handoff)
-- [ ] Binder à jean-michel (id=1) dans `agent_paradigms`
-- [ ] Migration SQL `db/migrate_013_meta_analysis_routing.sql`
-- [ ] Mise à jour `db/schema.sql`
-- [ ] Tests verts
-
----
-
-### [ ] P3 — Workspace write grants : principe de moindre privilège
-**Objectif** : Retirer `workspace_create_file` + `workspace_str_replace` + `agent_workspace_grants` des agents sans vocation d'écriture.
-
-Agents concernés : summarizer (2), synthesizer (3), comparator-specialist (6)
-
-- [ ] `DELETE` agent_tools pour (2, 3, 6) × (workspace_create_file, workspace_str_replace)
-- [ ] `DELETE` agent_workspace_grants pour (2), (3), (6)
-- [ ] Migration SQL `db/migrate_014_workspace_grants_least_privilege.sql`
-- [ ] Mise à jour `db/schema.sql`
-- [ ] Mise à jour paradigme 103 `workspace_as_shared_memory` : clarifier que certains agents sont read-only
-- [ ] Tests mis à jour (test_db.py : assertions grants summarizer/synthesizer)
+- [x] Insérer paradigme 104 (`meta_analysis_routing`) — catégorie 11 (handoff)
+- [x] Binder à jean-michel (id=1) dans `agent_paradigms`
+- [x] Migration SQL `db/migrate_013_meta_analysis_routing.sql`
+- [x] Mise à jour `db/schema.sql`
+- [x] Tests verts
 
 ---
 
-### [ ] P2 — Découpage `self_inspect` en outils distincts
-**Objectif** : Granularité réelle des grants — pas de "tout ou rien" sur 7 scopes.
+### ✅ P3 — Workspace write grants : principe de moindre privilège
+**Commit** : `907c484`
 
-Découpage proposé :
-- `self_inspect_config` → scopes `agents` + `paradigms`
-- `self_inspect_activity` → scopes `conversations` + `sandbox` + `recent_summaries`
-- `self_inspect_architecture` → scope `architecture` (README + schema.sql)
+- [x] `DELETE` agent_tools pour (2, 3, 6) × (workspace_create_file, workspace_str_replace)
+- [x] `DELETE` agent_workspace_grants pour (2), (3), (6)
+- [x] Migration SQL `db/migrate_014_workspace_grants_least_privilege.sql`
+- [x] Mise à jour `db/schema.sql`
+- [x] Tests mis à jour (test_db.py)
 
-Grants cibles :
-| Outil | meta-analyst | code-runner | document-builder |
-|---|:---:|:---:|:---:|
-| self_inspect_config | ✓ | — | — |
-| self_inspect_activity | ✓ | — | — |
-| self_inspect_architecture | ✓ | ✓ | ✓ |
+---
 
-- [ ] Créer `src/jeanmichel/tools/self_inspect_config.py`
-- [ ] Créer `src/jeanmichel/tools/self_inspect_activity.py`
-- [ ] Créer `src/jeanmichel/tools/self_inspect_architecture.py`
-- [ ] Déprécier/supprimer ancien `self_inspect` (ou le garder en alias meta-analyst-only pendant transition)
-- [ ] Enregistrer les 3 outils dans `build_registry`
-- [ ] Migration SQL `db/migrate_015_self_inspect_split.sql`
-- [ ] Mise à jour `db/schema.sql`
-- [ ] Mise à jour paradigme `inspect_before_proposing` (94)
-- [ ] Tests
+### ✅ P2 — Découpage `self_inspect` en outils distincts
+**Commit** : `907c484`
+
+- [x] Créer `src/jeanmichel/tools/self_inspect_config.py`
+- [x] Créer `src/jeanmichel/tools/self_inspect_activity.py`
+- [x] Créer `src/jeanmichel/tools/self_inspect_architecture.py`
+- [x] Enregistrer les 3 outils dans `build_registry`
+- [x] Migration SQL `db/migrate_015_self_inspect_split.sql`
+- [x] Mise à jour `db/schema.sql`
+- [x] Mise à jour paradigme `inspect_before_proposing` (94)
+- [x] Tests verts (147/147)
 
 ---
 
