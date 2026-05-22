@@ -40,7 +40,7 @@ Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
-  --build-docker [TAG]        Build the sandbox Docker image (default tag: jeanmichel-sandbox:24.04)
+  --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
@@ -205,9 +205,39 @@ cmd_test() {
 }
 
 cmd_build_docker() {
-  local image_tag="${1:-jeanmichel-sandbox:24.04}"
-  docker build -t "${image_tag}" "${PROJECT_ROOT}/docker/sandbox/"
-  echo "Sandbox image built: ${image_tag}"
+  # Usage:
+  #   ./jm.sh --build-docker              — build default Python Alpine image
+  #   ./jm.sh --build-docker py-alpine    — same, explicit
+  #   ./jm.sh --build-docker node-alpine  — build Node Alpine image
+  #   ./jm.sh --build-docker all          — build all images
+  local variant="${1:-py-alpine}"
+
+  build_one() {
+    local tag="$1"
+    local dockerfile="$2"
+    echo "Building jeanmichel-sandbox:${tag} from ${dockerfile}..."
+    docker build -t "jeanmichel-sandbox:${tag}" -f "${PROJECT_ROOT}/docker/sandbox/${dockerfile}" "${PROJECT_ROOT}/docker/sandbox/"
+    echo "  → jeanmichel-sandbox:${tag} ready."
+  }
+
+  case "${variant}" in
+    py-alpine|python)
+      build_one "py-alpine" "Dockerfile"
+      ;;
+    node-alpine|node)
+      build_one "node-alpine" "Dockerfile.node"
+      ;;
+    all)
+      build_one "py-alpine"   "Dockerfile"
+      build_one "node-alpine" "Dockerfile.node"
+      ;;
+    *)
+      # Legacy: treat the argument as a full image tag for the default Dockerfile.
+      echo "Building jeanmichel-sandbox:${variant}..."
+      docker build -t "jeanmichel-sandbox:${variant}" "${PROJECT_ROOT}/docker/sandbox/"
+      echo "  → jeanmichel-sandbox:${variant} ready."
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------

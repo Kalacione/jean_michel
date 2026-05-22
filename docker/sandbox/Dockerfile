@@ -1,19 +1,34 @@
-FROM ubuntu:24.04
+# Python Alpine sandbox image for Jean-Michel.
+# Aim: smallest possible image with Python 3 + common data tools.
+# ~120 MB vs ~350 MB for ubuntu:24.04.
+#
+# Build: ./jm.sh --build-docker             (default tag: jeanmichel-sandbox:py-alpine)
+# Build: ./jm.sh --build-docker py-alpine   (explicit)
+FROM python:3.13-alpine
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv \
+# Runtime packages — curl & git are useful but absent from network-isolated
+# containers; they're here for cases where the operator relaxes --network=none.
+RUN apk add --no-cache \
+        bash \
         jq \
-        curl ca-certificates \
+        curl \
+        ca-certificates \
         git \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/cache/apk/*
 
-# Pre-create a non-root user (use uid 1001 — ubuntu:24.04 already has uid 1000).
-RUN useradd -m -s /bin/bash -u 1001 sandbox
+# Non-root sandbox user.
+RUN addgroup -S sandbox && adduser -S -G sandbox -u 1000 sandbox
 
-# Pre-create a python venv as sandbox user (reusable across runs).
+# Pre-create a Python venv owned by the sandbox user.
 USER sandbox
 WORKDIR /home/sandbox
 RUN python3 -m venv venv
 
-# Default working dir when commands are exec'd.
+# Install commonly useful Python packages into the venv.
+RUN venv/bin/pip install --no-cache-dir \
+        requests \
+        numpy \
+        tabulate
+
+# Default working directory when commands are exec'd via docker exec.
 WORKDIR /workspace

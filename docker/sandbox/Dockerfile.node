@@ -1,0 +1,23 @@
+# Node Alpine sandbox image for Jean-Michel.
+# Target: JS / TypeScript agents.
+# ~170 MB.
+#
+# Build: ./jm.sh --build-docker node-alpine
+FROM node:22-alpine
+
+RUN apk add --no-cache \
+        bash \
+        jq \
+        curl \
+        ca-certificates \
+        git \
+    && rm -rf /var/cache/apk/*
+
+# Non-root sandbox user.
+RUN addgroup -S sandbox && adduser -S -G sandbox -u 1000 sandbox
+
+# Pre-install common Node packages globally.
+RUN npm install -g typescript ts-node
+
+USER sandbox
+WORKDIR /workspace
