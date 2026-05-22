@@ -17,7 +17,7 @@ USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
 # ---- Runtime constants ----------------------------------------------------
 
 # Hard cap on delegation chain depth. Enforced by the orchestrator.
-MAX_RECURSION_DEPTH = 5
+MAX_RECURSION_DEPTH = 10
 
 # Hard cap on tool-call iterations within a single agent request. Prevents
 # tool-loop runaway when an agent gets stuck (e.g. retrying a failing tool).

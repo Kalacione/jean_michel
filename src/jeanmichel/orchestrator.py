@@ -435,6 +435,25 @@ class Orchestrator:
                         briefing = call.arguments.get("briefing", "")
                         expected = call.arguments.get("expected", "")
                         sup_files = call.arguments.get("support_files") or []
+                        # Validate that every support_file actually exists in the
+                        # conversation folder. Agents can only write to the workspace
+                        # (workspace_create_file) — they cannot write to conv_folder.
+                        # support_files is exclusively for orchestrator-written artifacts.
+                        missing = [f for f in sup_files
+                                   if not (self.conv_folder / f).exists()]
+                        if missing:
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    f"support_files not found in conversation folder: {missing}. "
+                                    "support_files is only for orchestrator artifact filenames "
+                                    "(the `artifact` value from a previous delegate_to result). "
+                                    "For fetched data (e.g. Wikipedia), write it to the workspace "
+                                    "with workspace_create_file, then reference the workspace "
+                                    "path in the briefing text."
+                                ),
+                            }))
+                            continue
                         yield DelegationStarted(parent_agent=agent_code,
                                                 child_agent=child_code, briefing=briefing)
                         self._write_artifact(req_id, agent_code, "briefing",
@@ -613,7 +632,13 @@ class Orchestrator:
     def _handle_ask_human(self, req_id: str, agent_code: str,
                           args: dict) -> Generator[object, None, str]:
         question = args.get("question", "")
+        if isinstance(question, list):
+            question = "\n".join(str(q) for q in question)
+        elif not isinstance(question, str):
+            question = str(question)
         why = args.get("why", "")
+        if not isinstance(why, str):
+            why = str(why)
         self._write_artifact(req_id, agent_code, "ask_human",
             f"**why:** {why}\n\n**question:**\n{question}")
         with db.connect() as conn:

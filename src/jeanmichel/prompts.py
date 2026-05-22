@@ -75,8 +75,14 @@ _DELEGATE_TO: dict[str, Any] = {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Filenames (relative to the conversation folder) the "
-                        "receiving agent should read with conv_read_file."
+                        "Artifact filenames (relative to the conversation folder) "
+                        "for the receiving agent to read with conv_read_file. "
+                        "ONLY use this for orchestrator-written artifacts "
+                        "(e.g. the `artifact` value from a previous delegate_to result). "
+                        "For data you fetched or computed (e.g. Wikipedia text), "
+                        "write it to the workspace with workspace_create_file first, "
+                        "then reference the workspace path in the briefing text "
+                        "— NOT in support_files."
                     ),
                 },
                 "expected": {"type": "string", "description": "Expected outcome shape."},
@@ -204,7 +210,10 @@ def _render_output_contract(role: str) -> str:
         "- If task belongs to another specialist: call delegate_to(...). "
         "Multiple parallel delegate_to calls allowed in the same turn.\n"
         "- A delegate_to result is a structured object {agent, artifact, answer}. "
-        "When forwarding to a finalizer, pass the `artifact` filename in support_files. "
+        "When forwarding a specialist artifact to a finalizer, pass the `artifact` "
+        "filename in support_files (conv_read_file). "
+        "For data you fetched/wrote to the workspace, reference the workspace path "
+        "in the briefing text — do NOT put workspace paths in support_files. "
         "Do NOT copy specialist `answer` content inline into the next briefing.\n"
         "- If task is yours and complete: call return_to_user(answer).\n"
         "- Inter-agent briefings: English. Human-facing output: see ## Human detected language.\n"

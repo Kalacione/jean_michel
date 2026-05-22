@@ -420,9 +420,9 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  1, 10, 1, datetime('now'), datetime('now')),
 
 (21, 18, 'depth_aware', 'Depth aware',
- '- Current recursion depth is shown in CONTEXT. Hard limit is 5.
+ '- Current recursion depth is shown in CONTEXT. Hard limit is 10.
 - If you reach the limit, you must conclude with the information at hand and explicitly state that the recursion limit was reached.',
- 'The orchestrator also enforces this — delegate_to past depth=5 is rejected.',
+ 'The orchestrator also enforces this — delegate_to past depth=10 is rejected.',
  1, 10, 1, datetime('now'), datetime('now'));
 
 -- process / meteorology — weather-specialist
