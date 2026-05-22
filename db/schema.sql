@@ -1536,3 +1536,84 @@ INSERT INTO agent_sandbox_grants (agent_id, command) VALUES
   (12, 'ls'),
   (12, 'jq'),
   (12, 'echo');
+
+-- =============================================================
+-- Seeds from migrations 008-011 (convergence gate, grounding, workspace)
+-- =============================================================
+
+-- Paradigms 100-103
+INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
+  (100, 18, 'convergence_gate', 'Convergence gate',
+   '- At recursion_depth >= 2, after receiving results from sub-agents, evaluate whether further analysis would add new information or simply restate what is already known.
+- If your analysis has plateaued (no new contradictions to resolve, no new evidence to gather, no new sub-questions opened), call signal_convergence(synthesis, open_questions) instead of delegating further.
+- signal_convergence is NOT giving up — it is the correct exit when depth has been reached and the parent agent is better positioned to integrate the results.
+- If a delegate_to result contains "converged": true, the child has already signalled it reached its depth limit. Integrate its synthesis; do not re-delegate the same question downward.
+- Only call signal_convergence when genuinely converged. If meaningful work remains, continue.',
+   'Prevents infinite analytical loops by giving agents an explicit, structured exit signal when depth > 2 and further recursion would not improve the output.', 0, 90, 1, datetime('now'), datetime('now')),
+  (101, 5, 'grounded_analysis', 'Grounded analysis',
+   '- Before analyzing factual claims, verify that source material is present in your briefing or support_files.
+- If no external sources are provided and the task requires factual grounding (historical events, scientific data, technical specifics, current affairs), delegate to wikipedia-specialist (or another research agent) first to collect relevant content.
+- Do not analyze from internal knowledge alone on factual topics — internal knowledge is approximate and may be outdated.
+- Once sources are gathered, pass them as support_files when delegating further.',
+   'Prevents hallucinated analysis by requiring real source material before engaging analytical reasoning.', 0, 80, 1, datetime('now'), datetime('now')),
+  (102, 11, 'research_phase_routing', 'Research phase routing',
+   '- For analytical tasks on topics requiring external knowledge (science, history, current events, technical domains), do not delegate directly to an analytical agent on a bare question.
+- First orchestrate a research phase: delegate to wikipedia-specialist (or relevant research agent) to gather source material.
+- Then delegate to the analytical agent, passing the research artifacts as support_files.
+- Simple factual lookups or direct questions do not require this two-phase approach.',
+   'Ensures analytical agents receive grounded source material rather than reasoning in a knowledge vacuum.', 0, 80, 1, datetime('now'), datetime('now')),
+  (103, 11, 'workspace_as_shared_memory', 'Workspace as shared memory',
+   '- BEFORE starting any research or analysis task, call workspace_list to check if a relevant file already exists. If it does, read it with workspace_view — do not redo work already done.
+- AFTER completing your work, write your findings to a workspace file so other agents can use them without re-running the same operation.
+- File naming convention: {agent-code}_{topic-slug}.{ext} — all lowercase, hyphens for spaces. Examples: wikipedia-specialist_ai-alignment.md, critical-thinker_ethics-analysis.md, code-runner_benchmark.py. No CamelCase, no generic names like report.md or output.md.
+- Keep workspace files concise and structured — they are reference material, not verbose reports.',
+   'Turns the workspace into a shared knowledge base across agents in a conversation, reducing redundant work and recursive loops.', 0, 75, 1, datetime('now'), datetime('now'));
+
+-- Agent-paradigm bindings (100-103)
+INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
+  (3, 100)  -- synthesizer,
+  (8, 100)  -- critical-thinker,
+  (11, 100)  -- meta-analyst,
+  (8, 101)  -- critical-thinker,
+  (11, 101)  -- meta-analyst,
+  (1, 102)  -- jean-michel,
+  (2, 103)  -- summarizer,
+  (3, 103)  -- synthesizer,
+  (5, 103)  -- wikipedia-specialist,
+  (6, 103)  -- comparator-specialist,
+  (8, 103)  -- critical-thinker,
+  (9, 103)  -- document-builder,
+  (10, 103)  -- workspace-manager,
+  (11, 103)  -- meta-analyst,
+  (12, 103)  -- code-runner;
+
+-- Workspace tool grants (agents 2,3,5,6,8 — added in migration 011)
+INSERT INTO agent_tools (agent_id, tool_code) VALUES
+  (2, 'workspace_create_file')  -- summarizer,
+  (2, 'workspace_list')  -- summarizer,
+  (2, 'workspace_str_replace')  -- summarizer,
+  (2, 'workspace_view')  -- summarizer,
+  (3, 'workspace_create_file')  -- synthesizer,
+  (3, 'workspace_list')  -- synthesizer,
+  (3, 'workspace_str_replace')  -- synthesizer,
+  (3, 'workspace_view')  -- synthesizer,
+  (5, 'workspace_create_file')  -- wikipedia-specialist,
+  (5, 'workspace_list')  -- wikipedia-specialist,
+  (5, 'workspace_str_replace')  -- wikipedia-specialist,
+  (5, 'workspace_view')  -- wikipedia-specialist,
+  (6, 'workspace_create_file')  -- comparator-specialist,
+  (6, 'workspace_list')  -- comparator-specialist,
+  (6, 'workspace_str_replace')  -- comparator-specialist,
+  (6, 'workspace_view')  -- comparator-specialist,
+  (8, 'workspace_create_file')  -- critical-thinker,
+  (8, 'workspace_list')  -- critical-thinker,
+  (8, 'workspace_str_replace')  -- critical-thinker,
+  (8, 'workspace_view')  -- critical-thinker;
+
+-- Workspace write grants (agents 2,3,5,6,8)
+INSERT INTO agent_workspace_grants (agent_id) VALUES
+  (2)  -- summarizer,
+  (3)  -- synthesizer,
+  (5)  -- wikipedia-specialist,
+  (6)  -- comparator-specialist,
+  (8)  -- critical-thinker;
