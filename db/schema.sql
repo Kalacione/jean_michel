@@ -1537,6 +1537,7 @@ INSERT INTO agent_sandbox_grants (agent_id, command) VALUES
   (12, 'jq'),
   (12, 'echo');
 
+
 -- =============================================================
 -- Seeds from migrations 008-011 (convergence gate, grounding, workspace)
 -- =============================================================
@@ -1571,49 +1572,49 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 
 -- Agent-paradigm bindings (100-103)
 INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
-  (3, 100)  -- synthesizer,
-  (8, 100)  -- critical-thinker,
-  (11, 100)  -- meta-analyst,
-  (8, 101)  -- critical-thinker,
-  (11, 101)  -- meta-analyst,
-  (1, 102)  -- jean-michel,
-  (2, 103)  -- summarizer,
-  (3, 103)  -- synthesizer,
-  (5, 103)  -- wikipedia-specialist,
-  (6, 103)  -- comparator-specialist,
-  (8, 103)  -- critical-thinker,
-  (9, 103)  -- document-builder,
-  (10, 103)  -- workspace-manager,
-  (11, 103)  -- meta-analyst,
-  (12, 103)  -- code-runner;
+  (3, 100),
+  (8, 100),
+  (11, 100),
+  (8, 101),
+  (11, 101),
+  (1, 102),
+  (2, 103),
+  (3, 103),
+  (5, 103),
+  (6, 103),
+  (8, 103),
+  (9, 103),
+  (10, 103),
+  (11, 103),
+  (12, 103);
 
 -- Workspace tool grants (agents 2,3,5,6,8 — added in migration 011)
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
-  (2, 'workspace_create_file')  -- summarizer,
-  (2, 'workspace_list')  -- summarizer,
-  (2, 'workspace_str_replace')  -- summarizer,
-  (2, 'workspace_view')  -- summarizer,
-  (3, 'workspace_create_file')  -- synthesizer,
-  (3, 'workspace_list')  -- synthesizer,
-  (3, 'workspace_str_replace')  -- synthesizer,
-  (3, 'workspace_view')  -- synthesizer,
-  (5, 'workspace_create_file')  -- wikipedia-specialist,
-  (5, 'workspace_list')  -- wikipedia-specialist,
-  (5, 'workspace_str_replace')  -- wikipedia-specialist,
-  (5, 'workspace_view')  -- wikipedia-specialist,
-  (6, 'workspace_create_file')  -- comparator-specialist,
-  (6, 'workspace_list')  -- comparator-specialist,
-  (6, 'workspace_str_replace')  -- comparator-specialist,
-  (6, 'workspace_view')  -- comparator-specialist,
-  (8, 'workspace_create_file')  -- critical-thinker,
-  (8, 'workspace_list')  -- critical-thinker,
-  (8, 'workspace_str_replace')  -- critical-thinker,
-  (8, 'workspace_view')  -- critical-thinker;
+  (2, 'workspace_create_file'),
+  (2, 'workspace_list'),
+  (2, 'workspace_str_replace'),
+  (2, 'workspace_view'),
+  (3, 'workspace_create_file'),
+  (3, 'workspace_list'),
+  (3, 'workspace_str_replace'),
+  (3, 'workspace_view'),
+  (5, 'workspace_create_file'),
+  (5, 'workspace_list'),
+  (5, 'workspace_str_replace'),
+  (5, 'workspace_view'),
+  (6, 'workspace_create_file'),
+  (6, 'workspace_list'),
+  (6, 'workspace_str_replace'),
+  (6, 'workspace_view'),
+  (8, 'workspace_create_file'),
+  (8, 'workspace_list'),
+  (8, 'workspace_str_replace'),
+  (8, 'workspace_view');
 
 -- Workspace write grants (agents 2,3,5,6,8)
 INSERT INTO agent_workspace_grants (agent_id) VALUES
-  (2)  -- summarizer,
-  (3)  -- synthesizer,
-  (5)  -- wikipedia-specialist,
-  (6)  -- comparator-specialist,
-  (8)  -- critical-thinker;
+  (2),
+  (3),
+  (5),
+  (6),
+  (8);
