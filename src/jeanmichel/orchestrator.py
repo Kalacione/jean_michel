@@ -446,11 +446,16 @@ class Orchestrator:
                                 "tool": "delegate_to",
                                 "error": (
                                     f"support_files not found in conversation folder: {missing}. "
-                                    "support_files is only for orchestrator artifact filenames "
-                                    "(the `artifact` value from a previous delegate_to result). "
-                                    "For fetched data (e.g. Wikipedia), write it to the workspace "
-                                    "with workspace_create_file, then reference the workspace "
-                                    "path in the briefing text."
+                                    "support_files only accepts artifact filenames produced by a "
+                                    "previous delegate_to call (the `artifact` field in the result). "
+                                    "It does NOT accept workspace paths or files you fetched. "
+                                    "How to fix — pick ONE option: "
+                                    "(A) If the content is already in your briefing text: simply "
+                                    "remove the invalid filename(s) from support_files and re-send "
+                                    "with the same briefing. Do NOT clear the briefing. "
+                                    "(B) If the content is NOT in your briefing: call "
+                                    "workspace_create_file to write it, then reference the "
+                                    "workspace path in the briefing text, and send support_files=[]."
                                 ),
                             }))
                             continue
