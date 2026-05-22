@@ -525,8 +525,21 @@ class Orchestrator:
                         _successful_calls.add(call_fingerprint)
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
-                    self._write_artifact(req_id, agent_code, "tool_response",
-                        f"**{call.name}**\n\n```\n{result}\n```")
+                    # For tools that return existing file content, write a stub
+                    # artifact to avoid duplicating content already on disk.
+                    # The LLM receives the full result regardless (via tool_responses).
+                    if call.name in ("workspace_view", "conv_read_file"):
+                        try:
+                            rdata = json.loads(result)
+                            _path = rdata.get("path", call.arguments.get("relative_path", "?"))
+                            _bytes = len(rdata.get("content", result).encode())
+                            _trunc = " [truncated]" if rdata.get("truncated") else ""
+                            artifact_body = f"**{call.name}** → `{_path}` ({_bytes} bytes){_trunc}"
+                        except Exception:
+                            artifact_body = f"**{call.name}**\n\n```\n{result[:200]}\n```"
+                    else:
+                        artifact_body = f"**{call.name}**\n\n```\n{result}\n```"
+                    self._write_artifact(req_id, agent_code, "tool_response", artifact_body)
                     tool_responses.append(result)
 
                 # Feed all tool responses back to the model on the next iteration.
