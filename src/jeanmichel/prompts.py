@@ -103,6 +103,42 @@ _RETURN_TO_USER: dict[str, Any] = {
 # - router: full set
 # - specialist: full set (may delegate further, may need clarification)
 # - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
+_SIGNAL_CONVERGENCE: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "signal_convergence",
+        "description": (
+            "Call this when you have reached the limit of what you can contribute "
+            "at this recursion depth and further analysis would be redundant. "
+            "Provide your best synthesis so far and list any questions that remain "
+            "open for the parent agent to resolve. "
+            "Do NOT call this if you still have meaningful work to do."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "synthesis": {
+                    "type": "string",
+                    "description": "Your best current synthesis or conclusion.",
+                },
+                "open_questions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Questions or gaps that remain unresolved and should be "
+                        "addressed by the parent agent."
+                    ),
+                },
+            },
+            "required": ["synthesis"],
+        },
+    },
+}
+
+# Per-role grants for control tools.
+# - router: full set
+# - specialist: full set (may delegate further, may need clarification)
+# - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
 _CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
     "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
     "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
@@ -241,9 +277,12 @@ def render_system_prompt(ctx: PromptContext) -> str:
 
 def tools_payload_for_agent(agent_role: str,
                             tool_grants: list[str],
-                            registry: dict[str, ToolSpec]) -> list[dict[str, Any]]:
+                            registry: dict[str, ToolSpec],
+                            depth: int = 0) -> list[dict[str, Any]]:
     """Build the tools payload (control tools filtered by role + native tools)."""
     payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
+    if depth >= 2 and agent_role != "finalizer":
+        payload.append(_SIGNAL_CONVERGENCE)
     for tool_name in tool_grants:
         spec = registry.get(tool_name)
         if spec is None:

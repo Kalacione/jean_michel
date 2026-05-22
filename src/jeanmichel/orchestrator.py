@@ -240,7 +240,7 @@ class Orchestrator:
         enriched_input = self._prefix_summary(user_input)
         append_to_journal(self.conv_folder, f"## User (turn {self.turn_index})\n{user_input}\n")
 
-        answer, _artifact = yield from self._run_request(
+        answer, _artifact, _converged = yield from self._run_request(
             agent_code="jean-michel",
             inbound_text=enriched_input,
             expected_outcome="Address the human request fully.",
@@ -261,12 +261,12 @@ class Orchestrator:
     def _run_request(self, *, agent_code: str, inbound_text: str,
                      expected_outcome: str, support_files: list[str],
                      parent_request_id: str | None, depth: int,
-                     sender: str) -> Generator[object, None, tuple[str, str | None]]:
+                     sender: str) -> Generator[object, None, tuple[str, str | None, bool]]:
         """Run a single agent request, recursively if it delegates.
 
-        Returns (answer, artifact_filename) — the answer text and the filename
-        of the response artifact written to disk (or None if no artifact was
-        produced).
+        Returns (answer, artifact_filename, converged) — the answer text, the
+        filename of the response artifact (or None), and whether the agent
+        signalled convergence via signal_convergence rather than return_to_user.
         """
         assert self.conv_folder is not None
 
@@ -337,7 +337,7 @@ class Orchestrator:
             turn_clarifications=list(self._turn_exchanges),
         )
         system = render_system_prompt(ctx)
-        tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry)
+        tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry, depth=depth)
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n\n{system}\n\n---\n\n## User\n\n{running_user_text}\n")
 
@@ -363,7 +363,7 @@ class Orchestrator:
                     artifact = self._write_artifact(req_id, agent_code, "response", final)
                     with db.connect() as conn:
                         db.update_request_status(conn, req_id, "completed", completed=True)
-                    return final, artifact
+                    return final, artifact, False
 
                 tool_responses: list[str] = []
                 for call in response.tool_calls:
@@ -378,7 +378,19 @@ class Orchestrator:
                         artifact = self._write_artifact(req_id, agent_code, "response", answer)
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
-                        return answer, artifact
+                        return answer, artifact, False
+
+                    if call.name == "signal_convergence":
+                        synthesis = (call.arguments.get("synthesis") or "").strip()
+                        open_qs = call.arguments.get("open_questions") or []
+                        if open_qs:
+                            synthesis += "\n\nOpen questions:\n" + "\n".join(
+                                f"- {q}" for q in open_qs
+                            )
+                        artifact = self._write_artifact(req_id, agent_code, "response", synthesis)
+                        with db.connect() as conn:
+                            db.update_request_status(conn, req_id, "completed", completed=True)
+                        return synthesis, artifact, True
 
                     if call.name == "ask_human":
                         if seen_ask:
@@ -428,7 +440,7 @@ class Orchestrator:
                         self._write_artifact(req_id, agent_code, "briefing",
                             f"to: {child_code}\nexpected: {expected}\n\n{briefing}")
                         try:
-                            child_answer, child_artifact = yield from self._run_request(
+                            child_answer, child_artifact, child_converged = yield from self._run_request(
                                 agent_code=child_code,
                                 inbound_text=briefing,
                                 expected_outcome=expected,
@@ -437,12 +449,15 @@ class Orchestrator:
                                 depth=depth + 1,
                                 sender=agent_code,
                             )
-                            tool_responses.append(json.dumps({
+                            response_obj: dict = {
                                 "tool": "delegate_to",
                                 "agent": child_code,
                                 "artifact": child_artifact,
                                 "answer": child_answer,
-                            }))
+                            }
+                            if child_converged:
+                                response_obj["converged"] = True
+                            tool_responses.append(json.dumps(response_obj))
                         except KeyError:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
@@ -566,7 +581,7 @@ class Orchestrator:
         )
 
         try:
-            new_summary, _artifact = yield from self._run_request(
+            new_summary, _artifact, _converged = yield from self._run_request(
                 agent_code="archivist",
                 inbound_text=briefing,
                 expected_outcome="Updated running summary, structured per archivist_format.",
