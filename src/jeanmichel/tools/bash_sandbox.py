@@ -35,8 +35,9 @@ from ..db import connect as db_connect, record_sandbox_execution
 from ._base import ToolSpec
 from ._workspace import workspace_root_for
 
-# Image tag must match what ./jm.sh --build-docker produces.
-_SANDBOX_IMAGE = "jeanmichel-sandbox:24.04"
+# Default image tag — used when the agent has no sandbox_image configured.
+# Must match what ./jm.sh --build-docker produces.
+_DEFAULT_SANDBOX_IMAGE = "jeanmichel-sandbox:py-alpine"
 _SANDBOX_TIMEOUT_S = 30
 _MAX_OUTPUT_BYTES = 50_000
 
@@ -54,7 +55,7 @@ def _container_running(name: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-def _start_container(name: str, workspace_path: Path) -> None:
+def _start_container(name: str, workspace_path: Path, image: str) -> None:
     """Start the sandbox container, mounting workspace_path at /workspace.
 
     Run as the current process's uid:gid so the container can write to the
@@ -72,7 +73,7 @@ def _start_container(name: str, workspace_path: Path) -> None:
             "--user", current_user,
             "-v", f"{workspace_path}:/workspace:rw",
             "-w", "/workspace",
-            _SANDBOX_IMAGE,
+            image,
             "tail", "-f", "/dev/null",
         ],
         check=True,
@@ -85,6 +86,7 @@ def make_spec(
     conv_id: str,
     request_id_provider: Callable[[], str],
     sandbox_grants: list[str],
+    sandbox_image: str | None = None,
 ) -> ToolSpec:
     """Return a ToolSpec bound to this conversation.
 
@@ -94,9 +96,11 @@ def make_spec(
         request_id_provider: Callable returning the current request_id (injected
             by the orchestrator so the tool can record the audit row).
         sandbox_grants: List of authorized command names for this agent.
+        sandbox_image: Docker image tag to use. Defaults to _DEFAULT_SANDBOX_IMAGE.
     """
     ws_root = workspace_root_for(conv_folder)
     container_name = _container_name(conv_id)
+    image = sandbox_image or _DEFAULT_SANDBOX_IMAGE
 
     def _handler(command: str) -> str:
         request_id = request_id_provider()
@@ -117,7 +121,7 @@ def make_spec(
         # Ensure container is running.
         if not _container_running(container_name):
             try:
-                _start_container(container_name, ws_root)
+                _start_container(container_name, ws_root, image)
             except subprocess.CalledProcessError as e:
                 return json.dumps({
                     "error": f"Failed to start sandbox container: {e.stderr}",

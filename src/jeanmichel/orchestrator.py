@@ -304,6 +304,7 @@ class Orchestrator:
             conv_id=self.conv_id,
             request_id_provider=_req_id_provider,
             sandbox_grants=sandbox_grants if sandbox_grants else None,
+            sandbox_image=agent.sandbox_image,
         )
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.

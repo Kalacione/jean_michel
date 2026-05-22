@@ -32,20 +32,20 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 def list_active_agents(conn: sqlite3.Connection) -> list[Agent]:
     rows = conn.execute(
-        "SELECT id, code, name, role, mission, thinking_mode, temperature "
+        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image "
         "FROM agents WHERE active = 1 ORDER BY id",
     ).fetchall()
     return [
         Agent(id=r["id"], code=r["code"], name=r["name"], role=r["role"],
               mission=r["mission"], thinking_mode=bool(r["thinking_mode"]),
-              temperature=r["temperature"])
+              temperature=r["temperature"], sandbox_image=r["sandbox_image"])
         for r in rows
     ]
 
 
 def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
     row = conn.execute(
-        "SELECT id, code, name, role, mission, thinking_mode, temperature "
+        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image "
         "FROM agents WHERE code = ? AND active = 1",
         (code,),
     ).fetchone()
@@ -54,7 +54,7 @@ def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
     return Agent(
         id=row["id"], code=row["code"], name=row["name"], role=row["role"],
         mission=row["mission"], thinking_mode=bool(row["thinking_mode"]),
-        temperature=row["temperature"],
+        temperature=row["temperature"], sandbox_image=row["sandbox_image"],
     )
 
 

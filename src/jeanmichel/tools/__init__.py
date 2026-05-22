@@ -16,6 +16,7 @@ from pathlib import Path
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_read_file as _conv_read_file_mod
+from . import self_inspect as _self_inspect_mod
 from . import weather as _weather_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_create_file as _ws_create_mod
@@ -31,6 +32,7 @@ def build_registry(
     conv_id: str = "",
     request_id_provider: Callable[[], str] | None = None,
     sandbox_grants: list[str] | None = None,
+    sandbox_image: str | None = None,
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context."""
     conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
@@ -44,6 +46,7 @@ def build_registry(
         _weather_mod.SPEC.name: _weather_mod.SPEC,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
+        _self_inspect_mod.SPEC.name: _self_inspect_mod.SPEC,
         ws_create_spec.name: ws_create_spec,
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
@@ -51,7 +54,8 @@ def build_registry(
     }
     if conv_id and request_id_provider is not None and sandbox_grants is not None:
         sandbox_spec = _bash_sandbox_mod.make_spec(
-            conv_folder, conv_id, request_id_provider, sandbox_grants
+            conv_folder, conv_id, request_id_provider, sandbox_grants,
+            sandbox_image=sandbox_image,
         )
         registry[sandbox_spec.name] = sandbox_spec
     return registry
