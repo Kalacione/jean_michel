@@ -60,7 +60,7 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             "properties": {
                 "sub_path": {
                     "type": "string",
-                    "description": "Optional sub-directory path relative to workspace root. Omit to list workspace root.",
+                    "description": "Sub-directory to list, e.g. 'src/tools'. Leave empty to list the workspace root.",
                 },
             },
             "required": [],

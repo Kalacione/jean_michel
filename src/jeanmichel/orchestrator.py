@@ -475,7 +475,15 @@ class Orchestrator:
                     try:
                         result = spec.handler(**call.arguments)
                     except TypeError as e:
-                        result = json.dumps({"error": f"Bad arguments: {e}"})
+                        valid = list(
+                            spec.parameters.get("properties", {}).keys()
+                        )
+                        result = json.dumps({
+                            "error": (
+                                f"Bad arguments for tool '{call.name}': {e}. "
+                                f"Valid parameters: {valid}"
+                            )
+                        })
                     except Exception as e:  # noqa: BLE001
                         result = json.dumps({"error": f"Tool failed: {e}"})
                     # Register as successful only if the result is not an error.
