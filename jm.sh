@@ -213,7 +213,7 @@ cmd_meta_analysis() {
   prompt+=' Call self_inspect(scope="agents") to review agent and tool grants,'
   prompt+=' self_inspect(scope="conversations") for failure rates and ask_human frequency,'
   prompt+=' and self_inspect(scope="recent_summaries") to read recent conversation content.'
-  prompt+=' Then produce a structured improvement proposal document in the workspace:"
+  prompt+=' Then produce a structured improvement proposal document in the workspace:'
   prompt+=' 1) Agent/tool gap analysis, 2) Paradigm effectiveness observations,'
   prompt+=' 3) Behavioral patterns from recent summaries, 4) Concrete SQL proposals.'
   jean-michel --mode analyse --once "${prompt}"
