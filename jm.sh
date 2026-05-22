@@ -10,6 +10,7 @@
 #   ./jm.sh --inspect-conv ID [...]      Inspect a conversation's artifacts
 #   ./jm.sh --clean [--days N] [--yes]   Delete conversations older than N days
 #   ./jm.sh --admin [CMD ...]            Manage agents, tools, and paradigms (REPL or one-shot)
+#   ./jm.sh --meta-analysis              Run a meta-analysis turn (self-improvement)
 #   ./jm.sh --help                       Show this help
 #
 # Extra args after a command are forwarded to the underlying tool.
@@ -47,6 +48,7 @@ Commands:
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
   --admin [CMD ...]           Manage agents, tools, and paradigms (interactive REPL or one-shot)
+  --meta-analysis             Run a meta-analysis: inspect system state and produce improvement proposals
   --help                      Show this help
 
 CLI pass-through:
@@ -204,6 +206,19 @@ cmd_test() {
   exec python -m pytest "${PROJECT_ROOT}/tests" -v "$@"
 }
 
+cmd_meta_analysis() {
+  ensure_venv
+  export JEANMICHEL_HOME="${PROJECT_ROOT}"
+  local prompt="Run a full meta-analysis of your own configuration and recent activity."
+  prompt+=' Call self_inspect(scope="agents") to review agent and tool grants,'
+  prompt+=' self_inspect(scope="conversations") for failure rates and ask_human frequency,'
+  prompt+=' and self_inspect(scope="recent_summaries") to read recent conversation content.'
+  prompt+=' Then produce a structured improvement proposal document in the workspace:"
+  prompt+=' 1) Agent/tool gap analysis, 2) Paradigm effectiveness observations,'
+  prompt+=' 3) Behavioral patterns from recent summaries, 4) Concrete SQL proposals.'
+  jean-michel --mode analyse --once "${prompt}"
+}
+
 cmd_build_docker() {
   # Usage:
   #   ./jm.sh --build-docker              — build default Python Alpine image
@@ -285,6 +300,10 @@ case "${COMMAND}" in
   --build-docker)
     shift
     cmd_build_docker "$@"
+    ;;
+  --meta-analysis)
+    shift
+    cmd_meta_analysis "$@"
     ;;
   "")
     cmd_cli

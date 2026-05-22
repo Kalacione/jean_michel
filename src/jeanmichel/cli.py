@@ -214,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
                              "most recent active conversation.")
     parser.add_argument("--list-conv", action="store_true",
                         help="List recent active conversations and exit.")
+    parser.add_argument("--once", metavar="TEXT",
+                        help="Process a single prompt non-interactively then exit.")
     args = parser.parse_args(argv)
 
     console = Console()
@@ -293,6 +295,16 @@ def main(argv: list[str] | None = None) -> int:
         orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
                             ask_human_callback=make_ask_human(console, session))
         orch.bootstrap_conversation()
+
+    # --once: non-interactive single-turn mode (used by jm.sh --meta-analysis etc.)
+    if args.once:
+        try:
+            render_events(console, orch.run(args.once), show_thoughts=args.show_thoughts)
+        except Exception as e:  # noqa: BLE001
+            console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
+        finally:
+            orch.close_conversation()
+        return 0
 
     while True:
         try:

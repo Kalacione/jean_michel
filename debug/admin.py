@@ -43,6 +43,7 @@ console = Console()
 
 _COMMANDS = [
     "agents", "agent", "tools", "paradigms",
+    "convs", "purge-orphans",
     "grant", "revoke", "bind", "unbind",
     "add-paradigm", "toggle-paradigm",
     "help", "exit", "quit",
@@ -221,6 +222,87 @@ def _show_agent(db_path: Path, code: str) -> None:
                 console.print(f"    [dim]{p.category_title}[/dim]")
             tag = "[dim]G[/dim]" if p.code not in bound_codes else "[cyan]B[/cyan]"
             console.print(f"      {tag} [bold]{p.code}[/bold]  {p.title}")
+
+
+def _show_convs(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, folder_path, status, mode, created_at FROM conversations "
+            "ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+
+    if not rows:
+        console.print("[dim]No conversations in database.[/dim]")
+        return
+
+    t = Table(box=box.ROUNDED, header_style="bold cyan", title="Conversations (last 20)")
+    t.add_column("ID prefix", style="bold", no_wrap=True)
+    t.add_column("Mode", style="dim")
+    t.add_column("Status")
+    t.add_column("Created", style="dim")
+    t.add_column("Folder", justify="center")
+    for r in rows:
+        folder_exists = Path(r["folder_path"]).is_dir()
+        folder_mark = "[green]✓[/green]" if folder_exists else "[red]✗ orphan[/red]"
+        status_color = {
+            "active": "green", "closed": "dim", "awaiting_human": "yellow"
+        }.get(r["status"], "white")
+        t.add_row(
+            r["id"][:12],
+            r["mode"],
+            f"[{status_color}]{r['status']}[/{status_color}]",
+            r["created_at"][:16],
+            folder_mark,
+        )
+    console.print(t)
+
+
+def _exec_purge_orphans(
+    db_path: Path,
+    session: "PromptSession | None" = None,
+) -> None:
+    """Remove DB records for conversations whose on-disk folder no longer exists."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, folder_path, status, created_at FROM conversations ORDER BY created_at"
+        ).fetchall()
+
+    orphans = [
+        (r["id"], r["folder_path"], r["status"])
+        for r in rows
+        if not Path(r["folder_path"]).is_dir()
+    ]
+
+    if not orphans:
+        console.print("[green]No orphaned conversations found.[/green]")
+        return
+
+    console.print(f"\n[yellow]{len(orphans)} orphaned conversation(s):[/yellow]")
+    for conv_id, folder, status in orphans:
+        console.print(f"  [dim]{conv_id[:12]}[/dim]  {Path(folder).name}  [dim]({status})[/dim]")
+    console.print()
+
+    try:
+        if session is not None:
+            answer = session.prompt("Delete these records (cascade)? [y/N]: ").strip().lower()
+        else:
+            answer = input("Delete these records (cascade)? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[dim]Aborted.[/dim]")
+        return
+
+    if answer not in ("y", "yes"):
+        console.print("[dim]Aborted.[/dim]")
+        return
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        for conv_id, _, _ in orphans:
+            conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+        conn.commit()
+    console.print(f"[green]Deleted {len(orphans)} orphaned record(s) (requests + artifacts cascaded).[/green]")
 
 
 def _show_tools(db_path: Path) -> None:
@@ -469,6 +551,8 @@ def _show_help() -> None:
   [cyan]agent[/cyan] <code>                  Show full agent profile (tools + paradigms)
   [cyan]tools[/cyan]                         List all known tool codes and their holders
   [cyan]paradigms[/cyan] [<agent>]           List all paradigms; if agent given, show applied status
+  [cyan]convs[/cyan]                         List recent conversations with folder existence check
+  [cyan]purge-orphans[/cyan]                 Remove DB records for conversations with missing folders
   [cyan]grant[/cyan] <agent> <tool>          Grant a tool to an agent
   [cyan]revoke[/cyan] <agent> <tool>         Revoke a tool from an agent
   [cyan]bind[/cyan] <agent> <paradigm>       Bind a paradigm to an agent
@@ -508,6 +592,10 @@ def run_command(
         _show_tools(db_path)
     elif cmd == "paradigms":
         _show_paradigms(db_path, args[0] if args else None)
+    elif cmd == "convs":
+        _show_convs(db_path)
+    elif cmd == "purge-orphans":
+        _exec_purge_orphans(db_path, session=session)
     elif cmd == "grant":
         if len(args) < 2:
             console.print("[red]Usage: grant <agent> <tool>[/red]")

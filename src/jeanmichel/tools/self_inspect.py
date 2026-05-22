@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 from .. import config
 from ._base import ToolSpec
@@ -23,13 +24,14 @@ def _handler(scope: str = "full") -> str:
 
     Args:
         scope: What to return.
-            "agents"         — agents + their tools + paradigm counts + sandbox config.
-            "paradigms"      — all active paradigms grouped by section/category.
-            "conversations"  — recent activity stats (last 7 / 30 days).
-            "sandbox"        — sandbox execution audit (last 50 rows).
-            "full"           — agents + conversations (default).
+            "agents"           — agents + their tools + paradigm counts + sandbox config.
+            "paradigms"        — all active paradigms grouped by section/category.
+            "conversations"    — recent activity stats including failure counts.
+            "sandbox"          — sandbox execution audit (last 50 rows).
+            "recent_summaries" — content of the last N conversation summary.md files.
+            "full"             — agents + conversations (default).
     """
-    valid_scopes = ("agents", "paradigms", "conversations", "sandbox", "full")
+    valid_scopes = ("agents", "paradigms", "conversations", "sandbox", "recent_summaries", "full")
     if scope not in valid_scopes:
         return json.dumps({"error": f"Invalid scope '{scope}'. Valid: {valid_scopes}"})
 
@@ -51,6 +53,9 @@ def _handler(scope: str = "full") -> str:
 
         if scope == "sandbox":
             result["sandbox_executions"] = _sandbox_snapshot(conn)
+
+        if scope == "recent_summaries":
+            result["recent_summaries"] = _recent_summaries_snapshot(conn)
 
         conn.close()
         return json.dumps(result, indent=2)
@@ -154,6 +159,22 @@ def _activity_snapshot(conn: sqlite3.Connection) -> dict:
         "WHERE created_at >= datetime('now', '-7 days')"
     ).fetchone()["n"]
 
+    failed_total = conn.execute(
+        "SELECT COUNT(*) AS n FROM requests WHERE status='failed'"
+    ).fetchone()["n"]
+    failed_7d = conn.execute(
+        "SELECT COUNT(*) AS n FROM requests "
+        "WHERE status='failed' AND created_at >= datetime('now', '-7 days')"
+    ).fetchone()["n"]
+
+    ask_human_total = conn.execute(
+        "SELECT COUNT(*) AS n FROM artifacts WHERE kind='ask_human'"
+    ).fetchone()["n"]
+    ask_human_7d = conn.execute(
+        "SELECT COUNT(*) AS n FROM artifacts "
+        "WHERE kind='ask_human' AND created_at >= datetime('now', '-7 days')"
+    ).fetchone()["n"]
+
     # Most active agents in last 30 days
     top_agents = conn.execute(
         """SELECT a.code, COUNT(r.id) AS request_count
@@ -172,6 +193,12 @@ def _activity_snapshot(conn: sqlite3.Connection) -> dict:
         "requests": {
             "total": total_requests,
             "last_7_days": requests_7d,
+            "failed_total": failed_total,
+            "failed_7d": failed_7d,
+        },
+        "ask_human": {
+            "total": ask_human_total,
+            "last_7_days": ask_human_7d,
         },
         "top_agents_30d": [
             {"agent": r["code"], "requests": r["request_count"]} for r in top_agents
@@ -207,27 +234,67 @@ def _sandbox_snapshot(conn: sqlite3.Connection) -> dict:
     }
 
 
+def _recent_summaries_snapshot(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
+    """Return the content of summary.md for the N most recent conversations."""
+    rows = conn.execute(
+        "SELECT id, folder_path, title, mode, created_at, status "
+        "FROM conversations ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        folder = Path(r["folder_path"])
+        summary_path = folder / "summary.md"
+        journal_path = folder / "conversation.md"
+
+        content_text: str | None = None
+        content_source: str | None = None
+        if summary_path.exists():
+            content_text = summary_path.read_text(encoding="utf-8")[:2000]
+            content_source = "summary.md"
+        elif journal_path.exists():
+            content_text = journal_path.read_text(encoding="utf-8")[:1000]
+            content_source = "conversation.md"
+
+        results.append({
+            "conversation_id": r["id"][:12],
+            "folder": folder.name,
+            "created_at": r["created_at"],
+            "mode": r["mode"],
+            "status": r["status"],
+            "title": r["title"],
+            "content_source": content_source,
+            "content": content_text,
+        })
+
+    return results
+
+
 SPEC = ToolSpec(
     name="self_inspect",
     description=(
         "Query Jean-Michel's own internal configuration and activity. "
-        "Returns a structured JSON snapshot of: active agents with their tools and paradigm counts, "
-        "recent conversation statistics, and sandbox execution audit. "
-        "Use scope='agents' for agent config, 'paradigms' for full paradigm list, "
-        "'conversations' for activity stats, 'sandbox' for execution audit, "
-        "'full' for the combined agents+activity view (default)."
+        "Returns a structured JSON snapshot. "
+        "scope='agents': agent config (tools, paradigm counts, sandbox grants). "
+        "scope='paradigms': full paradigm list. "
+        "scope='conversations': activity stats including failure counts and ask_human frequency. "
+        "scope='sandbox': execution audit (last 50 rows). "
+        "scope='recent_summaries': content of the last 5 conversation summary.md files — "
+        "use this to observe actual conversation quality and user needs. "
+        "scope='full': agents + activity (default)."
     ),
     parameters={
         "type": "object",
         "properties": {
             "scope": {
                 "type": "string",
-                "enum": ["agents", "paradigms", "conversations", "sandbox", "full"],
+                "enum": ["agents", "paradigms", "conversations", "sandbox", "recent_summaries", "full"],
                 "description": (
                     "What data to return: "
-                    "'agents' (configuration), 'paradigms' (full paradigm list), "
-                    "'conversations' (activity stats), 'sandbox' (execution audit), "
-                    "'full' (agents + activity)."
+                    "'agents', 'paradigms', 'conversations', 'sandbox', "
+                    "'recent_summaries' (summary.md of last 5 conversations), "
+                    "or 'full' (agents + activity)."
                 ),
             },
         },
