@@ -20,6 +20,7 @@ from . import self_inspect as _self_inspect_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
+from . import conv_history_scan as _conv_history_scan_mod
 from . import weather as _weather_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_create_file as _ws_create_mod
@@ -53,6 +54,7 @@ def build_registry(
         _si_config_mod.SPEC.name: _si_config_mod.SPEC,
         _si_activity_mod.SPEC.name: _si_activity_mod.SPEC,
         _si_architecture_mod.SPEC.name: _si_architecture_mod.SPEC,
+        _conv_history_scan_mod.SPEC.name: _conv_history_scan_mod.SPEC,
         ws_create_spec.name: ws_create_spec,
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,

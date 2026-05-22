@@ -488,8 +488,23 @@ class Orchestrator:
                     # ---- Native Python tools --------------------------------
                     spec = registry.get(call.name)
                     if spec is None:
+                        # Detect agent-as-tool confusion: LLMs sometimes use agent
+                        # codes directly as function names instead of delegate_to.
+                        _agent_codes = {ag.code for ag in available_agents}
+                        _normalised = call.name.replace("_", "-")
+                        _matched = call.name if call.name in _agent_codes else (
+                            _normalised if _normalised in _agent_codes else None
+                        )
+                        if _matched:
+                            _err = (
+                                f"'{call.name}' is an agent, not a tool. "
+                                f"Use delegate_to(agent_code='{_matched}', "
+                                f"briefing='...', expected='...') to invoke it."
+                            )
+                        else:
+                            _err = "unknown tool"
                         tool_responses.append(json.dumps({
-                            "tool": call.name, "error": "unknown tool",
+                            "tool": call.name, "error": _err,
                         }))
                         continue
                     call_fingerprint = (

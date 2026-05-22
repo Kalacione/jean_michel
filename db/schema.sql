@@ -1652,3 +1652,10 @@ INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
 INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
   (9,  'self_inspect_architecture'),
   (12, 'self_inspect_architecture');
+
+-- =============================================================
+-- MIGRATION 016 — conv_history_scan pour meta-analyst
+-- =============================================================
+
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
+  (11, 'conv_history_scan');

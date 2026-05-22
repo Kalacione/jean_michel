@@ -49,32 +49,38 @@ Voir `ANALYSE.md` — 4 trous identifiés, 4 phases.
 
 ---
 
-### [ ] P1 — `repo_read_file` : BLOQUÉ — réflexion sécurité requise
+### ✅ Fix — erreur actionnable agent-as-tool
+**Commit** : à venir
 
-**⚠ Ne pas implémenter avant le doc de réflexion.**
+Quand un agent appelle un code agent comme s'il était un outil (ex : `workspace_manager` au
+lieu de `delegate_to`), l'orchestrateur retourne désormais un message explicite :
+`'workspace_manager' is an agent, not a tool. Use delegate_to(agent_code='workspace-manager', ...)`
 
-Voir `REFLEXION_SANDBOX_SECURITE.md` (à créer).
-
-Questions ouvertes :
-- Quels fichiers sont accessibles ? (src/ ? docs/ ? tests/ ? .git ?)
-- Quelle exclusion pour éviter qu'un LLM lise ses propres credentials/secrets ?
-- Quel agent peut avoir ce grant ? Avec quelles guardrails comportementales ?
-- Risque de boucle : meta-analyst lit le code → propose un changement → code-runner l'applique → sans validation humaine = catastrophe
-- La sandbox docker isole l'exécution mais pas la lecture du repo
-- Git : un `git reset --hard` ou une corruption du schema.sql serait irréversible sans backup
+- [x] Détection dans `orchestrator.py` (compare `call.name` + variante underscore→tiret vs `available_agents`)
+- [x] Tests verts (147/147)
 
 ---
 
-### [ ] P1 (préalable) — Doc réflexion : sandbox, sécurité, repo access
-Fichier cible : `docs/20260522_introspection_repo_access/REFLEXION_SANDBOX_SECURITE.md`
+### ✅ conv_history_scan — analyse historique pour meta-analyst
+**Commit** : à venir
 
-Questions à trancher :
-1. Périmètre de lecture autorisé (inclus/exclus par chemin)
-2. Séparation lecture vs exécution : peut-on lire sans risque d'exécution ?
-3. Pipeline de validation humaine : à quel step l'humain intervient-il ?
-4. Protections git : snapshot/backup avant toute modification proposée ?
-5. Guardrails LLM : paradigmes anti-hallucination pour agents avec repo access
-6. Audit trail : comment tracer "cet agent a lu ce fichier à cet instant" ?
+Remplace le plan `repo_read_file` + `REFLEXION_SANDBOX_SECURITE.md` (abandonnés).
+L'objectif est l'analyse de conversations passées pour formuler des propositions
+d'amélioration — pas l'accès au code source.
+
+- [x] Créer `src/jeanmichel/tools/conv_history_scan.py` (limit 1-50, filtre status)
+- [x] Enregistrer dans `build_registry`
+- [x] Migration 016 — grant meta-analyst (id=11)
+- [x] Mise à jour `db/schema.sql`
+- [x] Tests verts (147/147)
+
+---
+
+### ~~[ ] P1 — `repo_read_file`~~ — ABANDONNÉ
+
+Remplacé par `conv_history_scan`. L'objectif réel n'est pas la lecture du code
+source mais l'analyse de conversations passées. Le doc `REFLEXION_SANDBOX_SECURITE.md`
+n'a plus lieu d'être.
 
 ---
 
