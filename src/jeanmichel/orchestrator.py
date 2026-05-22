@@ -539,7 +539,7 @@ class Orchestrator:
         artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "failed", completed=True)
-        return error_payload, None
+        return error_payload, None, False
 
     # ---- Summary helpers ------------------------------------------------
 
