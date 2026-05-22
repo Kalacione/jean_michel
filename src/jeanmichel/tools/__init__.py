@@ -17,6 +17,9 @@ from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_read_file as _conv_read_file_mod
 from . import self_inspect as _self_inspect_mod
+from . import self_inspect_activity as _si_activity_mod
+from . import self_inspect_architecture as _si_architecture_mod
+from . import self_inspect_config as _si_config_mod
 from . import weather as _weather_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_create_file as _ws_create_mod
@@ -47,6 +50,9 @@ def build_registry(
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
         _self_inspect_mod.SPEC.name: _self_inspect_mod.SPEC,
+        _si_config_mod.SPEC.name: _si_config_mod.SPEC,
+        _si_activity_mod.SPEC.name: _si_activity_mod.SPEC,
+        _si_architecture_mod.SPEC.name: _si_architecture_mod.SPEC,
         ws_create_spec.name: ws_create_spec,
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,

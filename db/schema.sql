@@ -1373,6 +1373,7 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
 -- Agent tools
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
   (9,  'conv_read_file'),
+  (9,  'self_inspect_architecture'),
   (9,  'workspace_create_file'),
   (9,  'workspace_str_replace'),
   (9,  'workspace_view'),
@@ -1399,10 +1400,13 @@ INSERT INTO categories (id, section_id, code, title, order_priority, active, cre
 -- Paradigms
 INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES
 (94, 32, 'inspect_before_proposing', 'Inspect before proposing',
- '- Always call self_inspect before making any statement about the system configuration.
-- Never rely on your training data or prior context to describe the current agent roster, tool grants, or paradigm assignments.
+ '- Always call a self_inspect_* tool before making any statement about the system configuration.
+  - self_inspect_config: agent roster, tool grants, paradigm assignments.
+  - self_inspect_activity: conversation stats, sandbox audit, recent summaries.
+  - self_inspect_architecture: README + DB schema (read before writing SQL or code).
+- Never rely on your training data or prior context to describe the current system state.
 - Observe, then reason.',
- 'Prevents hallucinating system state.',
+ 'Prevents hallucinating system state. Tools are scoped so agents only access the data they need.',
  0, 10, 1, datetime('now'), datetime('now')),
 
 (95, 32, 'improvement_proposals_format', 'Structured improvement proposals',
@@ -1451,7 +1455,9 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
 
 -- Agent tools
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
-  (11, 'self_inspect'),
+  (11, 'self_inspect_config'),
+  (11, 'self_inspect_activity'),
+  (11, 'self_inspect_architecture'),
   (11, 'conv_read_file'),
   (11, 'workspace_create_file'),
   (11, 'workspace_str_replace'),
@@ -1519,6 +1525,7 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
 -- Agent tools
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
   (12, 'conv_read_file'),
+  (12, 'self_inspect_architecture'),
   (12, 'workspace_create_file'),
   (12, 'workspace_str_replace'),
   (12, 'workspace_view'),
@@ -1589,32 +1596,59 @@ INSERT INTO agent_paradigms (agent_id, paradigm_id) VALUES
   (12, 103);
 
 -- Workspace tool grants (agents 2,3,5,6,8 — added in migration 011)
+-- Migration 014: agents 2,3,6 read-only (no create/str_replace)
 INSERT INTO agent_tools (agent_id, tool_code) VALUES
-  (2, 'workspace_create_file'),
   (2, 'workspace_list'),
-  (2, 'workspace_str_replace'),
   (2, 'workspace_view'),
-  (3, 'workspace_create_file'),
   (3, 'workspace_list'),
-  (3, 'workspace_str_replace'),
   (3, 'workspace_view'),
   (5, 'workspace_create_file'),
   (5, 'workspace_list'),
   (5, 'workspace_str_replace'),
   (5, 'workspace_view'),
-  (6, 'workspace_create_file'),
   (6, 'workspace_list'),
-  (6, 'workspace_str_replace'),
   (6, 'workspace_view'),
   (8, 'workspace_create_file'),
   (8, 'workspace_list'),
   (8, 'workspace_str_replace'),
   (8, 'workspace_view');
 
--- Workspace write grants (agents 2,3,5,6,8)
+-- Workspace write grants (agents 5,8 only — 2,3,6 read-only per migration 014)
 INSERT INTO agent_workspace_grants (agent_id) VALUES
-  (2),
-  (3),
   (5),
-  (6),
   (8);
+
+-- =============================================================
+-- Seeds from migration 013 (meta_analysis_routing)
+-- =============================================================
+
+INSERT OR IGNORE INTO paradigms
+  (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at)
+VALUES (
+  104, 11, 'meta_analysis_routing', 'Route introspection to meta-analyst',
+  '- Any request involving the system''s own configuration, capabilities, tool grants, paradigm assignments, agent roster, conversation activity patterns, recent failures, or source architecture must be delegated to meta-analyst.
+- Jean-Michel has no introspection tools. meta-analyst has self_inspect and can observe the live system state autonomously.
+- Do not attempt to answer system-about-itself questions directly. Do not ask the human for information that meta-analyst could retrieve on its own.
+- Concrete triggers: "propose improvements", "analyze recent failures", "what tools does X have", "read the README to contextualize this task", "suggest new paradigms", "is the system well configured for X" -> delegate to meta-analyst with a clear briefing.
+- After meta-analyst returns its proposal (as a workspace file), return the workspace path to the user for review.',
+  'Closes the gap where jean-michel tried to access system internals directly (no tool), then fell back to ask_human. The correct path is always meta-analyst.',
+  0, 45, 1, datetime('now'), datetime('now')
+);
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (1, 104);
+
+-- =============================================================
+-- MIGRATION 015 — self_inspect split (3 scoped tools)
+-- =============================================================
+
+-- meta-analyst : self_inspect monolithique → 3 outils scopés
+DELETE FROM agent_tools WHERE agent_id=11 AND tool_code='self_inspect';
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
+  (11, 'self_inspect_config'),
+  (11, 'self_inspect_activity'),
+  (11, 'self_inspect_architecture');
+
+-- document-builder et code-runner : architecture seulement
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code) VALUES
+  (9,  'self_inspect_architecture'),
+  (12, 'self_inspect_architecture');
