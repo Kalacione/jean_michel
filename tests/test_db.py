@@ -18,6 +18,7 @@ class TestAgents:
             "comparator-specialist", "archivist",
             "critical-thinker", "document-builder", "workspace-manager",
             "meta-analyst", "code-runner", "web-search-specialist",
+            "dispatcher",
         }
 
     def test_get_agent_by_code(self, tmp_env):

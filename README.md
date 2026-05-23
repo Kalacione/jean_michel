@@ -12,13 +12,15 @@ Une requête humaine arrive à **Jean-Michel** (agent routeur). Il la formalise,
 Quand plusieurs spécialistes contribuent, l'agent **synthesizer** fusionne les sorties en une seule réponse cohérente pour l'humain, dans la langue détectée.
 
 Agents actifs :
-- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement
+- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement. Ne planifie pas, n'analyse pas — orchestre.
+- **dispatcher** (specialist) — pour les tâches `deep_research`, analyse la problématique, identifie les inconnues, décompose en étapes séquencées et écrit `workspace/plan.md`. Jean-Michel suit ce plan sans reformuler la stratégie lui-même.
 - **summarizer** (specialist) — résumé de texte
 - **weather-specialist** (specialist) — météo via open-meteo
+- **web-search-specialist** (specialist) — recherche web via SearXNG (méta-moteur local). Retourne un résumé compact vers jean-michel ; contenu complet dans le workspace.
 - **wikipedia-specialist** (specialist) — recherche et extraction d'articles Wikipedia
 - **comparator-specialist** (specialist) — orchestre des recherches en plusieurs entités et produit un verdict comparatif structuré
-- **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une analyse structurée sans verdict
-- **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace de la conversation
+- **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une cartographie épistémique (claims supportés / affaiblis / étape suivante suggérée)
+- **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace. Reçoit uniquement du matériel final validé — toujours en dernière étape du pipeline.
 - **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
 - **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect` et produit des propositions d'amélioration dans le workspace
 - **code-runner** (specialist) — écrit des scripts dans le workspace de la conversation et les exécute dans le sandbox Docker : cycle complet écriture → exécution en un seul tour
@@ -87,10 +89,13 @@ L'**archivist** est le seul agent non délégable : il est invoqué uniquement p
 
 - **Profondeur max** : `MAX_RECURSION_DEPTH = 5`. Compteur incrémenté uniquement par `delegate_to`. `ask_human`, l'appel au `synthesizer`, et l'appel à l'`archivist` n'incrémentent pas.
 - Au-delà de 5, l'orchestrateur rejette les nouvelles délégations avec un `tool_response` d'erreur explicite et force l'agent à conclure.
-- **Step budget** : `MAX_STEPS_PER_REQUEST = 8` itérations tool-call/tool-response par requête. Filet anti-tool-loop. Configurables dans `config.py`.
+- **Step budget** : `MAX_STEPS_PER_REQUEST = 15` itérations tool-call/tool-response par requête. Filet anti-tool-loop. Configurables dans `config.py`.
 - **`ask_human`** : une seule par requête. Toute tentative supplémentaire reçoit un `tool_response` d'erreur.
 - **Convergence gate** (`signal_convergence`) : à `depth >= 2`, `critical-thinker`, `meta-analyst` et `synthesizer` voient le tool `signal_convergence`. Paradigme `convergence_gate` (id=100) les instruit de l'utiliser quand l'analyse a atteint son plafond au lieu de continuer à déléguer. Évite les boucles d'analyse mutuelle sans nouvelles informations.
-- **Grounded analysis** : paradigme `grounded_analysis` (id=101) sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` (id=102) sur `jean-michel` — impose une phase de recherche avant de déléguer à un agent analytique sur une question factuelle complexe.
+- **Grounded analysis** : paradigme `grounded_analysis` (id=101) sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` (id=102) sur `jean-michel` — impose le pipeline complet : GATHER (web-search/wikipedia) → CRITIQUE (critical-thinker) → BUILD (document-builder). Le document-builder n'est jamais appelé avant les phases de recherche et de critique.
+- **Pipeline de recherche prescrit** : les agents de collecte (web-search-specialist, wikipedia-specialist) retournent un résumé compact structuré (Established / Not found / Suggested next step / Workspace file) — le contenu brut va dans le workspace, pas dans le briefing de retour. Le critical-thinker ajoute une section `Orchestrator summary` (claims supportés / affaiblis / étape suivante).
+- **Méthodes scientifiques** : paradigmes `evidence_hierarchy`, `burden_of_proof`, `occam_razor` sur jean-michel et critical-thinker. La charge de la preuve incombe à celui qui affirme ; les preuves sont pondérées par leur niveau (anecdote < observationnelle < RCT < méta-analyse).
+- **Métacognition orchestrateur** : paradigme `orchestrator_inquiry_loop` sur jean-michel — réévalue après chaque retour d'agent (ai-je dérivé ? puis-je synthétiser ?). Paradigme `task_plan_file` — pour les tâches multi-tours, jean-michel maintient `workspace/plan.md` (Goal / Done / Open / Blocked) mis à jour après chaque étape majeure.
 
 ## Persistance
 
