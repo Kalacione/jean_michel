@@ -1809,3 +1809,26 @@ SELECT 1, id FROM paradigms WHERE code IN ('orchestrator_inquiry_loop','evidence
 
 INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
 SELECT 8, id FROM paradigms WHERE code IN ('evidence_hierarchy','burden_of_proof','occam_razor');
+
+-- =============================================================
+-- MIGRATION 022 — convention task_plan_file (plan.md workspace)
+-- =============================================================
+
+INSERT OR IGNORE INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at)
+VALUES (113, 34, 'task_plan_file', 'Task plan file',
+'- For deep_research or multi-turn tasks, maintain a workspace/plan.md file as the single source of truth for the task state. Create it at the start of the first turn.
+- Structure it as:
+  ## Goal
+  (one-line restatement of the user request)
+  ## Done
+  (bullet list: each completed step + key finding in one line)
+  ## Open
+  (bullet list: remaining steps, ordered by priority)
+  ## Blocked / invalidated
+  (anything discovered to be false, unavailable, or deprioritised, with reason)
+- Update it after each major step using workspace_str_replace. Do not rewrite the whole file.
+- At the start of each new turn in the same conversation, read workspace/plan.md with workspace_view before deciding what to do next.',
+'Provides a navigable task state that survives across turns and agent delegations. Prevents redundant work and drift.', 0, 79, 1, datetime('now'), datetime('now'));
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
+SELECT 1, id FROM paradigms WHERE code='task_plan_file';
