@@ -167,12 +167,14 @@ Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dan
 
 - Python 3.14 dans un venv local.
 - SQLite (source de vérité, `jeanmichel.db`).
-- Ollama 0.21+ (thinking natif depuis 0.9).
+- **Ollama 0.21+** — backend LLM. Modèle par défaut : `gemma4:26b`.
 - CLI dynamique (`rich`, `prompt_toolkit`).
 - Docker (optionnel, pour la sandbox d'exécution de code).
 - API web prévue ultérieurement (FastAPI).
 
 ## Installation
+
+### Application
 
 ```bash
 ./jm.sh --install       # crée le venv + initialise la BDD
@@ -193,7 +195,7 @@ En mode `analyse`, le summary est maintenu (archivist actif) mais les follow-ups
 
 Override du Python : `PYTHON_BIN=/path/to/python3.14 ./jm.sh --install`.
 
-Override du modèle Ollama : `JEANMICHEL_MODEL=gemma4:4b ./jm.sh` ou `./jm.sh --model gemma4:4b`.
+Override du modèle : `JEANMICHEL_MODEL=gemma4:4b ./jm.sh` ou `./jm.sh --model gemma4:4b`.
 
 ## Profil utilisateur
 
