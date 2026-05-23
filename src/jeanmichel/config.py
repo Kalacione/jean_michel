@@ -21,7 +21,9 @@ MAX_RECURSION_DEPTH = 10
 
 # Hard cap on tool-call iterations within a single agent request. Prevents
 # tool-loop runaway when an agent gets stuck (e.g. retrying a failing tool).
-MAX_STEPS_PER_REQUEST = 8
+# 15 allows a router to make 5-6 delegations + follow-up reads without
+# exhausting budget on multi-step research tasks.
+MAX_STEPS_PER_REQUEST = 15
 
 # Workspace soft quota per conversation, in bytes.
 WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB

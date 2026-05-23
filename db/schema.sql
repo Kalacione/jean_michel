@@ -1565,11 +1565,14 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
 - Once sources are gathered, pass them as support_files when delegating further.',
    'Prevents hallucinated analysis by requiring real source material before engaging analytical reasoning.', 0, 80, 1, datetime('now'), datetime('now')),
   (102, 11, 'research_phase_routing', 'Research phase routing',
-   '- For analytical tasks on topics requiring external knowledge (science, history, current events, technical domains), do not delegate directly to an analytical agent on a bare question.
-- First orchestrate a research phase: delegate to wikipedia-specialist (or relevant research agent) to gather source material.
-- Then delegate to the analytical agent, passing the research artifacts as support_files.
-- Simple factual lookups or direct questions do not require this two-phase approach.',
-   'Ensures analytical agents receive grounded source material rather than reasoning in a knowledge vacuum.', 0, 80, 1, datetime('now'), datetime('now')),
+   '- For analytical tasks requiring external knowledge, do not delegate to an analytical agent on a bare question. First run a research phase.
+- Research pipeline for document-producing tasks (deep_research):
+  1. GATHER: delegate to web-search-specialist and/or wikipedia-specialist. Each agent compacts its findings into a workspace file and returns the path.
+  2. CRITIQUE (when stakes are high or claims need validation): delegate to critical-thinker, passing the workspace paths in the briefing. It will validate, challenge, and contextualise the findings.
+  3. BUILD: delegate to document-builder last, passing the workspace file paths in the briefing. Never call document-builder before research and critique phases are complete.
+- For simple factual lookups or direct questions, this pipeline is not required — one research agent and a direct answer suffice.
+- document-builder is a production agent, not a research aid. It only receives final, validated material.',
+   'Ensures document-builder receives grounded, validated material rather than raw or unvetted research. Prevents premature production calls.', 0, 80, 1, datetime('now'), datetime('now')),
   (103, 11, 'workspace_as_shared_memory', 'Workspace as shared memory',
    '- BEFORE starting any research or analysis task, call workspace_list to check if a relevant file already exists. If it does, read it with workspace_view — do not redo work already done.
 - AFTER completing your work, write your findings to a workspace file so other agents can use them without re-running the same operation.
