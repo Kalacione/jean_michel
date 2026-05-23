@@ -1716,3 +1716,12 @@ WHERE a.code='web-search-specialist' AND p.code IN ('web_search_discipline','fai
 
 INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
 SELECT id, 'web_search' FROM agents WHERE code IN ('web-search-specialist', 'jean-michel');
+
+-- =============================================================
+-- MIGRATION 018 — document_workspace_output étendu aux agents producteurs
+-- =============================================================
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, (SELECT id FROM paradigms WHERE code='document_workspace_output')
+FROM agents a
+WHERE a.code IN ('wikipedia-specialist','comparator-specialist','archivist','web-search-specialist');

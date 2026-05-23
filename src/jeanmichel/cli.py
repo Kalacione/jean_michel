@@ -111,6 +111,23 @@ def render_events(console: Console, events: Iterable[object],
             )
 
         elif isinstance(ev, ToolResponseRecorded):
+            if ev.tool_name in ("workspace_create_file", "workspace_str_replace"):
+                try:
+                    rdata = json.loads(ev.response)
+                    if "error" not in rdata:
+                        fpath = rdata.get("path", "?")
+                        if ev.tool_name == "workspace_create_file":
+                            nb = rdata.get("bytes_written", "?")
+                            console.print(
+                                f"  [green]📄 workspace/{fpath}[/] [dim]({nb} bytes)[/]"
+                            )
+                        else:
+                            console.print(
+                                f"  [green]✏ workspace/{fpath}[/] [dim]modifié[/]"
+                            )
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
             console.print(
                 f"  [dim]↳ {ev.tool_name} → {_truncate(ev.response, 100)}[/]"
             )

@@ -36,8 +36,9 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
     return ToolSpec(
         name="workspace_create_file",
         description=(
-            "Create a new file in the conversation workspace. "
-            "The workspace is a sandbox folder; cannot write outside it. "
+            "Create a new file in the conversation workspace (the 'workspace/' folder "
+            "of the current conversation — this is where deliverable output files go). "
+            "Cannot write outside this folder. "
             "Fails if the file already exists — use workspace_str_replace to edit. "
             "Sub-directories are created automatically."
         ),
