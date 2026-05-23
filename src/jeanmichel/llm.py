@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 from .config import DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL
 from .models import LLMResponse, ToolCall
+
+# Injected into the system prompt when native thinking isn't supported.
+_THINKING_INSTRUCTION = (
+    "\n\nBefore responding, reason through the problem step by step. "
+    "Write your internal reasoning inside <think>…</think> tags, "
+    "then give your final answer outside those tags."
+)
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 
 
 class LLMClient(Protocol):
@@ -42,13 +51,34 @@ class OllamaClient:
         }
         if tools:
             kwargs["tools"] = tools
+
+        prompt_thinking = False
         if thinking:
             kwargs["think"] = True
+            try:
+                resp = self._client.chat(**kwargs)
+            except Exception as exc:
+                # Model doesn't support native thinking (HTTP 400) — fall back
+                # to prompt-injected <think> tags parsed from content.
+                if "thinking" not in str(exc).lower() and "400" not in str(exc):
+                    raise
+                kwargs.pop("think")
+                messages[0]["content"] += _THINKING_INSTRUCTION
+                prompt_thinking = True
+                resp = self._client.chat(**kwargs)
+        else:
+            resp = self._client.chat(**kwargs)
 
-        resp = self._client.chat(**kwargs)
         msg = resp.get("message", {}) if isinstance(resp, dict) else getattr(resp, "message", {})
-        thinking_text = (msg.get("thinking") if isinstance(msg, dict) else getattr(msg, "thinking", "")) or ""
-        content = (msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")) or ""
+        content_raw = (msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")) or ""
+
+        if prompt_thinking:
+            thinking_text = "\n\n".join(m.strip() for m in _THINK_RE.findall(content_raw))
+            content = _THINK_RE.sub("", content_raw).strip()
+        else:
+            thinking_text = (msg.get("thinking") if isinstance(msg, dict) else getattr(msg, "thinking", "")) or ""
+            content = content_raw
+
         raw_calls = (msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", [])) or []
 
         tool_calls: list[ToolCall] = []
@@ -61,6 +91,7 @@ class OllamaClient:
             tool_calls.append(ToolCall(name=name, arguments=dict(args or {})))
 
         return LLMResponse(thinking=thinking_text, content=content, tool_calls=tool_calls)
+
 
 
 # ---- Mock implementation --------------------------------------------------
