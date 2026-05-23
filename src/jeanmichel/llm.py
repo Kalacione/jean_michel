@@ -58,13 +58,15 @@ class OllamaClient:
             try:
                 resp = self._client.chat(**kwargs)
             except Exception as exc:
-                # Model doesn't support native thinking (HTTP 400) — fall back
-                # to prompt-injected <think> tags parsed from content.
+                # Model doesn't support native thinking (HTTP 400) — fall back.
                 if "thinking" not in str(exc).lower() and "400" not in str(exc):
                     raise
                 kwargs.pop("think")
-                messages[0]["content"] += _THINKING_INSTRUCTION
-                prompt_thinking = True
+                # Only inject <think> instruction when no tools are in play.
+                # With tools, the instruction risks confusing structured output.
+                if not tools:
+                    messages[0]["content"] += _THINKING_INSTRUCTION
+                    prompt_thinking = True
                 resp = self._client.chat(**kwargs)
         else:
             resp = self._client.chat(**kwargs)
