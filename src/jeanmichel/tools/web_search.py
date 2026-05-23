@@ -23,7 +23,7 @@ from ._base import ToolSpec
 # Constants
 # ---------------------------------------------------------------------------
 
-_SEARXNG_URL = "http://127.0.0.1:8888"
+_SEARXNG_URL = "http://127.0.0.1:8080"
 _COMPOSE_FILE = Path(__file__).resolve().parents[3] / "docker" / "searxng" / "compose.yml"
 
 _STARTUP_TIMEOUT_S = 20   # max wait after docker start

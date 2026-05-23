@@ -2,8 +2,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: jean-michel-searxng
-    ports:
-      - "127.0.0.1:8888:8080"
+    network_mode: host
     volumes:
       - ./settings.yml:/etc/searxng/settings.yml:ro
     restart: unless-stopped
