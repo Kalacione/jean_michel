@@ -22,6 +22,7 @@ from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import weather as _weather_mod
+from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_create_file as _ws_create_mod
 from . import workspace_list as _ws_list_mod
@@ -48,6 +49,7 @@ def build_registry(
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         conv_read_file_spec.name: conv_read_file_spec,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
+        _web_search_mod.SPEC.name: _web_search_mod.SPEC,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
         _self_inspect_mod.SPEC.name: _self_inspect_mod.SPEC,

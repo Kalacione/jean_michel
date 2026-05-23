@@ -1,0 +1,40 @@
+use_default_settings: true
+
+server:
+  # Remplacer par une valeur aléatoire en prod (requis par SearXNG)
+  secret_key: "jean-michel-searxng-local"
+  bind_address: "0.0.0.0"
+  port: 8080
+
+search:
+  formats:
+    - html
+    - json
+  default_lang: "fr-FR"
+  safe_search: 0
+
+# Moteurs activés — DuckDuckGo en principal (pas de rate limit agressif),
+# Brave Search et Mojeek en complément.
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: brave
+    engine: brave
+    shortcut: brave
+    disabled: false
+
+  - name: mojeek
+    engine: mojeek
+    shortcut: moj
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: true   # jean-michel a déjà wikipedia_search natif
+
+ui:
+  static_use_hash: true

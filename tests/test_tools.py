@@ -360,3 +360,68 @@ class TestWikipedia:
             page_result = json.loads(WIKI_GET_PAGE.handler(title=best_title))
         # The inclination angle is present in the content
         assert "3.97 degrees" in page_result["content"]
+
+
+# ---------------------------------------------------------------------------
+# WebSearch
+# ---------------------------------------------------------------------------
+
+from jeanmichel.tools.web_search import SPEC as WEB_SEARCH_SPEC  # noqa: E402
+import jeanmichel.tools.web_search as _ws_mod                     # noqa: E402
+
+_FAKE_SEARXNG_RESULTS = [
+    {"title": "Résultat A", "url": "https://example.com/a", "content": "Snippet A"},
+    {"title": "Résultat B", "url": "https://example.com/b", "content": "Snippet B"},
+]
+
+
+class TestWebSearch:
+    def test_returns_results_when_alive(self):
+        with (
+            patch.object(_ws_mod, "_is_alive", return_value=True),
+            patch.object(_ws_mod, "_do_search", return_value=_FAKE_SEARXNG_RESULTS),
+        ):
+            result = json.loads(WEB_SEARCH_SPEC.handler("test query"))
+        assert result["query"] == "test query"
+        assert len(result["results"]) == 2
+        assert result["results"][0]["url"] == "https://example.com/a"
+
+    def test_starts_container_when_not_alive(self):
+        started = []
+        with (
+            patch.object(_ws_mod, "_is_alive", return_value=False),
+            patch.object(_ws_mod, "_docker_start", side_effect=lambda: started.append(1)),
+            patch.object(_ws_mod, "_wait_until_alive", return_value=True),
+            patch.object(_ws_mod, "_do_search", return_value=_FAKE_SEARXNG_RESULTS),
+        ):
+            result = json.loads(WEB_SEARCH_SPEC.handler("test"))
+        assert started == [1]
+        assert "results" in result
+
+    def test_error_when_container_fails_to_start(self):
+        with (
+            patch.object(_ws_mod, "_is_alive", return_value=False),
+            patch.object(_ws_mod, "_docker_start", return_value=None),
+            patch.object(_ws_mod, "_wait_until_alive", return_value=False),
+        ):
+            result = json.loads(WEB_SEARCH_SPEC.handler("test"))
+        assert "error" in result
+
+    def test_results_capped_at_max(self):
+        many = [{"title": f"R{i}", "url": f"https://x.com/{i}", "content": ""} for i in range(20)]
+        with (
+            patch.object(_ws_mod, "_is_alive", return_value=True),
+            patch.object(_ws_mod, "_do_search", return_value=many),
+        ):
+            result = json.loads(WEB_SEARCH_SPEC.handler("test", results=100))
+        assert len(result["results"]) <= _ws_mod._MAX_RESULTS
+
+    def test_docker_start_error_returns_error(self):
+        import subprocess
+        with (
+            patch.object(_ws_mod, "_is_alive", return_value=False),
+            patch.object(_ws_mod, "_docker_start",
+                         side_effect=subprocess.CalledProcessError(1, "docker", stderr=b"fail")),
+        ):
+            result = json.loads(WEB_SEARCH_SPEC.handler("test"))
+        assert "error" in result
