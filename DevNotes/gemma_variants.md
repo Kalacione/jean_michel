@@ -15,6 +15,12 @@ Choisi pour :
 
 **Ollama tag** : `hf.co/HauhauCS/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced:Q6_K_P`
 
+Pour utiliser un autre modèle ponctuellement (ex. retour sur gemma4:26b) :
+
+```bash
+JEANMICHEL_MODEL=gemma4:26b ./jm.sh
+```
+
 ---
 
 ## Autres variantes disponibles (HauhauCS 26B)
