@@ -2,7 +2,7 @@
 
 ## Modèle en service
 
-**`HauhauCS/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced` — Q6_K_P (23 GB)**
+**`HauhauCS/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced` — Q4_K_M (17 GB)**
 
 Choisi pour :
 - Même base exacte que `gemma4:26b` (google/gemma-4-26B-A4B-it) → zéro dégradation de dataset
@@ -10,16 +10,18 @@ Choisi pour :
 - Lossless uncensoring (0/465 refusals) sans modifier les capacités du modèle
 - Variant "Balanced" : répond à tout, peut cadrer en intro, mais ne refuse jamais
 - Explicitement conçu pour l'agentic work (chaînes de tool calls, long context)
-- Q6_K_P : qualité quasi-Q8 grâce au profil par couche HauhauCS, 23 GB laisse du headroom sur GV100 32GB
-- Compatible Ollama/llama.cpp natif
+- Q4_K_M : format standard largement supporté par llama.cpp/ollama, 17 GB (même footprint que gemma4:26b)
+- Q6_K_P (23 GB) abandonné — quantization type `unknown` dans ollama ≤ 0.24, format custom non supporté par llama.cpp
 
-**Ollama tag** : `hf.co/HauhauCS/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced:Q6_K_P`
+**Ollama tag** : `hf.co/HauhauCS/Gemma4-26B-A4B-Uncensored-HauhauCS-Balanced:Q4_K_M`
 
 Pour utiliser un autre modèle ponctuellement (ex. retour sur gemma4:26b) :
 
 ```bash
 JEANMICHEL_MODEL=gemma4:26b ./jm.sh
 ```
+
+> **Note Q6_K_P** : ce format de quant est `unknown` pour ollama ≤ 0.24 / llama.cpp actuel. Préférer Q4_K_M ou Q8_0.
 
 ---
 
@@ -28,9 +30,9 @@ JEANMICHEL_MODEL=gemma4:26b ./jm.sh
 | Quant | Taille | Usage recommandé |
 |-------|--------|------------------|
 | Q8_K_P | 27 GB | Qualité max, 1 GV100 limite |
-| **Q6_K_P** | **23 GB** | **En service — sweet spot qualité/VRAM** |
+| Q6_K_P | 23 GB | ~~En service~~ — **incompatible ollama/llama.cpp** (quantization unknown) |
 | Q5_K_P | 19 GB | Économie VRAM si contexte très long |
-| Q4_K_M | 17 GB | Tâches rapides, même footprint que l'original |
+| **Q4_K_M** | **17 GB** | **En service — standard, compatible llama.cpp** |
 | IQ4_XS | 14 GB | Micro-tâches légères |
 | IQ3_M  | 12 GB | Micro-tâches très contraintes |
 | Q2_K_P | 11 GB | Dernier recours (dégradation notable) |
