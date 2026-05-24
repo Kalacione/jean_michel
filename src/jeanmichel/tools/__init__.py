@@ -16,6 +16,7 @@ from pathlib import Path
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_read_file as _conv_read_file_mod
+from . import plan_update as _plan_update_mod
 from . import self_inspect as _self_inspect_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
@@ -47,6 +48,7 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
+    plan_update_spec = _plan_update_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     registry = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         conv_read_file_spec.name: conv_read_file_spec,
@@ -63,6 +65,7 @@ def build_registry(
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
+        plan_update_spec.name: plan_update_spec,
     }
     if conv_status_spec is not None:
         registry[conv_status_spec.name] = conv_status_spec

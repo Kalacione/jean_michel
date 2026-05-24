@@ -57,8 +57,8 @@ class TestWorkspaceCreateFile:
     def test_create_existing_returns_content_and_action(self, tmp_conv):
         """Existing file error must include existing_content and action_required."""
         spec = create_spec(tmp_conv, has_write_grant=True)
-        (tmp_conv / "workspace" / "plan.md").write_text("# Plan\nstep 1")
-        result = json.loads(spec.handler("plan.md", "# New Plan"))
+        (tmp_conv / "workspace" / "notes.md").write_text("# Notes\nstep 1")
+        result = json.loads(spec.handler("notes.md", "# New Notes"))
         assert "error" in result
         assert result.get("action_required") == "workspace_str_replace"
         assert "existing_content" in result

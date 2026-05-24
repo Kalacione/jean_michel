@@ -87,3 +87,12 @@ CREATE TABLE IF NOT EXISTS conversation_phases (
 
 CREATE INDEX IF NOT EXISTS idx_conversation_phases_conv
   ON conversation_phases(conversation_id);
+
+-- 10. Grant plan_update to agents that need to manage the plan
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
+VALUES
+  ((SELECT id FROM agents WHERE code='jean-michel'),           'plan_update'),
+  ((SELECT id FROM agents WHERE code='web-search-specialist'), 'plan_update'),
+  ((SELECT id FROM agents WHERE code='wikipedia-specialist'),  'plan_update'),
+  ((SELECT id FROM agents WHERE code='critical-thinker'),      'plan_update'),
+  ((SELECT id FROM agents WHERE code='document-builder'),      'plan_update');

@@ -2855,3 +2855,22 @@ SET content = '- Applies to deep_research tasks only. For single_fact and medium
 - A plan update costs a tool call. Only pay that cost when it buys something real.',
     modified_at = datetime('now')
 WHERE code = 'orchestration_plan_maintenance';
+
+-- MIGRATION 044 (continued) — plan_update tool grants
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
+VALUES
+  ((SELECT id FROM agents WHERE code='jean-michel'),           'plan_update'),
+  ((SELECT id FROM agents WHERE code='web-search-specialist'), 'plan_update'),
+  ((SELECT id FROM agents WHERE code='wikipedia-specialist'),  'plan_update'),
+  ((SELECT id FROM agents WHERE code='critical-thinker'),      'plan_update'),
+  ((SELECT id FROM agents WHERE code='document-builder'),      'plan_update');
+
+-- MIGRATION 044 (continued) — task_plan_file paradigm references plan_update
+UPDATE paradigms
+SET content = '- For deep_research or multi-turn tasks, maintain a workspace/plan.md file as the single source of truth for the task state. Create it via plan_update(action="init", ...) at the start of the first turn.
+- Read the current plan via plan_update(action="read") before deciding what to do next.
+- Mark steps as you progress via plan_update(action="mark", step_id="...", status="in_progress" | "done" | "blocked", findings="...").
+- If a sub-research emerges (disambiguation, link to follow), call plan_update(action="add_substep", parent_step_id="...", title="...", reason="...").
+- NEVER call workspace_create_file with relative_path="plan.md". The plan is managed exclusively via plan_update.',
+    modified_at = datetime('now')
+WHERE code = 'task_plan_file';

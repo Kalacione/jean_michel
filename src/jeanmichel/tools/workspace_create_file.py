@@ -24,6 +24,16 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             target = safe_resolve(ws_root, relative_path)
         except ValueError as e:
             return json.dumps({"error": str(e)})
+        # plan.md is owned exclusively by plan_update
+        if target == safe_resolve(ws_root, "plan.md"):
+            return json.dumps({
+                "error": (
+                    "plan.md is managed by the plan_update tool. "
+                    "Use plan_update(action='init', ...) to create it, "
+                    "plan_update(action='mark', ...) to update steps."
+                ),
+                "action_required": "plan_update",
+            })
         if target.exists():
             try:
                 existing = target.read_text(encoding="utf-8")[:6000]
