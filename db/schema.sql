@@ -2369,3 +2369,12 @@ SET content = 'MANDATORY write protocol — follow exactly:
 - When the inbound briefing contains an existing plan (plan.md content) plus new findings to integrate, do NOT recreate the plan from scratch. Use workspace_str_replace to update only the affected sections (Steps, Status, Unknowns, Risks). Preserve all ✅ done rows in the Status table unchanged. Append a ## Revision log section (or a new entry if it already exists): one line with the date, what changed, and why.',
     modified_at = datetime('now')
 WHERE code = 'planner_plan_format';
+-- MIGRATION 035 — workspace write grant for research specialist agents
+-- =====================================================================
+-- web-search-specialist and wikipedia-specialist had workspace_create_file
+-- in agent_tools but were missing from agent_workspace_grants.
+-- They need write access to deliver their research output as workspace files
+-- (sources_found.md, encyclopedic_sources.md, etc. as specified in plans).
+
+INSERT OR IGNORE INTO agent_workspace_grants (agent_id)
+SELECT id FROM agents WHERE code IN ('web-search-specialist', 'wikipedia-specialist');
