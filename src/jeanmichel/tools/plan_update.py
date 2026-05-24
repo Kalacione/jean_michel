@@ -37,6 +37,20 @@ def _step_heading_re(step_id: str) -> re.Pattern[str]:
     )
 
 
+_ANY_STEP_HEADING_RE = re.compile(r'^#{3,}\s+([A-Za-z0-9.]+)\s+—')
+
+
+def _list_step_ids(plan_path: Path) -> list[str]:
+    if not plan_path.exists():
+        return []
+    out: list[str] = []
+    for ln in plan_path.read_text(encoding="utf-8").splitlines():
+        m = _ANY_STEP_HEADING_RE.match(ln)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
 def _build_plan_md(title: str, steps: list[dict], created: str, updated: str) -> str:
     lines = [
         f"# Plan — {title}",
@@ -46,8 +60,10 @@ def _build_plan_md(title: str, steps: list[dict], created: str, updated: str) ->
         "## Steps",
         "",
     ]
-    for step in steps:
-        sid = step.get("id", "S?")
+    for idx, step in enumerate(steps, start=1):
+        # Auto-numbered ids: S1, S2, S3, … (ignore any id supplied by the caller
+        # to avoid LLMs inventing inconsistent ids like 'step_1' or 'root').
+        sid = f"S{idx}"
         stitle = step.get("title", "")
         agent = step.get("agent", "")
         deliverable = step.get("deliverable", "")
@@ -86,10 +102,13 @@ def _append_revision(lines: list[str], entry: str) -> None:
 def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
              new_steps: list | None = None, **_) -> str:
     if plan_path.exists():
+        existing = _list_step_ids(plan_path)
         raise _PlanError(
-            "plan.md already exists. "
-            "Use plan_update(action='mark') to update steps, "
-            "or plan_update(action='reset') to replace the plan entirely."
+            "plan.md already exists. Use plan_update(action='read') to inspect it, "
+            "plan_update(action='mark', step_id=..., ...) to update an existing step, "
+            "or plan_update(action='add_substep', parent_step_id=..., ...) to refine it. "
+            "DO NOT call action='reset' unless you really want to discard everything. "
+            f"Existing step_ids: {existing}."
         )
     if not title:
         raise _PlanError("'title' is required for action='init'.")
@@ -100,15 +119,16 @@ def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
     if not steps:
         raise _PlanError(
             "action='init' requires at least one entry in 'steps' "
-            "(an array of {id, title, agent?, deliverable?}). "
+            "(an array of {title, agent?, deliverable?}). "
             "Got 0 steps — refusing to create an empty plan."
         )
     now = _now_iso()
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(_build_plan_md(title, steps, created=now, updated=now),
                          encoding="utf-8")
+    step_ids = [f"S{i}" for i in range(1, len(steps) + 1)]
     return json.dumps({"action": "init", "path": _PLAN_FILENAME,
-                       "steps_created": len(steps)})
+                       "steps_created": len(steps), "step_ids": step_ids})
 
 
 def _do_mark(plan_path: Path, step_id: str = "", status: str = "",
@@ -127,7 +147,10 @@ def _do_mark(plan_path: Path, step_id: str = "", status: str = "",
         (i for i, ln in enumerate(lines) if step_re.match(ln)), None
     )
     if step_line_idx is None:
-        raise _PlanError(f"Step '{step_id}' not found in plan.md.")
+        raise _PlanError(
+            f"Step '{step_id}' not found in plan.md. "
+            f"Available step_ids: {_list_step_ids(plan_path)}."
+        )
 
     # Update status in the heading line
     if status:
@@ -202,7 +225,10 @@ def _do_add_substep(plan_path: Path, parent_step_id: str = "",
         (i for i, ln in enumerate(lines) if parent_re.match(ln)), None
     )
     if parent_line_idx is None:
-        raise _PlanError(f"Parent step '{parent_step_id}' not found in plan.md.")
+        raise _PlanError(
+            f"Parent step '{parent_step_id}' not found in plan.md. "
+            f"Available step_ids: {_list_step_ids(plan_path)}."
+        )
 
     # Insert before next ## or ### heading (substeps at #### stay inside the block)
     insert_idx = len(lines)
@@ -232,10 +258,20 @@ def _do_add_substep(plan_path: Path, parent_step_id: str = "",
 
 
 def _do_reset(plan_path: Path, ws_root: Path,
-              title: str = "", new_steps: list | None = None, **_) -> str:
+              title: str = "", new_steps: list | None = None,
+              steps: list | None = None, **_) -> str:
     if not title:
         raise _PlanError("'title' is required for action='reset'.")
+    # Accept steps as alias for new_steps (symmetrical with init).
+    if not new_steps and steps:
+        new_steps = steps
     new_steps = new_steps or []
+    if not new_steps:
+        raise _PlanError(
+            "action='reset' requires at least one entry in 'new_steps' "
+            "(an array of {title, agent?, deliverable?}). "
+            "Got 0 steps — refusing to overwrite the plan with an empty one."
+        )
     archive_name: str | None = None
     if plan_path.exists():
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
@@ -246,8 +282,9 @@ def _do_reset(plan_path: Path, ws_root: Path,
     now = _now_iso()
     plan_path.write_text(_build_plan_md(title, new_steps, created=now, updated=now),
                          encoding="utf-8")
+    step_ids = [f"S{i}" for i in range(1, len(new_steps) + 1)]
     return json.dumps({"action": "reset", "archive": archive_name,
-                       "steps_created": len(new_steps)})
+                       "steps_created": len(new_steps), "step_ids": step_ids})
 
 
 def _do_read(plan_path: Path) -> str:
@@ -297,26 +334,42 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
                 "title": {"type": "string"},
                 "steps": {
                     "type": "array",
+                    "description": (
+                        "Steps for action='init'. Ids are auto-assigned as "
+                        "S1, S2, S3, … — do NOT include 'id'."
+                    ),
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string"},
                             "title": {"type": "string"},
                             "agent": {"type": "string"},
                             "deliverable": {"type": "string"},
                         },
-                        "required": ["id", "title"],
+                        "required": ["title"],
                     },
                 },
-                "step_id": {"type": "string"},
+                "step_id": {
+                    "type": "string",
+                    "description": "Existing step id (e.g. 'S1' or 'S1.2').",
+                },
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "done", "blocked"],
                 },
                 "findings": {"type": "string"},
-                "parent_step_id": {"type": "string"},
+                "parent_step_id": {
+                    "type": "string",
+                    "description": "Existing parent step id (e.g. 'S1').",
+                },
                 "reason": {"type": "string"},
-                "new_steps": {"type": "array", "items": {"type": "object"}},
+                "new_steps": {
+                    "type": "array",
+                    "description": (
+                        "Steps for action='reset'. Same shape as 'steps'; "
+                        "ids auto-assigned."
+                    ),
+                    "items": {"type": "object"},
+                },
             },
             "required": ["action"],
         },

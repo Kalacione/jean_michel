@@ -23,11 +23,11 @@ def _handler(tmp_path: Path, write: bool = True):
 
 def _init(h, title="Test Plan", steps=None):
     return json.loads(h(action="init", title=title, steps=steps or [
-        {"id": "S1", "title": "Gather sources", "agent": "web-search-specialist",
+        {"title": "Gather sources", "agent": "web-search-specialist",
          "deliverable": "gather/sources.md"},
-        {"id": "S2", "title": "Critique", "agent": "critical-thinker",
+        {"title": "Critique", "agent": "critical-thinker",
          "deliverable": "critique/analysis.md"},
-        {"id": "S3", "title": "Build document", "agent": "document-builder",
+        {"title": "Build document", "agent": "document-builder",
          "deliverable": "output/report.md"},
     ]))
 
@@ -46,6 +46,24 @@ class TestInit:
         assert "### S2 — Critique [⬜ pending]" in plan
         assert "### S3 — Build document [⬜ pending]" in plan
         assert "## Revision log" in plan
+
+    def test_init_returns_step_ids(self, tmp_path):
+        h = _handler(tmp_path)
+        result = _init(h)
+        assert result["step_ids"] == ["S1", "S2", "S3"]
+
+    def test_init_ignores_caller_supplied_ids(self, tmp_path):
+        h = _handler(tmp_path)
+        result = json.loads(h(action="init", title="T", steps=[
+            {"id": "step_1", "title": "First"},
+            {"id": "root", "title": "Second"},
+        ]))
+        assert result["step_ids"] == ["S1", "S2"]
+        plan = (tmp_path / "workspace" / "plan.md").read_text(encoding="utf-8")
+        assert "step_1" not in plan
+        assert "root" not in plan
+        assert "S1" in plan
+        assert "S2" in plan
 
     def test_init_refuses_existing(self, tmp_path):
         h = _handler(tmp_path)
@@ -148,6 +166,9 @@ class TestAddSubstep:
         _init(h)
         result = json.loads(h(action="add_substep", parent_step_id="S99", title="x"))
         assert "error" in result
+        # Error must list the available ids so the agent can self-correct.
+        assert "S1" in result["error"]
+        assert "S2" in result["error"]
 
 
 # ---- reset -----------------------------------------------------------------
@@ -156,7 +177,9 @@ class TestReset:
     def test_reset_archives_old_plan(self, tmp_path):
         h = _handler(tmp_path)
         _init(h)
-        result = json.loads(h(action="reset", title="New Plan", new_steps=[]))
+        result = json.loads(h(action="reset", title="New Plan", new_steps=[
+            {"title": "Replacement step"},
+        ]))
         assert result["archive"] is not None
         ws = tmp_path / "workspace"
         archives = list(ws.glob("plan.archive.*.md"))
@@ -165,17 +188,29 @@ class TestReset:
     def test_reset_writes_new_plan(self, tmp_path):
         h = _handler(tmp_path)
         _init(h)
-        h(action="reset", title="Refreshed Plan", new_steps=[
-            {"id": "T1", "title": "New step", "agent": "web-search-specialist"},
-        ])
+        result = json.loads(h(action="reset", title="Refreshed Plan", new_steps=[
+            {"title": "New step", "agent": "web-search-specialist"},
+        ]))
         plan = (tmp_path / "workspace" / "plan.md").read_text(encoding="utf-8")
         assert "# Plan — Refreshed Plan" in plan
-        assert "T1 — New step" in plan
+        # ids are auto-assigned starting at S1, not from the caller
+        assert "S1 — New step" in plan
+        assert result["step_ids"] == ["S1"]
+
+    def test_reset_empty_steps_rejected(self, tmp_path):
+        h = _handler(tmp_path)
+        _init(h)
+        result = json.loads(h(action="reset", title="Fresh", new_steps=[]))
+        assert "error" in result
+        assert "new_steps" in result["error"]
 
     def test_reset_without_existing_plan_no_archive(self, tmp_path):
         h = _handler(tmp_path)
-        result = json.loads(h(action="reset", title="Fresh", new_steps=[]))
+        result = json.loads(h(action="reset", title="Fresh", new_steps=[
+            {"title": "First step"},
+        ]))
         assert result["archive"] is None
+        assert result["step_ids"] == ["S1"]
 
 
 # ---- read ------------------------------------------------------------------
