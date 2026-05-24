@@ -884,10 +884,16 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  0, 35, 1, datetime('now'), datetime('now')),
 
 (75, 10, 'assess_complexity_first', 'Assess complexity first',
- '- Before acting on a request, classify it in your thought channel as one of: single_fact (one tool call or direct answer), medium_task (3-5 tool calls or one delegation), deep_research (5+ tool calls or multi-agent orchestration).
-- This classification guides tool budget, depth of reflection, and whether to plan before acting.
-- A misclassified request produces over-engineered or under-engineered answers; both fail the user.',
- 'Operationalizes the complexity scale referenced by scale_tool_calls_to_complexity. Done in thinking, no extra tool needed.',
+ '- Before acting on a request, classify it in your thought channel as one of:
+  - single_fact: one tool call or direct answer (weather, time, translation, simple factual lookup). Handle immediately, no plan.
+  - medium_task: 2-3 independent delegations, no chain of dependent phases, no structured synthesis document as output. Draft routing plan in thought channel only.
+  - deep_research: ALWAYS delegate to planner first. A task is deep_research if ANY of these apply:
+      (a) it involves a chain of dependent phases (e.g. gather → critique → build, or search → compare → synthesize)
+      (b) the expected output is a structured workspace document (report, table, specification, comparative analysis)
+      (c) it requires 3 or more distinct agents in sequence
+- The number of tool calls is NOT the right criterion. "Web search + document creation" is two dependent phases: deep_research.
+- When in doubt between medium_task and deep_research, ask: "does step 2 depend on step 1''s output?" If yes → deep_research.',
+ 'Operationalizes the complexity scale. Criteria are structural (phases, dependencies, output type) not numerical, to prevent LLM under-estimation of complexity.',
  0, 5, 1, datetime('now'), datetime('now'));
 
 -- process / tool_discipline (NEW category, cat 29)
@@ -2037,3 +2043,29 @@ SET content = '- Always write the plan to workspace/plan.md via workspace_create
 - When the inbound briefing contains an existing plan (workspace/plan.md content) plus new findings to integrate, do NOT recreate the plan from scratch. Use workspace_str_replace to update only the affected sections (Steps, Unknowns, Risks). Append a ## Revision log section (or a new entry if it already exists): one line with the date, what changed, and why.',
     modified_at = datetime('now')
 WHERE code = 'planner_plan_format';
+
+-- MIGRATION 028 — fix deep_research classification
+-- ==================================================
+-- Replaces numerical criteria ("5+ tool calls") with structural criteria
+-- (dependent phases, output type) to prevent LLM under-estimation.
+
+UPDATE paradigms
+SET content = '- Before acting on a request, classify it in your thought channel as one of:
+  - single_fact: one tool call or direct answer (weather, time, translation, simple factual lookup). Handle immediately, no plan.
+  - medium_task: 2-3 independent delegations, no chain of dependent phases, no structured synthesis document as output. Draft routing plan in thought channel only.
+  - deep_research: ALWAYS delegate to planner first. A task is deep_research if ANY of these apply:
+      (a) it involves a chain of dependent phases (e.g. gather → critique → build, or search → compare → synthesize)
+      (b) the expected output is a structured workspace document (report, table, specification, comparative analysis)
+      (c) it requires 3 or more distinct agents in sequence
+- The number of tool calls is NOT the right criterion. "Web search + document creation" is two dependent phases: deep_research.
+- When in doubt between medium_task and deep_research, ask: "does step 2 depend on step 1''s output?" If yes → deep_research.',
+    modified_at = datetime('now')
+WHERE code = 'assess_complexity_first';
+
+UPDATE paradigms
+SET content = '- For medium_task requests, draft a brief routing plan in your thought channel before acting: which agents, in what order, what each delivers.
+- For deep_research requests, delegate to planner FIRST — no exceptions. Do not start any research or delegation before workspace/plan.md exists.
+- The planner will produce workspace/plan.md. Follow it step by step.
+- A plan you cannot articulate is a plan you do not have. If you cannot describe what each delegation adds, delegate to planner instead of guessing.',
+    modified_at = datetime('now')
+WHERE code = 'plan_before_complex_action';
