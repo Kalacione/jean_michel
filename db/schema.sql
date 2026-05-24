@@ -2038,7 +2038,7 @@ SET content = '- Always write the plan to workspace/plan.md via workspace_create
   - comparator-specialist: structured comparison of entities across dimensions
   - code-runner: anything requiring execution (data processing, calculations, file generation)
 - Explicitly mark parallel steps: "Step 2a (parallel with 2b)" and "Step 2b (parallel with 2a)".
-- Return to the orchestrator: the workspace/plan.md path + a one-paragraph plain-text summary of the steps.
+- When workspace_create_file succeeds, call return_to_user(answer=''workspace/plan.md written.'') — nothing more. The file is the deliverable, not the answer field.
 
 - When the inbound briefing contains an existing plan (workspace/plan.md content) plus new findings to integrate, do NOT recreate the plan from scratch. Use workspace_str_replace to update only the affected sections (Steps, Unknowns, Risks). Append a ## Revision log section (or a new entry if it already exists): one line with the date, what changed, and why.',
     modified_at = datetime('now')

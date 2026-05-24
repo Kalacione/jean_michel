@@ -200,9 +200,9 @@ def _render_output_contract(role: str) -> str:
             "  1. Call workspace_create_file(path='workspace/plan.md', content=<full plan markdown>) "
             "to persist the plan file. This call must happen before anything else.\n"
             "  2. Only after workspace_create_file succeeds: "
-            "call return_to_user(answer) with a one-paragraph plain-text summary.\n"
-            "- Calling return_to_user without having first called workspace_create_file is an error. "
-            "Writing the plan inline in return_to_user instead of to the file is an error.\n"
+            "call return_to_user(answer='workspace/plan.md written.') — nothing more.\n"
+            "- return_to_user is a handoff signal, not a content delivery. "
+            "Never put the plan content inside return_to_user. The file is the deliverable.\n"
             "- Do not delegate to agents. Do not perform research or produce analysis.\n"
             "- Inter-agent text: English. Human-facing output: see ## Human detected language.\n"
         )
