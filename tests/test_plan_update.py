@@ -60,10 +60,22 @@ class TestInit:
         assert "error" in result
         assert "title" in result["error"]
 
-    def test_init_empty_steps(self, tmp_path):
+    def test_init_empty_steps_rejected(self, tmp_path):
+        """init with no steps is refused (creates an unusable empty plan)."""
         h = _handler(tmp_path)
         result = json.loads(h(action="init", title="Empty", steps=[]))
-        assert result["steps_created"] == 0
+        assert "error" in result
+        assert "at least one" in result["error"].lower()
+
+    def test_init_accepts_new_steps_alias(self, tmp_path):
+        """LLMs frequently pass 'new_steps' instead of 'steps' on init — accept it."""
+        h = _handler(tmp_path)
+        result = json.loads(h(action="init", title="With alias", new_steps=[
+            {"id": "S1", "title": "Step one"},
+            {"id": "S2", "title": "Step two"},
+        ]))
+        assert result["action"] == "init"
+        assert result["steps_created"] == 2
 
 
 # ---- mark ------------------------------------------------------------------

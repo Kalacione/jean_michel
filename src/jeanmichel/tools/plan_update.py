@@ -83,7 +83,8 @@ def _append_revision(lines: list[str], entry: str) -> None:
     lines.append(entry if entry.endswith("\n") else entry + "\n")
 
 
-def _do_init(plan_path: Path, title: str = "", steps: list | None = None, **_) -> str:
+def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
+             new_steps: list | None = None, **_) -> str:
     if plan_path.exists():
         raise _PlanError(
             "plan.md already exists. "
@@ -92,7 +93,16 @@ def _do_init(plan_path: Path, title: str = "", steps: list | None = None, **_) -
         )
     if not title:
         raise _PlanError("'title' is required for action='init'.")
+    # Accept new_steps as an alias for steps (LLMs frequently confuse them).
+    if not steps and new_steps:
+        steps = new_steps
     steps = steps or []
+    if not steps:
+        raise _PlanError(
+            "action='init' requires at least one entry in 'steps' "
+            "(an array of {id, title, agent?, deliverable?}). "
+            "Got 0 steps — refusing to create an empty plan."
+        )
     now = _now_iso()
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(_build_plan_md(title, steps, created=now, updated=now),
