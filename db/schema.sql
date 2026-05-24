@@ -2378,3 +2378,122 @@ WHERE code = 'planner_plan_format';
 
 INSERT OR IGNORE INTO agent_workspace_grants (agent_id)
 SELECT id FROM agents WHERE code IN ('web-search-specialist', 'wikipedia-specialist');
+-- MIGRATION 036 — planner: atomic step sizing rules
+-- =====================================================
+-- Umbrella steps ("find all sources in all domains") caused specialists
+-- to loop indefinitely. The planner must now create one step per domain/
+-- sub-question, each answerable in max 5 searches.
+
+UPDATE paradigms
+SET content = 'MANDATORY write protocol — follow exactly:
+  1. Call workspace_create_file with relative_path=''plan.md''.
+  2a. If it succeeds → call return_to_user(answer=''plan.md written.'').
+  2b. If you get {"error": "File already exists"} →
+       i.  Call workspace_view(''plan.md'') to read the current plan.
+       ii. Call workspace_str_replace to update only what changed — never recreate from scratch.
+       iii.Call return_to_user(answer=''plan.md updated.'').
+  Never call return_to_user after an error or after workspace_view alone.
+
+- Always write the plan to plan.md via workspace_create_file before returning.
+- Structure the file as:
+  # Plan: [short title]
+
+  ## Goal
+  One-sentence restatement of what the user actually wants as output.
+
+  ## Unknowns
+  Bullet list of ambiguities or missing information that could invalidate the plan.
+  If critical unknowns exist, use ask_human to resolve them before writing the plan.
+
+  ## Steps
+  Numbered list. Each step must specify:
+  - What to do (one action)
+  - Which agent to delegate to (choose the right one — see agent selection below)
+  - What the expected deliverable is (a workspace file path or a concrete answer)
+  - Whether it depends on a previous step, or can run in parallel with another step
+
+  STEP SIZING RULES — mandatory:
+  - Each research step must target ONE specific domain, technology, or sub-question.
+    Never create an umbrella step covering multiple unrelated domains at once.
+  - If the topic spans several domains, create one parallel step per domain.
+    Example — DO NOT: ''Step 1: find sources in Science, News, Tech, Geography''
+    Example — DO: ''Step 1a: Science sources | 1b: News sources | 1c: Tech sources | 1d: Geography sources''
+  - A step that would require more than 5 searches to complete is too broad — split it.
+  - An umbrella research step WILL cause the agent to loop indefinitely. Avoid it.
+
+  ## Status
+  Execution tracker — the orchestrator updates this after each delegation.
+  | Step | Agent | Status | Deliverable |
+  |------|-------|--------|-------------|
+  | 1    | agent-name | ⬜ pending | output.md |
+  Statuses: ⬜ pending / 🔄 in_progress / ✅ done
+
+  ## Risks
+  What could block or invalidate the plan. Be brief.
+
+  ## Success criteria
+  How the orchestrator will know the task is complete.
+
+- Agent selection guidance: do not default to web-search-specialist for every step.
+  - wikipedia-specialist: factual, encyclopedic, stable knowledge (concepts, entities, history)
+  - web-search-specialist: current information, recent events, URLs, prices, availability
+  - Default for research tasks: run BOTH in parallel. wikipedia-specialist covers stable/
+    conceptual knowledge; web-search-specialist covers current state and verification.
+    Use only one when the question is exclusively time-sensitive (web-search only) or
+    exclusively historical/definitional (wikipedia only).
+  - critical-thinker: evaluating claims, surfacing assumptions, checking evidence quality
+  - document-builder: final document production only — never before research and critique are done
+  - comparator-specialist: structured comparison of entities across dimensions
+  - code-runner: anything requiring execution (data processing, calculations, file generation)
+- Explicitly mark parallel steps: "Step 2a (parallel with 2b)" and "Step 2b (parallel with 2a)".
+- When workspace_create_file succeeds, call return_to_user(answer=''plan.md written.'') — nothing more. The file is the deliverable, not the answer field.
+
+- When the inbound briefing contains an existing plan (plan.md content) plus new findings to integrate, do NOT recreate the plan from scratch. Use workspace_str_replace to update only the affected sections (Steps, Status, Unknowns, Risks). Preserve all ✅ done rows in the Status table unchanged. Append a ## Revision log section (or a new entry if it already exists): one line with the date, what changed, and why.',
+    modified_at = datetime('now')
+WHERE code = 'planner_plan_format';
+-- MIGRATION 037a — Option B: jean-michel evaluates gap reports before marking done
+
+UPDATE paradigms
+SET content = '- For medium_task requests, draft a brief routing plan in your thought channel before acting: which agents, in what order, what each delivers.
+- For deep_research requests, delegate to planner FIRST — no exceptions. Do not start any research or delegation before plan.md exists.
+- The planner will produce plan.md. Follow it step by step.
+- A plan you cannot articulate is a plan you do not have. If you cannot describe what each delegation adds, delegate to planner instead of guessing.
+- After the planner returns: call workspace_view(''plan.md'') to read the current plan. Find the first ⬜ pending step in the Status table and execute it. Do NOT reconstruct the plan from memory — always read plan.md.
+- After each delegation completes:
+  Read the return_to_user answer. If the agent reported gaps (e.g. ''Missing: Geography''),
+  decide before marking ✅:
+    - Gap is minor or acceptable → mark ✅ done and continue.
+    - Gap requires a targeted follow-up → create a new focused sub-delegation first
+      (same agent, narrower mission: e.g. ''find Geography sources only'').
+    - Gap invalidates the plan → delegate to planner to update plan.md before continuing.
+  Then call workspace_str_replace on plan.md to mark the step ✅ done.',
+    modified_at = datetime('now')
+WHERE code = 'plan_before_complex_action';
+-- MIGRATION 037b — Option B: specialist structured gap report + anti-loop guard
+-- ============================================================================
+-- document_workspace_output: return_to_user now includes count + gaps.
+-- search_then_synthesize: hard stop at 5, write what you have, no fabrication.
+
+UPDATE paradigms
+SET content = '- All produced documents MUST be written to workspace files via workspace_create_file.
+- Never paste document content directly into return_to_user.
+  Return: the relative file path, a count of items/facts found, and any significant gaps.
+  Format: ''<path> — N items found. Covered: <domains>. Missing: <gaps or ''none''>''
+  Example: ''science_sources.md — 7 sources. Covered: arXiv, PubMed, NASA. Missing: none.''
+  Example: ''web_sources.md — 4 sources. Covered: Tech, News. Missing: Geography (no results found).''
+- Use workspace_str_replace to refine a document iteratively rather than recreating it from scratch.
+- Read every support_file listed in the briefing via workspace_view before writing anything.',
+    modified_at = datetime('now')
+WHERE code = 'document_workspace_output';
+
+UPDATE paradigms
+SET content = '- Limit web_search calls to 5 per request maximum. After 5 searches, STOP and write what you have — even if incomplete.
+  Do not keep searching to reach a quantity target. Accuracy over completeness.
+  Never invent, guess, or fabricate sources, URLs, or facts to fill gaps.
+  If you genuinely cannot find more after 4-5 searches, that absence is itself a valid result.
+- Each search should cover a distinct sub-topic. Do not repeat similar queries.
+- If a result URL points to a PDF or requires login, skip it and note it as inaccessible.
+- After gathering enough results, write a compact structured summary to the workspace via workspace_create_file (file naming: web-search-specialist_<topic-slug>.md). Include source URLs inline. Do NOT dump raw search result JSON.
+- Return the workspace file path in your return_to_user answer so the calling agent can reference it in subsequent briefings.',
+    modified_at = datetime('now')
+WHERE code = 'search_then_synthesize';
