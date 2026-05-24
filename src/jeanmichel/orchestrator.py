@@ -8,6 +8,7 @@ orchestrator internals.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Generator
@@ -128,6 +129,19 @@ class WallClockExceeded:
     elapsed_seconds: float
 
 
+@dataclass
+class DuplicateCallBlocked:
+    agent_code: str
+    tool_name: str
+    fingerprint: str
+
+
+@dataclass
+class ForcedConvergence:
+    agent_code: str
+    reason: str
+
+
 # ---- Helpers --------------------------------------------------------------
 
 def _detect_language(text: str) -> str:
@@ -140,6 +154,32 @@ def _detect_language(text: str) -> str:
 
 def _new_uuid() -> str:
     return uuid.uuid4().hex[:12]
+
+
+# ---- Fingerprint helpers (loop / duplicate detection) --------------------
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _normalise_value(v: object) -> object:
+    if isinstance(v, str):
+        return _WS_RE.sub(" ", v.strip().lower())
+    if isinstance(v, list):
+        return [_normalise_value(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _normalise_value(x) for k, x in v.items()}
+    return v
+
+
+def _spec_defaults(spec) -> dict:
+    props = spec.parameters.get("properties", {})
+    return {k: v["default"] for k, v in props.items() if "default" in v}
+
+
+def _fingerprint(tool_name: str, args: dict, defaults: dict) -> str:
+    merged = {**defaults, **(args or {})}
+    norm = {k: _normalise_value(v) for k, v in merged.items()}
+    return f"{tool_name}:{json.dumps(norm, sort_keys=True, ensure_ascii=False)}"
 
 
 # ---- Orchestrator ---------------------------------------------------------
@@ -330,7 +370,8 @@ class Orchestrator:
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
         running_user_text = inbound_text
         seen_ask = False  # at most one ask_human across all steps of this request
-        _successful_calls: set[str] = set()  # fingerprints of native tool calls that succeeded
+        _seen_calls: set[str] = set()  # normalised fingerprints — registered before execution
+        _consecutive_duplicates: int = 0
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -564,20 +605,40 @@ class Orchestrator:
                             "tool": call.name, "error": _err,
                         }))
                         continue
-                    call_fingerprint = (
-                        f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
-                    )
-                    if call_fingerprint in _successful_calls:
+                    fp = _fingerprint(call.name, call.arguments, _spec_defaults(spec))
+                    if fp in _seen_calls:
+                        yield DuplicateCallBlocked(
+                            agent_code=agent_code, tool_name=call.name, fingerprint=fp,
+                        )
                         tool_responses.append(json.dumps({
                             "tool": call.name,
                             "error": (
-                                "Duplicate call detected. This exact call already produced "
-                                "a result earlier in this request. Re-running it will not "
-                                "change the output. Use the previous result or reformulate "
-                                "your query with different arguments."
+                                "Duplicate call blocked. This call (after normalising whitespace, "
+                                "casing, and default-valued arguments) was already executed in "
+                                "this request. Re-running it cannot change the result. "
+                                "Either: (a) use the result you already have, or (b) change the "
+                                "ANGLE of your query (different keyword, different domain, "
+                                "different tool) — not a surface reformulation."
                             ),
                         }))
+                        _consecutive_duplicates += 1
+                        if _consecutive_duplicates >= 3:
+                            payload = json.dumps({
+                                "status": "loop_detected",
+                                "agent": agent_code,
+                                "error": "3 consecutive duplicate-blocked calls — force-stopping.",
+                            })
+                            self._write_artifact(req_id, agent_code, "response", payload)
+                            with db.connect() as conn:
+                                db.update_request_status(conn, req_id, "failed", completed=True)
+                            yield ForcedConvergence(
+                                agent_code=agent_code,
+                                reason="3 consecutive duplicate-blocked calls",
+                            )
+                            return payload, None, False
                         continue
+                    _seen_calls.add(fp)
+                    _consecutive_duplicates = 0
                     try:
                         result = spec.handler(**call.arguments)
                     except TypeError as e:
@@ -592,9 +653,6 @@ class Orchestrator:
                         })
                     except Exception as e:  # noqa: BLE001
                         result = json.dumps({"error": f"Tool failed: {e}"})
-                    # Register as successful only if the result is not an error.
-                    if not (isinstance(result, str) and '"error"' in result):
-                        _successful_calls.add(call_fingerprint)
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
                     # For tools that return existing file content, write a stub

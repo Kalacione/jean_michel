@@ -24,7 +24,9 @@ from .orchestrator import (
     AgentStarted,
     ConversationStarted,
     DelegationStarted,
+    DuplicateCallBlocked,
     FinalAnswer,
+    ForcedConvergence,
     HumanAnswerReceived,
     HumanQuestionAsked,
     OrchestrationFailed,
@@ -156,6 +158,16 @@ def render_events(console: Console, events: Iterable[object],
 
         elif isinstance(ev, SummaryUpdated):
             console.print("[dim]· summary updated[/]")
+
+        elif isinstance(ev, DuplicateCallBlocked):
+            console.print(
+                f"  [{C_WARN}]⚠ duplicate blocked · {ev.tool_name}[/]"
+            )
+
+        elif isinstance(ev, ForcedConvergence):
+            console.print(
+                f"[{C_WARN}]■ forced convergence ({ev.agent_code}) — {ev.reason}[/]"
+            )
 
         elif isinstance(ev, WallClockExceeded):
             console.print(
