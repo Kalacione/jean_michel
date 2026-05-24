@@ -39,6 +39,8 @@ from .prompts import (
     tools_payload_for_agent,
 )
 from .tools import build_registry
+from .tools._errors import CRITICAL_ERROR_CODES
+from .tools._workspace import quota_remaining, workspace_root_for
 from .tools.conv_status import budget_snapshot as _budget_snapshot
 
 # ---- Events emitted to the CLI -------------------------------------------
@@ -154,6 +156,20 @@ class PhaseCompleted:
     summary: str
     artifacts: list[str]
     next_hint: str
+
+
+@dataclass
+class FilesystemErrorObserved:
+    agent_code: str
+    tool_name: str
+    error_code: str
+    message: str
+
+
+@dataclass
+class QuotaWarning:
+    remaining_bytes: int
+    total_bytes: int
 
 
 # Phase verbs: maps verb name → set of agent codes allowed to call it.
@@ -443,6 +459,7 @@ class Orchestrator:
         seen_ask = False  # at most one ask_human across all steps of this request
         _seen_calls: set[str] = set()  # normalised fingerprints — registered before execution
         _consecutive_duplicates: int = 0
+        _critical_fs_errors: int = 0
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -906,6 +923,42 @@ class Orchestrator:
                         artifact_body = f"**{call.name}**\n\n```\n{result}\n```"
                     self._write_artifact(req_id, agent_code, "tool_response", artifact_body)
                     tool_responses.append(result)
+                    # Critical FS error detection.
+                    try:
+                        _robj = json.loads(result) if isinstance(result, str) else None
+                    except (json.JSONDecodeError, ValueError):
+                        _robj = None
+                    _err_code = (_robj or {}).get("error_code") if isinstance(_robj, dict) else None
+                    if _err_code in CRITICAL_ERROR_CODES:
+                        _critical_fs_errors += 1
+                        yield FilesystemErrorObserved(
+                            agent_code=agent_code,
+                            tool_name=call.name,
+                            error_code=_err_code,
+                            message=(_robj or {}).get("error", ""),
+                        )
+                        if _critical_fs_errors >= 3:
+                            fs_payload = json.dumps({
+                                "status": "critical_fs_errors",
+                                "agent": agent_code,
+                                "error": (
+                                    f"Agent encountered {_critical_fs_errors} critical "
+                                    "filesystem errors in one request. Failing fast."
+                                ),
+                            })
+                            self._write_artifact(req_id, agent_code, "response", fs_payload)
+                            with db.connect() as conn:
+                                db.update_request_status(conn, req_id, "failed", completed=True)
+                            return fs_payload, None, False
+                    # Quota warning after a successful write.
+                    elif call.name == "workspace_create_file" and _err_code is None:
+                        _ws_root = workspace_root_for(self.conv_folder)
+                        _remaining = quota_remaining(_ws_root)
+                        if _remaining < config.WORKSPACE_QUOTA_BYTES * 0.1:
+                            yield QuotaWarning(
+                                remaining_bytes=_remaining,
+                                total_bytes=config.WORKSPACE_QUOTA_BYTES,
+                            )
                     # Detect plan_update(action="init") → promote to deep_research pipeline
                     if call.name == "plan_update" and agent_code == "jean-michel":
                         try:

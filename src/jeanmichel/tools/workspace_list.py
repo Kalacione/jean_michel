@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error
 from ._workspace import safe_resolve, workspace_root_for
 
 
@@ -22,11 +23,15 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             try:
                 start = safe_resolve(ws_root, sub_path)
             except ValueError as e:
-                return json.dumps({"error": str(e)})
+                msg = str(e)
+                code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
+                return tool_error(code, msg)
             if not start.exists():
-                return json.dumps({"error": f"Not found: {sub_path}"})
+                return tool_error("file_not_found", f"Not found: {sub_path}",
+                                  relative_path=sub_path)
             if not start.is_dir():
-                return json.dumps({"error": f"Not a directory: {sub_path}"})
+                return tool_error("file_not_found", f"Not a directory: {sub_path}",
+                                  relative_path=sub_path)
         else:
             start = ws_root
 

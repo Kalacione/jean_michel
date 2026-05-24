@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error
 
 
 def make_spec(conv_folder: Path) -> ToolSpec:
@@ -17,9 +18,10 @@ def make_spec(conv_folder: Path) -> ToolSpec:
         target = (conv_folder / relative_path).resolve()
         # Path traversal guard — hard boundary at the conversation folder.
         if not str(target).startswith(str(conv_folder.resolve())):
-            return '{"error": "Path escapes conversation folder."}'
+            return tool_error("path_escape", "Path escapes conversation folder.")
         if not target.exists():
-            return f'{{"error": "Not found: {relative_path}"}}'
+            return tool_error("file_not_found", f"Not found: {relative_path}",
+                              relative_path=relative_path)
         data = target.read_bytes()[:max_bytes]
         try:
             return data.decode("utf-8")

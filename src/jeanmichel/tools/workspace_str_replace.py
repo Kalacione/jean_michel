@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error
 from ._workspace import safe_resolve, workspace_root_for
 
 
@@ -22,9 +23,12 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
         try:
             target = safe_resolve(ws_root, relative_path)
         except ValueError as e:
-            return json.dumps({"error": str(e)})
+            msg = str(e)
+            code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
+            return tool_error(code, msg)
         if not target.exists():
-            return json.dumps({"error": f"File not found: {relative_path}"})
+            return tool_error("file_not_found", f"File not found: {relative_path}",
+                              relative_path=relative_path)
         try:
             original = target.read_text(encoding="utf-8")
         except UnicodeDecodeError:

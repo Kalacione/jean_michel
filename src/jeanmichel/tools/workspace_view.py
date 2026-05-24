@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error
 from ._workspace import workspace_root_for
 
 
@@ -36,11 +37,13 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             display_path = str(candidate_conv.relative_to(conv_root))
         elif candidate_ws.is_relative_to(ws_root):
             # Path valid but doesn't exist yet — treat as "not found"
-            return json.dumps({"error": f"Not found: {relative_path}"})
+            return tool_error("file_not_found", f"Not found: {relative_path}",
+                              relative_path=relative_path)
         elif candidate_conv.is_relative_to(conv_root):
-            return json.dumps({"error": f"Not found: {relative_path}"})
+            return tool_error("file_not_found", f"Not found: {relative_path}",
+                              relative_path=relative_path)
         else:
-            return json.dumps({"error": "Path escapes allowed roots."})
+            return tool_error("path_escape", "Path escapes allowed roots.")
 
         if target.is_dir():
             entries = []

@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error
 from ._workspace import quota_remaining, safe_resolve, workspace_root_for
 
 
@@ -23,7 +24,9 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
         try:
             target = safe_resolve(ws_root, relative_path)
         except ValueError as e:
-            return json.dumps({"error": str(e)})
+            msg = str(e)
+            code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
+            return tool_error(code, msg)
         # plan.md is owned exclusively by plan_update
         if target == safe_resolve(ws_root, "plan.md"):
             return json.dumps({
@@ -50,7 +53,7 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             return json.dumps(payload)
         encoded = content.encode("utf-8")
         if len(encoded) > quota_remaining(ws_root):
-            return json.dumps({"error": "Quota exceeded. No space left in workspace."})
+            return tool_error("quota_exceeded", "Quota exceeded. No space left in workspace.")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(encoded)
         return json.dumps({"path": relative_path, "bytes_written": len(encoded)})
