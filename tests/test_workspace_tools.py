@@ -299,17 +299,17 @@ class TestWorkspaceDbHelpers:
     def test_has_workspace_grant_false_by_default(self, tmp_env):
         from jeanmichel import db
         with db.connect() as conn:
-            jm = db.get_agent_by_code(conn, "jean-michel")
-            assert db.has_workspace_grant(conn, jm.id) is False
+            summarizer = db.get_agent_by_code(conn, "summarizer")
+            assert db.has_workspace_grant(conn, summarizer.id) is False
 
     def test_has_workspace_grant_true_after_insert(self, tmp_env):
         from jeanmichel import db
         with db.connect() as conn:
-            jm = db.get_agent_by_code(conn, "jean-michel")
+            summarizer = db.get_agent_by_code(conn, "summarizer")
             conn.execute(
-                "INSERT INTO agent_workspace_grants (agent_id) VALUES (?)", (jm.id,)
+                "INSERT INTO agent_workspace_grants (agent_id) VALUES (?)", (summarizer.id,)
             )
-            assert db.has_workspace_grant(conn, jm.id) is True
+            assert db.has_workspace_grant(conn, summarizer.id) is True
 
     def test_load_sandbox_grants_empty(self, tmp_env):
         from jeanmichel import db

@@ -166,6 +166,49 @@ _PHASE_VERB_OWNER: dict[str, set[str]] = {
 
 _PHASE_VERBS = frozenset(_PHASE_VERB_OWNER)
 
+# Pipeline state machine (deep_research tasks — jean-michel only)
+_PHASE_NEXT: dict[str | None, set[str]] = {
+    None:           {"planner_done"},
+    "planner_done": {"gather_done"},
+    "gather_done":  {"critic_done", "gather_done"},
+    "critic_done":  {"build_done", "gather_done"},
+    "build_done":   {"return_to_user"},
+}
+
+_PIPELINE_GATHER_AGENTS = frozenset({"web-search-specialist", "wikipedia-specialist"})
+_PIPELINE_CRITIC_AGENTS = frozenset({"critical-thinker"})
+_PIPELINE_BUILD_AGENTS  = frozenset({"document-builder"})
+
+
+def _expected_completion_for_target(target: str) -> str | None:
+    if target in _PIPELINE_GATHER_AGENTS:
+        return "gather_done"
+    if target in _PIPELINE_CRITIC_AGENTS:
+        return "critic_done"
+    if target in _PIPELINE_BUILD_AGENTS:
+        return "build_done"
+    return None
+
+
+def _pipeline_state_block(task_class: str | None, current_phase: str | None) -> str | None:
+    if task_class != "deep_research":
+        return None
+    allowed = _PHASE_NEXT.get(current_phase, set())
+    _labels: dict[str, str] = {
+        "planner_done": "planner_done (call plan_update(action='init', ...))",
+        "gather_done":  "gather_done (delegate_to web-search-specialist or wikipedia-specialist)",
+        "critic_done":  "critic_done (delegate_to critical-thinker)",
+        "build_done":   "build_done (delegate_to document-builder)",
+        "return_to_user": "return_to_user (call return_to_user to conclude)",
+    }
+    parts = [_labels.get(p, p) for p in sorted(allowed)]
+    next_str = " OR ".join(parts) if parts else "(none — pipeline complete)"
+    return (
+        f"task_class: {task_class}\n"
+        f"current_phase: {current_phase or 'none'}\n"
+        f"next_allowed: {next_str}"
+    )
+
 def _detect_language(text: str) -> str:
     try:
         from langdetect import detect
@@ -371,6 +414,11 @@ class Orchestrator:
                 turn_index=self.turn_index,
             )
             db.update_request_status(conn, req_id, "running")
+            # Pipeline state — read once for jean-michel; updated in-place during the request.
+            _task_class: str | None = None
+            _current_phase: str | None = None
+            if agent_code == "jean-michel":
+                _task_class, _current_phase = db.get_pipeline_state(conn, self.conv_id)
 
         yield AgentStarted(agent_code=agent_code, request_id=req_id, depth=depth)
 
@@ -418,6 +466,7 @@ class Orchestrator:
             available_agents=available_agents,
             turn_clarifications=list(self._turn_exchanges),
             conv_budget=_budget_snapshot(self.conv_id) if agent.role == "router" else None,
+            pipeline_state=_pipeline_state_block(_task_class, _current_phase),
         )
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry, depth=depth)
@@ -514,6 +563,22 @@ class Orchestrator:
                                 ),
                             }))
                             continue
+                        # Pipeline enforcement: deep_research requires build_done
+                        if (agent_code == "jean-michel"
+                                and _task_class == "deep_research"
+                                and _current_phase != "build_done"):
+                            _allowed = sorted(_PHASE_NEXT.get(_current_phase, set()))
+                            tool_responses.append(json.dumps({
+                                "tool": "return_to_user",
+                                "error": (
+                                    f"Pipeline violation: current phase is {_current_phase!r} "
+                                    "for a deep_research task. You cannot return_to_user yet. "
+                                    "Complete the research pipeline first. "
+                                    f"Next expected: {_allowed}. "
+                                    "See # PIPELINE STATE in your system prompt."
+                                ),
+                            }))
+                            continue
                         artifact = self._write_artifact(req_id, agent_code, "response", answer)
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
@@ -566,6 +631,7 @@ class Orchestrator:
                             db.record_phase_completion(
                                 conn, self.conv_id, phase, agent_code, summary,
                             )
+                            db.update_conversation_phase(conn, self.conv_id, call.name)
                         yield PhaseCompleted(
                             agent_code=agent_code,
                             phase=phase,
@@ -642,6 +708,25 @@ class Orchestrator:
                                 ),
                             }))
                             continue
+                        # Pipeline enforcement: jean-michel + deep_research
+                        if agent_code == "jean-michel" and _task_class == "deep_research":
+                            _exp = _expected_completion_for_target(child_code)
+                            if _exp is not None:
+                                _allowed = _PHASE_NEXT.get(_current_phase, set())
+                                if _exp not in _allowed:
+                                    tool_responses.append(json.dumps({
+                                        "tool": "delegate_to",
+                                        "error": (
+                                            f"Pipeline violation: current phase is "
+                                            f"{_current_phase!r}. "
+                                            f"Next expected completion: {sorted(_allowed)}. "
+                                            f"Delegating to {child_code!r} would produce "
+                                            f"{_exp!r}. "
+                                            "Follow the GATHER → CRITIC → BUILD pipeline. "
+                                            "See # PIPELINE STATE in your system prompt."
+                                        ),
+                                    }))
+                                    continue
                         yield DelegationStarted(parent_agent=agent_code,
                                                 child_agent=child_code, briefing=briefing)
                         self._write_artifact(req_id, agent_code, "briefing",
@@ -665,6 +750,16 @@ class Orchestrator:
                             if child_converged:
                                 response_obj["converged"] = True
                             tool_responses.append(json.dumps(response_obj))
+                            # Refresh pipeline state — specialist may have updated phase.
+                            if agent_code == "jean-michel":
+                                with db.connect() as conn:
+                                    _task_class, _current_phase = db.get_pipeline_state(
+                                        conn, self.conv_id
+                                    )
+                                ctx.pipeline_state = _pipeline_state_block(
+                                    _task_class, _current_phase
+                                )
+                                system = render_system_prompt(ctx)
                         except KeyError:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
@@ -761,6 +856,20 @@ class Orchestrator:
                         artifact_body = f"**{call.name}**\n\n```\n{result}\n```"
                     self._write_artifact(req_id, agent_code, "tool_response", artifact_body)
                     tool_responses.append(result)
+                    # Detect plan_update(action="init") → promote to deep_research pipeline
+                    if call.name == "plan_update" and agent_code == "jean-michel":
+                        try:
+                            _robj = json.loads(result)
+                        except (json.JSONDecodeError, ValueError):
+                            _robj = {}
+                        if _robj.get("action") == "init" and "steps_created" in _robj:
+                            with db.connect() as conn:
+                                db.set_task_class(conn, self.conv_id, "deep_research")
+                                db.update_conversation_phase(conn, self.conv_id, "planner_done")
+                            _task_class = "deep_research"
+                            _current_phase = "planner_done"
+                            ctx.pipeline_state = _pipeline_state_block(_task_class, _current_phase)
+                            system = render_system_prompt(ctx)
 
                 # Feed all tool responses back to the model on the next iteration.
                 running_user_text = (
