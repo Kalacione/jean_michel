@@ -46,7 +46,7 @@ from .orchestrator import (
 # ---- Style palette --------------------------------------------------------
 
 C_USER     = "bold cyan"
-C_AGENT    = "bold magenta"
+C_AGENT    = "bold cyan"
 C_TOOL     = "yellow"
 C_THOUGHT  = "dim italic"
 C_HUMAN_Q  = "bold yellow"
