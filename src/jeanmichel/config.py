@@ -19,11 +19,17 @@ USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
 # Hard cap on delegation chain depth. Enforced by the orchestrator.
 MAX_RECURSION_DEPTH = 10
 
-# Hard cap on tool-call iterations within a single agent request. Prevents
-# tool-loop runaway when an agent gets stuck (e.g. retrying a failing tool).
-# 15 allows a router to make 5-6 delegations + follow-up reads without
-# exhausting budget on multi-step research tasks.
-MAX_STEPS_PER_REQUEST = 15
+# Baseline cap on tool-call iterations within a single agent request.
+# Prevents tool-loop runaway when an agent gets stuck. Specialists earn extra
+# steps by persisting findings (see WRITE_STEP_BONUS), so this is a floor, not
+# a hard ceiling.
+MAX_STEPS_PER_REQUEST = 20
+
+# Each successful workspace write (workspace_create_file / workspace_str_replace)
+# extends the step budget by this many steps. Rewards real progression and
+# discourages info-loops that never persist anything. Capped by MAX_STEP_BONUS.
+WRITE_STEP_BONUS = 3
+MAX_STEP_BONUS = 15
 
 
 def _int_env(name: str, default: int) -> int:

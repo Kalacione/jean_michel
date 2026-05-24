@@ -379,9 +379,11 @@ def _render_prior_clarifications(clarifications: list[tuple[str, str]]) -> str:
 
 
 def _render_plan_block(role: str, conversation_folder: str) -> str:
-    """Render the current plan.md content for the router only. Empty for others."""
-    if role != "router":
-        return ""
+    """Render the current plan.md content for any agent.
+
+    Injected verbatim (with tail-truncation) so specialists can see what
+    peer steps have already explored and avoid redundant work.
+    """
     try:
         p = plan_writer.plan_path(Path(conversation_folder))
         if not p.exists():
@@ -395,11 +397,24 @@ def _render_plan_block(role: str, conversation_folder: str) -> str:
         # Keep the header + truncated body. Truncate from the start of the body,
         # not the end — most recent steps are at the bottom of the table.
         content = "(plan truncated — showing tail)\n…\n" + content[-_PLAN_INJECTION_MAX_CHARS:]
+    if role == "router":
+        intro = (
+            "This is the live plan.md (maintained automatically by the orchestrator from your "
+            "delegate_to calls and the resulting report_findings). Read it before deciding "
+            "what to do next — do NOT re-delegate work that already has a ✅ done row."
+        )
+    else:
+        intro = (
+            "This is the live plan.md (maintained automatically by the orchestrator). "
+            "It shows the parent's full delegation tree, including peer steps that have "
+            "already searched / fetched / written things. Review the **Actions** logs "
+            "of sibling steps to avoid redundant tool calls. If a sibling already produced "
+            "files you need, reference them via conv_read_file or workspace_view instead "
+            "of re-searching."
+        )
     return (
         "## Plan so far\n"
-        "This is the live plan.md (maintained automatically by the orchestrator from your "
-        "delegate_to calls and the resulting report_findings). Read it before deciding "
-        "what to do next — do NOT re-delegate work that already has a ✅ done row.\n"
+        f"{intro}\n"
         f"```markdown\n{content}\n```\n\n"
     )
 

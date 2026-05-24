@@ -22,10 +22,12 @@ from .config import (
     LLM_CALL_TIMEOUT_SECONDS,
     MAX_DELEGATIONS,
     MAX_RECURSION_DEPTH,
+    MAX_STEP_BONUS,
     MAX_STEPS_PER_REQUEST,
     REQUEST_WALL_CLOCK_SECONDS,
     TURN_WALL_CLOCK_SECONDS,
     UserProfile,
+    WRITE_STEP_BONUS,
     ensure_dirs,
 )
 from .llm import LLMClient, LLMTimeoutError, _looks_corrupted
@@ -267,6 +269,32 @@ def _fingerprint(tool_name: str, args: dict, defaults: dict) -> str:
     return f"{tool_name}:{json.dumps(norm, sort_keys=True, ensure_ascii=False)}"
 
 
+def _extract_files_from_report(markdown: str) -> list[str]:
+    """Extract a files_produced list from a formatted report or partial report.
+
+    Both _format_report_for_parent and _build_partial_report emit a section
+    titled either '### Files produced' or '### Files written to workspace before
+    abort', followed by '- <path>' bullets until the next heading.
+    """
+    if not markdown:
+        return []
+    files: list[str] = []
+    in_section = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("### Files produced") or stripped.startswith("### Files written to workspace"):
+            in_section = True
+            continue
+        if in_section:
+            if stripped.startswith("###") or stripped.startswith("## "):
+                break
+            if stripped.startswith("- "):
+                candidate = stripped[2:].strip()
+                if candidate and candidate.lower() not in {"none.", "none", "—"}:
+                    files.append(candidate)
+    return files
+
+
 def _build_partial_report(conv_folder, req_id: str, agent_code: str,
                           status: str, error: str,
                           recent_tool_calls: list[dict]) -> tuple[str, str]:
@@ -499,7 +527,7 @@ class Orchestrator:
     def _run_request(self, *, agent_code: str, inbound_text: str,
                      expected_outcome: str, support_files: list[str],
                      parent_request_id: str | None, depth: int,
-                     sender: str) -> Generator[object, None, tuple[str, str | None, bool]]:
+                     sender: str, step_id: str | None = None) -> Generator[object, None, tuple[str, str | None, bool]]:
         """Run a single agent request, recursively if it delegates.
 
         Returns (answer, artifact_filename, converged) — the answer text, the
@@ -507,6 +535,7 @@ class Orchestrator:
         signalled convergence via signal_convergence rather than return_to_user.
         """
         assert self.conv_folder is not None
+        current_step_id = step_id
 
         with db.connect() as conn:
             agent = db.get_agent_by_code(conn, agent_code)
@@ -590,7 +619,8 @@ class Orchestrator:
 
         try:
             llm_steps = 0
-            while llm_steps < MAX_STEPS_PER_REQUEST:
+            step_bonus = 0  # extended each time a workspace write succeeds
+            while llm_steps < MAX_STEPS_PER_REQUEST + step_bonus:
                 now = time.monotonic()
                 if now - start_ts > REQUEST_WALL_CLOCK_SECONDS:
                     _timeout_scope = "request"
@@ -627,19 +657,20 @@ class Orchestrator:
                     _timeout_elapsed = _llm_elapsed
                     break
                 if response.corrupted:
-                    error_payload = json.dumps({
-                        "status": "llm_output_corrupted",
-                        "agent": agent_code,
-                        "error": (
-                            "LLM produced corrupted output (contains tokenisation markers) "
-                            "twice in a row. Likely cause: model hung or context truncated."
-                        ),
-                    })
+                    err_msg = (
+                        "LLM produced corrupted output (contains tokenisation markers) "
+                        "twice in a row. Likely cause: model hung or context truncated."
+                    )
+                    md_report, error_payload = _build_partial_report(
+                        self.conv_folder, req_id, agent_code,
+                        status="llm_output_corrupted", error=err_msg,
+                        recent_tool_calls=_recent_tool_calls,
+                    )
                     artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
                     with db.connect() as conn:
                         db.update_request_status(conn, req_id, "failed", completed=True)
                     yield CorruptedOutputDetected(agent_code=agent_code)
-                    return error_payload, artifact, False
+                    return md_report, artifact, False
                 llm_steps += 1
 
                 if response.thinking:
@@ -876,6 +907,7 @@ class Orchestrator:
                             "briefing": briefing,
                             "status": "in_progress",
                             "summary": "",
+                            "files_produced": [],
                         })
                         _plan_writer.write(self.conv_folder, self._plan_steps)
                         # Normalise expected: legacy string → structured dict.
@@ -900,6 +932,7 @@ class Orchestrator:
                                 parent_request_id=req_id,
                                 depth=depth + 1,
                                 sender=agent_code,
+                                step_id=_step_id,
                             )
                             response_obj: dict = {
                                 "tool": "delegate_to",
@@ -923,6 +956,7 @@ class Orchestrator:
                                     )
                             tool_responses.append(json.dumps(response_obj))
                             # Update plan step: done if child converged, blocked if aborted.
+                            _step_files = _extract_files_from_report(child_answer)
                             if child_converged:
                                 # Extract summary from formatted report ("### Summary\n...")
                                 _sm_start = child_answer.find("### Summary\n")
@@ -942,7 +976,9 @@ class Orchestrator:
                                         _status_line = _line.replace("**Status:**", "").strip()
                                         break
                                 _plan_summary = f"aborted: {_status_line}" if _status_line else "aborted"
-                                _step_status = "blocked"
+                                # If the child managed to persist files, the work
+                                # is salvageable — mark partial rather than blocked.
+                                _step_status = "partial" if _step_files else "blocked"
                             else:
                                 _plan_summary = ""
                                 _step_status = "done"
@@ -951,6 +987,7 @@ class Orchestrator:
                                 if _s["id"] == _step_id:
                                     _s["status"] = _step_status
                                     _s["summary"] = _plan_summary
+                                    _s["files_produced"] = _step_files
                                     break
                             _plan_writer.write(self.conv_folder, self._plan_steps)
                         except KeyError:
@@ -987,6 +1024,14 @@ class Orchestrator:
                     if fp in _seen_calls:
                         yield DuplicateCallBlocked(
                             agent_code=agent_code, tool_name=call.name, fingerprint=fp,
+                        )
+                        self._write_artifact(
+                            req_id, agent_code, "duplicate_blocked",
+                            "**tool:** " + call.name + "\n\n"
+                            "**fingerprint:** `" + fp + "`\n\n"
+                            "**arguments:**\n\n```json\n"
+                            + json.dumps(call.arguments, ensure_ascii=False, indent=2)
+                            + "\n```\n",
                         )
                         tool_responses.append(json.dumps({
                             "tool": call.name,
@@ -1065,20 +1110,26 @@ class Orchestrator:
                             message=(_robj or {}).get("error", ""),
                         )
                         if _critical_fs_errors >= 3:
-                            fs_payload = json.dumps({
-                                "status": "critical_fs_errors",
-                                "agent": agent_code,
-                                "error": (
-                                    f"Agent encountered {_critical_fs_errors} critical "
-                                    "filesystem errors in one request. Failing fast."
-                                ),
-                            })
-                            self._write_artifact(req_id, agent_code, "response", fs_payload)
+                            fs_err_msg = (
+                                f"Agent encountered {_critical_fs_errors} critical "
+                                "filesystem errors in one request. Failing fast."
+                            )
+                            md_report, fs_payload = _build_partial_report(
+                                self.conv_folder, req_id, agent_code,
+                                status="critical_fs_errors", error=fs_err_msg,
+                                recent_tool_calls=_recent_tool_calls,
+                            )
+                            artifact = self._write_artifact(req_id, agent_code, "response", fs_payload)
                             with db.connect() as conn:
                                 db.update_request_status(conn, req_id, "failed", completed=True)
-                            return fs_payload, None, False
+                            return md_report, artifact, False
                     # Quota warning after a successful write.
                     elif call.name == "workspace_create_file" and _err_code is None:
+                        # Reward the agent: persisting findings extends its budget,
+                        # capped by MAX_STEP_BONUS. Discourages info-loops that
+                        # never write anything.
+                        if step_bonus < MAX_STEP_BONUS:
+                            step_bonus = min(step_bonus + WRITE_STEP_BONUS, MAX_STEP_BONUS)
                         _ws_root = workspace_root_for(self.conv_folder)
                         _remaining = quota_remaining(_ws_root)
                         if _remaining < config.WORKSPACE_QUOTA_BYTES * 0.1:
@@ -1086,6 +1137,19 @@ class Orchestrator:
                                 remaining_bytes=_remaining,
                                 total_bytes=config.WORKSPACE_QUOTA_BYTES,
                             )
+                    elif call.name == "workspace_str_replace" and _err_code is None:
+                        if step_bonus < MAX_STEP_BONUS:
+                            step_bonus = min(step_bonus + WRITE_STEP_BONUS, MAX_STEP_BONUS)
+
+                    # ---- Plan: log this tool call as a sub-action of the
+                    # current step (or the root if we're at top level).
+                    self._plan_log_action(
+                        step_id=current_step_id,
+                        agent_code=agent_code,
+                        tool_name=call.name,
+                        arguments=call.arguments or {},
+                        result=result if isinstance(result, str) else json.dumps(result),
+                    )
 
                 # Feed all tool responses back to the model on the next iteration.
                 running_user_text = (
@@ -1239,6 +1303,28 @@ class Orchestrator:
         return answer
 
     # ---- Misc ------------------------------------------------------------
+
+    def _plan_log_action(self, *, step_id: str | None, agent_code: str,
+                         tool_name: str, arguments: dict, result: str) -> None:
+        """Log a tool call as a sub-action of the current plan step.
+
+        Thin wrapper around ``plan_writer.log_action`` that also flushes the
+        plan to disk so peer agents (router & specialists) see updates in
+        their next prompt render. Filters and summarisation live in
+        ``plan_writer``.
+        """
+        if step_id is None:
+            return
+        _plan_writer.log_action(
+            self._plan_steps,
+            step_id=step_id,
+            agent=agent_code,
+            tool_name=tool_name,
+            arguments=arguments,
+            result=result,
+        )
+        assert self.conv_folder is not None
+        _plan_writer.write(self.conv_folder, self._plan_steps)
 
     def _write_artifact(self, request_id: str, agent_code: str,
                         kind: str, body: str) -> str:
