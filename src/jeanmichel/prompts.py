@@ -144,10 +144,12 @@ _SIGNAL_CONVERGENCE: dict[str, Any] = {
 # Per-role grants for control tools.
 # - router: full set
 # - specialist: full set (may delegate further, may need clarification)
+# - planner: can clarify, cannot delegate (writes plan then returns)
 # - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
 _CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
     "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
     "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
+    "planner":    [_ASK_HUMAN, _RETURN_TO_USER],
     "finalizer":  [_RETURN_TO_USER],
 }
 
@@ -189,6 +191,16 @@ def render_directives(paradigms: list[Paradigm]) -> str:
 
 def _render_output_contract(role: str) -> str:
     """The OUTPUT CONTRACT block adapts to the agent's role."""
+    if role == "planner":
+        return (
+            "# OUTPUT CONTRACT\n"
+            "- Reflect first in your thought channel; surface assumptions and ambiguities.\n"
+            "- If critical unknowns prevent planning: call ask_human(question, why). One call only.\n"
+            "- Write the plan to workspace/plan.md via workspace_create_file.\n"
+            "- When done: call return_to_user(answer) with a plain-text summary of the plan.\n"
+            "- Do not delegate to agents. Do not perform research or produce analysis.\n"
+            "- Inter-agent text: English. Human-facing output: see ## Human detected language.\n"
+        )
     if role == "finalizer":
         return (
             "# OUTPUT CONTRACT\n"
@@ -237,6 +249,10 @@ def render_system_prompt(ctx: PromptContext) -> str:
     support_files_block = (
         "\n".join(f"- {p}" for p in ctx.support_files) if ctx.support_files else "(none)"
     )
+    has_delegation = any(
+        t.get("function", {}).get("name") == "delegate_to"
+        for t in _CONTROL_TOOLS_BY_ROLE.get(a.role, [])
+    )
     specialists = [
         ag for ag in ctx.available_agents
         if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
@@ -245,6 +261,13 @@ def render_system_prompt(ctx: PromptContext) -> str:
     agents_block = (
         "\n".join(f"- {ag.code}: {ag.mission}" for ag in specialists)
         if specialists else "(none)"
+    )
+    delegation_section = (
+        f"## Delegation targets\n"
+        f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
+        f"Never use an agent code as a direct tool function name — it will always fail.\n"
+        f"{agents_block}\n\n"
+        if has_delegation else ""
     )
 
     return (
@@ -277,11 +300,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"support_files:\n{support_files_block}\n\n"
         f"{ctx.inbound_text}\n\n"
         + _render_prior_clarifications(ctx.turn_clarifications)
-        + f"## Delegation targets\n"
-        f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
-        f"Never use an agent code as a direct tool function name — it will always fail.\n"
-        f"{agents_block}\n\n"
-        f"# DIRECTIVES\n"
+        + delegation_section
+        + f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"
         f"{_render_output_contract(a.role)}"
     )
@@ -293,7 +313,7 @@ def tools_payload_for_agent(agent_role: str,
                             depth: int = 0) -> list[dict[str, Any]]:
     """Build the tools payload (control tools filtered by role + native tools)."""
     payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
-    if depth >= 2 and agent_role != "finalizer":
+    if depth >= 2 and agent_role not in ("finalizer", "planner"):
         payload.append(_SIGNAL_CONVERGENCE)
     for tool_name in tool_grants:
         spec = registry.get(tool_name)

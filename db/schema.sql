@@ -71,7 +71,7 @@ CREATE TABLE agents (
   id             INTEGER PRIMARY KEY,
   code           TEXT UNIQUE NOT NULL,
   name           TEXT NOT NULL,
-  role           TEXT NOT NULL CHECK (role IN ('router','specialist','finalizer')),
+  role           TEXT NOT NULL CHECK (role IN ('router','specialist','finalizer','planner')),
   mission        TEXT NOT NULL,
   thinking_mode  INTEGER NOT NULL DEFAULT 1,
   temperature    REAL NOT NULL DEFAULT 0.2,
@@ -1887,7 +1887,7 @@ INSERT OR IGNORE INTO categories (id, section_id, code, title, order_priority, a
 VALUES (35, (SELECT id FROM sections WHERE code='process'), 'planning', 'Planning', 25, 1, datetime('now'), datetime('now'));
 
 INSERT OR IGNORE INTO agents (id, code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at)
-VALUES (14, 'dispatcher', 'Dispatcher', 'specialist',
+VALUES (14, 'dispatcher', 'Dispatcher', 'planner',
   'Analyse a complex request, surface unknowns and ambiguities, decompose it into a clear ordered sequence of steps, and write the resulting plan to workspace/plan.md. Return a concise summary of the plan. Do not execute the steps — plan only.',
   1, 0.3, 1, datetime('now'), datetime('now'));
 
@@ -1954,3 +1954,30 @@ INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
 SELECT id, 'workspace_create_file' FROM agents WHERE code='comparator-specialist';
 INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
 SELECT id, 'workspace_str_replace' FROM agents WHERE code='comparator-specialist';
+
+-- MIGRATION 025 — dispatcher role: specialist → planner
+-- =======================================================
+-- A planner receives [ask_human, return_to_user] only — no delegate_to, no Delegation targets.
+-- Prevents the dispatcher from executing research steps instead of just planning them.
+
+UPDATE agents
+SET role = 'planner', modified_at = datetime('now')
+WHERE code = 'dispatcher';
+
+-- MIGRATION 026 — rename agent dispatcher → planner
+-- =======================================================
+
+UPDATE agents
+SET code = 'planner', name = 'Planner', modified_at = datetime('now')
+WHERE code = 'dispatcher';
+
+UPDATE paradigms
+SET code = 'planner_plan_format', title = 'Planner plan format', modified_at = datetime('now')
+WHERE code = 'dispatcher_plan_format';
+
+UPDATE paradigms
+SET content = '- For medium_task requests, draft a brief routing plan in your thought channel before acting: which agents, in what order, what each delivers.
+- For deep_research requests, do NOT plan yourself. Delegate to planner first with the full user request. The planner will produce workspace/plan.md — follow it step by step.
+- A plan you cannot articulate is a plan you do not have. If you cannot describe what each delegation adds, delegate to planner instead of guessing.',
+    modified_at = datetime('now')
+WHERE code = 'plan_before_complex_action';

@@ -13,7 +13,7 @@ Quand plusieurs spécialistes contribuent, l'agent **synthesizer** fusionne les 
 
 Agents actifs :
 - **jean-michel** (router) — reçoit la requête, classe, route ou répond directement. Ne planifie pas, n'analyse pas — orchestre.
-- **dispatcher** (specialist) — pour les tâches `deep_research`, analyse la problématique, identifie les inconnues, décompose en étapes séquencées et écrit `workspace/plan.md`. Jean-Michel suit ce plan sans reformuler la stratégie lui-même.
+- **planner** (planner) — pour les tâches `deep_research`, analyse la problématique, identifie les inconnues, décompose en étapes séquencées et écrit `workspace/plan.md`. Jean-Michel suit ce plan sans reformuler la stratégie lui-même.
 - **summarizer** (specialist) — résumé de texte
 - **weather-specialist** (specialist) — météo via open-meteo
 - **web-search-specialist** (specialist) — recherche web via SearXNG (méta-moteur local). Retourne un résumé compact vers jean-michel ; contenu complet dans le workspace.
