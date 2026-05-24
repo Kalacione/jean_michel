@@ -66,7 +66,7 @@ class TestGatherDone:
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find info", expected="sources")),
             _resp(_tc("gather_done", summary="found relevant sources",
-                      artifacts=["gather/sources.md"])),
+                      artifacts=[])),  # no files declared (guard requires existence)
             _resp(_tc("return_to_user", answer="done")),
             _resp(_tc("return_to_user", answer="summary")),  # archivist
         ])
@@ -75,7 +75,7 @@ class TestGatherDone:
         assert pc.phase == "gather"
         assert pc.agent_code == "web-search-specialist"
         assert pc.summary == "found relevant sources"
-        assert pc.artifacts == ["gather/sources.md"]
+        assert pc.artifacts == []
 
     def test_gather_done_records_in_db(self, tmp_env):
         orch = _orch([
@@ -141,7 +141,7 @@ class TestParentReceivesPhasePayload:
         orch = _orch([
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find info", expected="sources")),
-            _resp(_tc("gather_done", summary="found info", artifacts=["out.md"],
+            _resp(_tc("gather_done", summary="found info", artifacts=[],
                       next_hint="ready for critic")),
             _resp(_tc("return_to_user", answer="got it")),
             _resp(_tc("return_to_user", answer="summary")),  # archivist

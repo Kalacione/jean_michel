@@ -85,7 +85,35 @@ _DELEGATE_TO: dict[str, Any] = {
                         "— NOT in support_files."
                     ),
                 },
-                "expected": {"type": "string", "description": "Expected outcome shape."},
+                "expected": {
+                    "type": "object",
+                    "description": (
+                        "Structured contract for what the child agent must produce. "
+                        "Legacy string values are accepted and auto-converted."
+                    ),
+                    "properties": {
+                        "completion_verb": {
+                            "type": "string",
+                            "enum": [
+                                "gather_done", "critic_done", "build_done",
+                                "return_to_user", "signal_convergence",
+                            ],
+                        },
+                        "workspace_artifacts": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Workspace paths the child MUST create "
+                                "(relative to workspace root)."
+                            ),
+                        },
+                        "summary_format": {
+                            "type": "string",
+                            "description": "Expected structure of the completion summary.",
+                        },
+                    },
+                    "required": ["completion_verb"],
+                },
             },
             "required": ["agent_code", "briefing", "expected"],
         },

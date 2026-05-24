@@ -618,6 +618,19 @@ class Orchestrator:
                             continue
                         summary = (call.arguments.get("summary") or "").strip()
                         artifacts = list(call.arguments.get("artifacts") or [])
+                        # Guard: every declared artifact must actually exist.
+                        ws_root = self.conv_folder / "workspace"
+                        missing_arts = [a for a in artifacts if not (ws_root / a).exists()]
+                        if missing_arts:
+                            tool_responses.append(json.dumps({
+                                "tool": call.name,
+                                "error": (
+                                    f"You declared artifacts {missing_arts} but they do not "
+                                    "exist in the workspace. Call workspace_create_file to "
+                                    "write them before signalling this verb."
+                                ),
+                            }))
+                            continue
                         next_hint = (call.arguments.get("next_hint") or "").strip()
                         phase = call.name.replace("_done", "")
                         payload = json.dumps({
@@ -743,13 +756,24 @@ class Orchestrator:
                                     continue
                         yield DelegationStarted(parent_agent=agent_code,
                                                 child_agent=child_code, briefing=briefing)
+                        # Normalise expected: legacy string → structured dict.
+                        expected_raw = call.arguments.get("expected", "")
+                        if isinstance(expected_raw, str):
+                            expected_dict: dict = {
+                                "completion_verb": "return_to_user",
+                                "summary_format": expected_raw,
+                            }
+                            expected_str = expected_raw
+                        else:
+                            expected_dict = dict(expected_raw) if expected_raw else {}
+                            expected_str = json.dumps(expected_raw)
                         self._write_artifact(req_id, agent_code, "briefing",
-                            f"to: {child_code}\nexpected: {expected}\n\n{briefing}")
+                            f"to: {child_code}\nexpected: {expected_raw}\n\n{briefing}")
                         try:
                             child_answer, child_artifact, child_converged = yield from self._run_request(
                                 agent_code=child_code,
                                 inbound_text=briefing,
-                                expected_outcome=expected,
+                                expected_outcome=expected_str,
                                 support_files=sup_files,
                                 parent_request_id=req_id,
                                 depth=depth + 1,
@@ -763,6 +787,18 @@ class Orchestrator:
                             }
                             if child_converged:
                                 response_obj["converged"] = True
+                            # Post-delegation artifact validation.
+                            required_arts = expected_dict.get("workspace_artifacts") or []
+                            if required_arts:
+                                ws_root = self.conv_folder / "workspace"
+                                missing_req = [
+                                    p for p in required_arts
+                                    if not (ws_root / p).exists()
+                                ]
+                                if missing_req:
+                                    response_obj["validation_error"] = (
+                                        f"missing required workspace artifacts: {missing_req}"
+                                    )
                             tool_responses.append(json.dumps(response_obj))
                             # Refresh pipeline state — specialist may have updated phase.
                             if agent_code == "jean-michel":
