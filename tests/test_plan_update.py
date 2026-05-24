@@ -65,12 +65,14 @@ class TestInit:
         assert "S1" in plan
         assert "S2" in plan
 
-    def test_init_refuses_existing(self, tmp_path):
+    def test_init_idempotent_returns_existing(self, tmp_path):
         h = _handler(tmp_path)
         _init(h)
+        # Second init on the same plan: must NOT error — returns existing state.
         result = json.loads(h(action="init", title="Re-init"))
-        assert "error" in result
-        assert "already exists" in result["error"]
+        assert result.get("already_exists") is True
+        assert "S1" in result["step_ids"]
+        assert "# Plan" in result["content"]
 
     def test_init_requires_title(self, tmp_path):
         h = _handler(tmp_path)

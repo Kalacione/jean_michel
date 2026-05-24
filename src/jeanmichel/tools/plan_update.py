@@ -102,14 +102,16 @@ def _append_revision(lines: list[str], entry: str) -> None:
 def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
              new_steps: list | None = None, **_) -> str:
     if plan_path.exists():
+        # Idempotent: plan already exists — return its current content so the
+        # caller can proceed without looping on an error.
         existing = _list_step_ids(plan_path)
-        raise _PlanError(
-            "plan.md already exists. Use plan_update(action='read') to inspect it, "
-            "plan_update(action='mark', step_id=..., ...) to update an existing step, "
-            "or plan_update(action='add_substep', parent_step_id=..., ...) to refine it. "
-            "DO NOT call action='reset' unless you really want to discard everything. "
-            f"Existing step_ids: {existing}."
-        )
+        content = plan_path.read_text(encoding="utf-8")
+        return json.dumps({
+            "action": "init",
+            "already_exists": True,
+            "step_ids": existing,
+            "content": content,
+        })
     if not title:
         raise _PlanError("'title' is required for action='init'.")
     # Accept new_steps as an alias for steps (LLMs frequently confuse them).
