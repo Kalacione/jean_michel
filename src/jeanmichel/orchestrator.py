@@ -267,6 +267,92 @@ def _fingerprint(tool_name: str, args: dict, defaults: dict) -> str:
     return f"{tool_name}:{json.dumps(norm, sort_keys=True, ensure_ascii=False)}"
 
 
+def _build_partial_report(conv_folder, req_id: str, agent_code: str,
+                          status: str, error: str,
+                          recent_tool_calls: list[dict]) -> tuple[str, str]:
+    """Build a partial findings report when a child crashes (loop/budget/wall-clock).
+
+    Instead of returning a bare JSON error to the parent, surface:
+      - the workspace files the child managed to write
+      - the last few tool calls attempted
+    so the parent can salvage work and decide where to redirect.
+
+    Returns (markdown_for_parent, json_payload_for_artifact).
+    """
+    # 1. Workspace files (relative paths) at this point in time.
+    workspace_files: list[str] = []
+    try:
+        ws_root = workspace_root_for(conv_folder)
+        if ws_root.exists():
+            for p in sorted(ws_root.rglob("*")):
+                if p.is_file():
+                    workspace_files.append(str(p.relative_to(ws_root)))
+    except OSError:
+        pass
+
+    # 2. Recent tool calls (already collected in-process).
+    tool_snippets = []
+    for tc in recent_tool_calls[-8:]:
+        name = tc.get("name", "?")
+        args = tc.get("arguments") or {}
+        if isinstance(args, dict):
+            # One-line argument preview
+            args_preview = ", ".join(
+                f"{k}={(repr(v)[:60] + '…') if len(repr(v)) > 60 else repr(v)}"
+                for k, v in list(args.items())[:4]
+            )
+        else:
+            args_preview = repr(args)[:120]
+        tool_snippets.append(f"{name}({args_preview})")
+
+    payload = {
+        "status": status,
+        "agent": agent_code,
+        "error": error,
+        "files_produced": workspace_files,
+        "recent_tool_calls": tool_snippets,
+    }
+
+    md_lines = [
+        f"## Aborted report from {agent_code}",
+        "",
+        f"**Status:** {status}",
+        f"**Reason:** {error}",
+        "",
+        "### Files written to workspace before abort",
+    ]
+    if workspace_files:
+        md_lines += [f"- {f}" for f in workspace_files]
+        md_lines.append("")
+        md_lines.append(
+            "These files contain whatever the agent managed to persist. "
+            "Read them via workspace_view or pass them as support_files to "
+            "another delegation to continue from this point — do NOT restart "
+            "from scratch."
+        )
+    else:
+        md_lines.append("None. The agent did not persist anything to workspace.")
+    md_lines.append("")
+
+    md_lines.append(f"### Last tool calls attempted ({len(tool_snippets)})")
+    if tool_snippets:
+        md_lines += [f"- {s}" for s in tool_snippets]
+    else:
+        md_lines.append("None.")
+    md_lines.append("")
+
+    md_lines.append("### Recommended next action")
+    md_lines.append(
+        "- If files_produced has content: synthesize from those files or "
+        "delegate a narrower follow-up with these files as support_files.\n"
+        "- If files_produced is empty: the previous angle did not work; "
+        "either change angle or delegate to a different agent.\n"
+        "- Do NOT re-delegate the same briefing — it will fail the same way."
+    )
+
+    return "\n".join(md_lines), json.dumps(payload, ensure_ascii=False)
+
+
 # ---- Orchestrator ---------------------------------------------------------
 
 class Orchestrator:
@@ -467,6 +553,7 @@ class Orchestrator:
         _seen_calls: set[str] = set()  # normalised fingerprints — registered before execution
         _consecutive_duplicates: int = 0
         _critical_fs_errors: int = 0
+        _recent_tool_calls: list[dict] = []  # for partial report on crash
 
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
@@ -573,6 +660,7 @@ class Orchestrator:
                                           arguments=call.arguments)
                     self._write_artifact(req_id, agent_code, "tool_call",
                         f"**{call.name}**\n\n```json\n{call.arguments}\n```")
+                    _recent_tool_calls.append({"name": call.name, "arguments": call.arguments})
 
                     # ---- Control tools --------------------------------------
                     if call.name == "return_to_user":
@@ -834,7 +922,7 @@ class Orchestrator:
                                         f"missing required workspace artifacts: {missing_req}"
                                     )
                             tool_responses.append(json.dumps(response_obj))
-                            # Update plan step: done if child converged, else blocked.
+                            # Update plan step: done if child converged, blocked if aborted.
                             if child_converged:
                                 # Extract summary from formatted report ("### Summary\n...")
                                 _sm_start = child_answer.find("### Summary\n")
@@ -846,6 +934,15 @@ class Orchestrator:
                                     if len(_plan_summary) > 120:
                                         _plan_summary = _plan_summary[:117] + "…"
                                 _step_status = "done"
+                            elif child_answer.startswith("## Aborted report"):
+                                # Crash path: surface the abort reason in plan.md.
+                                _status_line = ""
+                                for _line in child_answer.split("\n"):
+                                    if _line.startswith("**Status:**"):
+                                        _status_line = _line.replace("**Status:**", "").strip()
+                                        break
+                                _plan_summary = f"aborted: {_status_line}" if _status_line else "aborted"
+                                _step_status = "blocked"
                             else:
                                 _plan_summary = ""
                                 _step_status = "done"
@@ -904,19 +1001,20 @@ class Orchestrator:
                         }))
                         _consecutive_duplicates += 1
                         if _consecutive_duplicates >= 3:
-                            payload = json.dumps({
-                                "status": "loop_detected",
-                                "agent": agent_code,
-                                "error": "3 consecutive duplicate-blocked calls — force-stopping.",
-                            })
-                            self._write_artifact(req_id, agent_code, "response", payload)
+                            err_msg = "3 consecutive duplicate-blocked calls — force-stopping."
+                            md_report, payload = _build_partial_report(
+                                self.conv_folder, req_id, agent_code,
+                                status="loop_detected", error=err_msg,
+                                recent_tool_calls=_recent_tool_calls,
+                            )
+                            artifact = self._write_artifact(req_id, agent_code, "response", payload)
                             with db.connect() as conn:
                                 db.update_request_status(conn, req_id, "failed", completed=True)
                             yield ForcedConvergence(
                                 agent_code=agent_code,
                                 reason="3 consecutive duplicate-blocked calls",
                             )
-                            return payload, None, False
+                            return md_report, artifact, False
                         continue
                     _seen_calls.add(fp)
                     _consecutive_duplicates = 0
@@ -1006,11 +1104,12 @@ class Orchestrator:
             error_msg = (
                 f"Wall-clock exceeded ({_timeout_scope}) — {_timeout_elapsed:.1f}s."
             )
-            payload = json.dumps({
-                "status": f"{_timeout_scope}_wall_clock_exceeded",
-                "error": error_msg,
-            })
-            self._write_artifact(req_id, agent_code, "response", payload)
+            md_report, payload = _build_partial_report(
+                self.conv_folder, req_id, agent_code,
+                status=f"{_timeout_scope}_wall_clock_exceeded", error=error_msg,
+                recent_tool_calls=_recent_tool_calls,
+            )
+            artifact = self._write_artifact(req_id, agent_code, "response", payload)
             with db.connect() as conn:
                 db.update_request_status(conn, req_id, "failed", completed=True)
             yield WallClockExceeded(
@@ -1019,25 +1118,25 @@ class Orchestrator:
                 elapsed_seconds=_timeout_elapsed,
             )
             yield OrchestrationFailed(reason=error_msg)
-            return payload, None, False
+            return md_report, artifact, False
 
         exchanges_summary = "; ".join(
             f"Q: {q} → A: {a}" for q, a in self._turn_exchanges
         ) or None
-        error_payload = json.dumps({
-            "status": "step_budget_exhausted",
-            "agent": agent_code,
-            "partial_clarifications": exchanges_summary,
-            "error": (
-                "The agent exhausted its step budget without producing a result."
-                + (f" Human clarified during this request: {exchanges_summary}"
-                   if exchanges_summary else "")
-            ),
-        })
+        budget_error = (
+            "The agent exhausted its step budget without producing a result."
+            + (f" Human clarified during this request: {exchanges_summary}"
+               if exchanges_summary else "")
+        )
+        md_report, error_payload = _build_partial_report(
+            self.conv_folder, req_id, agent_code,
+            status="step_budget_exhausted", error=budget_error,
+            recent_tool_calls=_recent_tool_calls,
+        )
         artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
         with db.connect() as conn:
             db.update_request_status(conn, req_id, "failed", completed=True)
-        return error_payload, None, False
+        return md_report, artifact, False
 
     # ---- Summary helpers ------------------------------------------------
 

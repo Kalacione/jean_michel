@@ -6,11 +6,17 @@ import os
 import platform
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from . import plan_writer
 from .config import MAX_RECURSION_DEPTH, UserProfile
 from .models import Agent, Paradigm
 from .tools import ToolSpec
+
+# Maximum characters of plan.md injected into the router's system prompt.
+# Truncates from the end (most recent steps matter most).
+_PLAN_INJECTION_MAX_CHARS = 3000
 
 # ---- Control tool declarations -------------------------------------------
 #
@@ -314,7 +320,33 @@ def _render_output_contract(role: str) -> str:
             "- You do not delegate, you do not call ask_human. Work with the inputs provided.\n"
             "- Inter-agent text: English. Human-facing output: see ## Human detected language.\n"
         )
-    # router or specialist
+    if role == "specialist":
+        return (
+            "# OUTPUT CONTRACT\n"
+            "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
+            "- You CANNOT call return_to_user. You report back to the agent that delegated to you.\n"
+            "- WORKSPACE IS YOUR MEMORY. Before calling report_findings, persist your findings "
+            "to the workspace via workspace_create_file. The workspace file is what the parent "
+            "agent will read — your report_findings summary is just a pointer/headline.\n"
+            "- WRITE PROGRESSIVELY: after every 3-4 information-gathering tool calls "
+            "(web_search, wikipedia_get_page, etc.), call workspace_create_file or "
+            "workspace_str_replace to append what you've learned. Never accumulate everything "
+            "in your context and write at the end — your context will be lost if you run out "
+            "of budget.\n"
+            "- If you need clarification: call ask_human(question, why). Only one ask_human per "
+            "request; `why` is mandatory.\n"
+            "- If a sub-task belongs to another specialist: call delegate_to(...).\n"
+            "- When your work is done, call report_findings(summary, files_produced, "
+            "sub_questions?, blockers?, confidence). Required fields:\n"
+            "    - summary: 1-3 sentences. What you established. NOT 'I did X' — the actual "
+            "headline finding.\n"
+            "    - files_produced: list of workspace files you wrote. The parent will read these.\n"
+            "    - confidence: low | medium | high.\n"
+            "    - sub_questions: list of follow-ups the parent might want to pursue (optional).\n"
+            "    - blockers: list of obstacles (optional).\n"
+            "- Inter-agent briefings: English. Workspace files: English unless explicitly requested otherwise.\n"
+        )
+    # router
     return (
         "# OUTPUT CONTRACT\n"
         "- Reflect first in your thought channel; surface assumptions, traps, biases.\n"
@@ -326,13 +358,11 @@ def _render_output_contract(role: str) -> str:
         "sharing the same blocker into a single call. `why` is mandatory.\n"
         "- If task belongs to another specialist: call delegate_to(...). "
         "Multiple parallel delegate_to calls allowed in the same turn.\n"
-        "- A delegate_to result is a structured object {agent, artifact, answer}. "
-        "When forwarding a specialist artifact to a finalizer, pass the `artifact` "
-        "filename in support_files (conv_read_file). "
-        "For data you fetched/wrote to the workspace, reference the workspace path "
-        "in the briefing text — do NOT put workspace paths in support_files. "
+        "- A delegate_to result is a structured object {agent, artifact, answer, converged, files_produced}. "
+        "`files_produced` lists workspace files the specialist wrote — read them with workspace_view "
+        "or pass them in support_files to the next delegation. "
         "Do NOT copy another agent's `answer` field inline into a subsequent briefing — "
-        "use the artifact filename instead. "
+        "use the artifact filename or workspace paths instead. "
         "Your own fetched data (tool results, retrieved content, etc.) MUST be "
         "embedded directly in the briefing text when passing it to a downstream agent.\n"
         "- If task is yours and complete: call return_to_user(answer).\n"
@@ -346,6 +376,32 @@ def _render_prior_clarifications(clarifications: list[tuple[str, str]]) -> str:
         return ""
     lines = "\n".join(f'- Q: "{q}" → A: "{a}"' for q, a in clarifications)
     return f"## Prior clarifications this turn\n{lines}\n\n"
+
+
+def _render_plan_block(role: str, conversation_folder: str) -> str:
+    """Render the current plan.md content for the router only. Empty for others."""
+    if role != "router":
+        return ""
+    try:
+        p = plan_writer.plan_path(Path(conversation_folder))
+        if not p.exists():
+            return ""
+        content = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not content:
+        return ""
+    if len(content) > _PLAN_INJECTION_MAX_CHARS:
+        # Keep the header + truncated body. Truncate from the start of the body,
+        # not the end — most recent steps are at the bottom of the table.
+        content = "(plan truncated — showing tail)\n…\n" + content[-_PLAN_INJECTION_MAX_CHARS:]
+    return (
+        "## Plan so far\n"
+        "This is the live plan.md (maintained automatically by the orchestrator from your "
+        "delegate_to calls and the resulting report_findings). Read it before deciding "
+        "what to do next — do NOT re-delegate work that already has a ✅ done row.\n"
+        f"```markdown\n{content}\n```\n\n"
+    )
 
 
 def render_system_prompt(ctx: PromptContext) -> str:
@@ -397,6 +453,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"- mode: {ctx.mode}\n"
         f"- turn_index: {ctx.turn_index}\n"
         f"- conversation_folder: {ctx.conversation_folder}\n\n"
+        + _render_plan_block(a.role, ctx.conversation_folder)
         + (f"## Budget\n{ctx.conv_budget}\n\n" if ctx.conv_budget else "")
         + f"## Machine\n"
         f"- os: {platform.system()} {platform.release()}\n"
