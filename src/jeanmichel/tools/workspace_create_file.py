@@ -25,7 +25,19 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
         except ValueError as e:
             return json.dumps({"error": str(e)})
         if target.exists():
-            return json.dumps({"error": f"File already exists: {relative_path}. Use workspace_str_replace to edit."})
+            try:
+                existing = target.read_text(encoding="utf-8")[:6000]
+            except OSError:
+                existing = None
+            payload: dict = {
+                "error": f"File already exists: {relative_path}. "
+                         "DO NOT call workspace_create_file again. "
+                         "Call workspace_str_replace(relative_path, old_str, new_str) to update it.",
+                "action_required": "workspace_str_replace",
+            }
+            if existing is not None:
+                payload["existing_content"] = existing
+            return json.dumps(payload)
         encoded = content.encode("utf-8")
         if len(encoded) > quota_remaining(ws_root):
             return json.dumps({"error": "Quota exceeded. No space left in workspace."})
