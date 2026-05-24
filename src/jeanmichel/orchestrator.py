@@ -26,7 +26,7 @@ from .config import (
     UserProfile,
     ensure_dirs,
 )
-from .llm import LLMClient, LLMTimeoutError
+from .llm import LLMClient, LLMTimeoutError, _looks_corrupted
 from .models import LLMResponse
 from .persistence import (
     append_to_journal,
@@ -140,6 +140,11 @@ class DuplicateCallBlocked:
 class ForcedConvergence:
     agent_code: str
     reason: str
+
+
+@dataclass
+class CorruptedOutputDetected:
+    agent_code: str
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -444,6 +449,20 @@ class Orchestrator:
                     _timeout_scope = "llm_call"
                     _timeout_elapsed = _llm_elapsed
                     break
+                if response.corrupted:
+                    error_payload = json.dumps({
+                        "status": "llm_output_corrupted",
+                        "agent": agent_code,
+                        "error": (
+                            "LLM produced corrupted output (contains tokenisation markers) "
+                            "twice in a row. Likely cause: model hung or context truncated."
+                        ),
+                    })
+                    artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
+                    with db.connect() as conn:
+                        db.update_request_status(conn, req_id, "failed", completed=True)
+                    yield CorruptedOutputDetected(agent_code=agent_code)
+                    return error_payload, artifact, False
                 llm_steps += 1
 
                 if response.thinking:
@@ -468,6 +487,16 @@ class Orchestrator:
                     # ---- Control tools --------------------------------------
                     if call.name == "return_to_user":
                         answer = (call.arguments.get("answer") or "").strip()
+                        if _looks_corrupted(answer):
+                            tool_responses.append(json.dumps({
+                                "tool": "return_to_user",
+                                "error": (
+                                    "Your answer contains tokenisation markers "
+                                    "(e.g. '<thought'). Rewrite a clean final answer "
+                                    "without any XML-like markers."
+                                ),
+                            }))
+                            continue
                         artifact = self._write_artifact(req_id, agent_code, "response", answer)
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
@@ -475,6 +504,15 @@ class Orchestrator:
 
                     if call.name == "signal_convergence":
                         synthesis = (call.arguments.get("synthesis") or "").strip()
+                        if _looks_corrupted(synthesis):
+                            tool_responses.append(json.dumps({
+                                "tool": "signal_convergence",
+                                "error": (
+                                    "Your synthesis contains tokenisation markers. "
+                                    "Rewrite a clean synthesis without any XML-like markers."
+                                ),
+                            }))
+                            continue
                         open_qs = call.arguments.get("open_questions") or []
                         if open_qs:
                             synthesis += "\n\nOpen questions:\n" + "\n".join(

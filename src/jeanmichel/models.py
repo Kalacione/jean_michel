@@ -63,3 +63,4 @@ class LLMResponse:
     thinking: str
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    corrupted: bool = False

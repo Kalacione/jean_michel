@@ -23,6 +23,7 @@ from .llm import OllamaClient
 from .orchestrator import (
     AgentStarted,
     ConversationStarted,
+    CorruptedOutputDetected,
     DelegationStarted,
     DuplicateCallBlocked,
     FinalAnswer,
@@ -158,6 +159,11 @@ def render_events(console: Console, events: Iterable[object],
 
         elif isinstance(ev, SummaryUpdated):
             console.print("[dim]· summary updated[/]")
+
+        elif isinstance(ev, CorruptedOutputDetected):
+            console.print(
+                f"[{C_WARN}]⚠ corrupted LLM output detected · {ev.agent_code} (escalating)[/]"
+            )
 
         elif isinstance(ev, DuplicateCallBlocked):
             console.print(
