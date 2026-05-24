@@ -79,11 +79,14 @@ class TestInit:
         assert "S1" in result["step_ids"]
         assert "# Plan" in result["content"]
 
-    def test_init_requires_title(self, tmp_path):
+    def test_init_uses_default_title_when_missing(self, tmp_path):
+        """LLM omet parfois title — le tool doit créer le plan avec 'Research Plan'."""
         h = _handler(tmp_path)
-        result = json.loads(h(action="init"))
-        assert "error" in result
-        assert "title" in result["error"]
+        result = json.loads(h(action="init", steps=[{"title": "Step one"}]))
+        assert result["action"] == "init"
+        assert result["steps_created"] == 1
+        content = (tmp_path / "workspace" / "plan.md").read_text()
+        assert "Research Plan" in content
 
     def test_init_empty_steps_rejected(self, tmp_path):
         """init with no steps is refused (creates an unusable empty plan)."""

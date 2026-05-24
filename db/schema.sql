@@ -2966,7 +2966,8 @@ SET
 - Specialists report their findings via the report_findings control verb (not return_to_user, not signal_convergence).
 - The router reads each report_findings response and updates plan.md via plan_update(action="mark", ...) and plan_update(action="add_substep", ...).
 - Step ids are auto-assigned (S1, S2, S3, …). Never invent ids; only use those returned by plan_update or visible in the plan.
-- plan_update(action="init") is idempotent: if a plan already exists it is returned as-is. Do not call init more than once.',
+- plan_update(action="init") is idempotent: if a plan already exists it is returned as-is. Do not call init more than once.
+- Syntax: plan_update(action="init", title="<short plan title>", steps=[{title, agent?, deliverable?}, ...]). The title field is optional but recommended.',
   modified_at = datetime('now')
 WHERE code = 'task_plan_file';
 

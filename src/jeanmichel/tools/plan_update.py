@@ -113,7 +113,7 @@ def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
             "content": content,
         })
     if not title:
-        raise _PlanError("'title' is required for action='init'.")
+        title = "Research Plan"
     # Accept new_steps as an alias for steps (LLMs frequently confuse them).
     if not steps and new_steps:
         steps = new_steps
