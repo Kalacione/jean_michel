@@ -21,6 +21,7 @@ from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
 from . import conv_history_scan as _conv_history_scan_mod
+from . import conv_status as _conv_status_mod
 from . import weather as _weather_mod
 from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod
@@ -41,6 +42,7 @@ def build_registry(
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context."""
     conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
+    conv_status_spec = _conv_status_mod.make_spec(conv_id) if conv_id else None
     ws_create_spec = _ws_create_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
@@ -62,6 +64,8 @@ def build_registry(
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
     }
+    if conv_status_spec is not None:
+        registry[conv_status_spec.name] = conv_status_spec
     if conv_id and request_id_provider is not None and sandbox_grants is not None:
         sandbox_spec = _bash_sandbox_mod.make_spec(
             conv_folder, conv_id, request_id_provider, sandbox_grants,

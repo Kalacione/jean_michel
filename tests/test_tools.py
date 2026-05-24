@@ -425,3 +425,125 @@ class TestWebSearch:
         ):
             result = json.loads(WEB_SEARCH_SPEC.handler("test"))
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# ConvStatus
+# ---------------------------------------------------------------------------
+
+import sqlite3 as _sqlite3  # noqa: E402
+from jeanmichel.tools.conv_status import make_spec as conv_status_make_spec  # noqa: E402
+
+
+def _seed_conv(db_path, conv_id, folder_path, agent_id=1):
+    """Insert a minimal conversation + one running request."""
+    with _sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO conversations (id, folder_path, created_at, modified_at) "
+            "VALUES (?, ?, datetime('now'), datetime('now'))",
+            (conv_id, str(folder_path)),
+        )
+        conn.execute(
+            "INSERT INTO requests (id, conversation_id, depth, agent_id, turn_index, "
+            "status, created_at) VALUES (?, ?, 0, ?, 0, 'running', datetime('now'))",
+            ("req-001", conv_id, agent_id),
+        )
+        conn.commit()
+    return "req-001"
+
+
+class TestConvStatus:
+    def test_unknown_conversation_returns_error(self, tmp_env):
+        spec = conv_status_make_spec("no-such-conv")
+        result = json.loads(spec.handler())
+        assert "error" in result
+
+    def test_basic_metrics_returned(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "test-conv"
+        conv_folder.mkdir(parents=True)
+        _seed_conv(cfg.DB_PATH, "test-conv-id", conv_folder)
+
+        spec = conv_status_make_spec("test-conv-id")
+        result = json.loads(spec.handler())
+
+        assert result["depth_max"] == 0
+        assert result["total_tool_calls"] == 0
+        assert result["repeated_calls"] == []
+        assert result["budget_signals"] == []
+
+    def test_tool_call_count(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "tc-conv"
+        conv_folder.mkdir(parents=True)
+        req_id = _seed_conv(cfg.DB_PATH, "tc-conv-id", conv_folder)
+
+        # Write 6 tool_call artifacts (over the soft limit of 5)
+        for i in range(6):
+            fname = f"12000000{i}_jean-michel_tool_call.md"
+            (conv_folder / fname).write_text(f"tool: web_search\narguments:\n  query: test {i}\n")
+            with _sqlite3.connect(cfg.DB_PATH) as conn:
+                conn.execute(
+                    "INSERT INTO artifacts (request_id, relative_path, kind, created_at) "
+                    "VALUES (?, ?, 'tool_call', datetime('now'))",
+                    (req_id, fname),
+                )
+
+        spec = conv_status_make_spec("tc-conv-id")
+        result = json.loads(spec.handler())
+
+        assert result["total_tool_calls"] == 6
+        # Should trigger a budget signal for the agent
+        assert any("WARNING" in s for s in result["budget_signals"])
+
+    def test_loop_detection(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "loop-conv"
+        conv_folder.mkdir(parents=True)
+        req_id = _seed_conv(cfg.DB_PATH, "loop-conv-id", conv_folder)
+
+        # Same tool called 3 times → loop
+        for i in range(3):
+            fname = f"1200000{i}0_jean-michel_tool_call.md"
+            (conv_folder / fname).write_text("tool: web_search\narguments:\n  query: same query\n")
+            with _sqlite3.connect(cfg.DB_PATH) as conn:
+                conn.execute(
+                    "INSERT INTO artifacts (request_id, relative_path, kind, created_at) "
+                    "VALUES (?, ?, 'tool_call', datetime('now'))",
+                    (req_id, fname),
+                )
+
+        spec = conv_status_make_spec("loop-conv-id")
+        result = json.loads(spec.handler())
+
+        assert len(result["repeated_calls"]) == 1
+        assert result["repeated_calls"][0]["tool"] == "web_search"
+        assert result["repeated_calls"][0]["count"] == 3
+        assert any("LOOP RISK" in s for s in result["budget_signals"])
+
+    def test_depth_signal(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "deep-conv"
+        conv_folder.mkdir(parents=True)
+
+        with _sqlite3.connect(cfg.DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO conversations (id, folder_path, created_at, modified_at) "
+                "VALUES (?, ?, datetime('now'), datetime('now'))",
+                ("deep-conv-id", str(conv_folder)),
+            )
+            # Three requests at increasing depths
+            for depth, req_id in [(0, "r0"), (1, "r1"), (3, "r3")]:
+                conn.execute(
+                    "INSERT INTO requests (id, conversation_id, depth, agent_id, "
+                    "turn_index, status, created_at) "
+                    "VALUES (?, 'deep-conv-id', ?, 1, 0, 'running', datetime('now'))",
+                    (req_id, depth),
+                )
+            conn.commit()
+
+        spec = conv_status_make_spec("deep-conv-id")
+        result = json.loads(spec.handler())
+
+        assert result["depth_max"] == 3
+        assert any("depth" in s for s in result["budget_signals"])
