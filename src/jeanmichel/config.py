@@ -25,6 +25,22 @@ MAX_RECURSION_DEPTH = 10
 # exhausting budget on multi-step research tasks.
 MAX_STEPS_PER_REQUEST = 15
 
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+# Wall-clock timeouts (configurable via env vars).
+LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 120)
+REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 900)
+TURN_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_TURN_TIMEOUT", 1800)
+
 # Workspace soft quota per conversation, in bytes.
 WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 

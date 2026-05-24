@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FutureTimeout
 from typing import Any, Protocol
 
-from .config import DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL
+from .config import DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, LLM_CALL_TIMEOUT_SECONDS
 from .models import LLMResponse, ToolCall
+
+
+class LLMTimeoutError(RuntimeError):
+    """Raised when an Ollama chat() call exceeds LLM_CALL_TIMEOUT_SECONDS."""
 
 
 class LLMClient(Protocol):
@@ -26,6 +32,7 @@ class OllamaClient:
         self.host = host
         from ollama import Client
         self._client = Client(host=host)
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ollama-call")
 
     def chat(self, *, system: str, user: str, tools: list[dict[str, Any]],
              temperature: float, thinking: bool) -> LLMResponse:
@@ -45,7 +52,15 @@ class OllamaClient:
         if thinking:
             kwargs["think"] = True
 
-        resp = self._client.chat(**kwargs)
+        future = self._executor.submit(self._client.chat, **kwargs)
+        try:
+            resp = future.result(timeout=LLM_CALL_TIMEOUT_SECONDS)
+        except _FutureTimeout:
+            future.cancel()
+            raise LLMTimeoutError(
+                f"Ollama chat() exceeded {LLM_CALL_TIMEOUT_SECONDS}s. "
+                "Model may be hung or VRAM saturated."
+            ) from None
         msg = resp.get("message", {}) if isinstance(resp, dict) else getattr(resp, "message", {})
         thinking_text = (msg.get("thinking") if isinstance(msg, dict) else getattr(msg, "thinking", "")) or ""
         content = (msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", "")) or ""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Iterable
 
@@ -16,8 +17,8 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
-from .config import DEFAULT_OLLAMA_MODEL, UserProfile
 from . import db
+from .config import DEFAULT_OLLAMA_MODEL, UserProfile
 from .llm import OllamaClient
 from .orchestrator import (
     AgentStarted,
@@ -34,6 +35,7 @@ from .orchestrator import (
     ToolCallEmitted,
     ToolResponseRecorded,
     TurnStarted,
+    WallClockExceeded,
 )
 
 # ---- Style palette --------------------------------------------------------
@@ -154,6 +156,12 @@ def render_events(console: Console, events: Iterable[object],
 
         elif isinstance(ev, SummaryUpdated):
             console.print("[dim]· summary updated[/]")
+
+        elif isinstance(ev, WallClockExceeded):
+            console.print(
+                f"[{C_WARN}]⏱ Wall-clock exceeded ({ev.scope}) — "
+                f"{ev.elapsed_seconds:.1f}s · {ev.agent_code}[/]"
+            )
 
         elif isinstance(ev, RecursionLimitReached):
             console.print(

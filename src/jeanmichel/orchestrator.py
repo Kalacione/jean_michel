@@ -8,6 +8,7 @@ orchestrator internals.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -15,8 +16,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config, db
-from .config import MAX_RECURSION_DEPTH, MAX_STEPS_PER_REQUEST, UserProfile, ensure_dirs
-from .llm import LLMClient
+from .config import (
+    LLM_CALL_TIMEOUT_SECONDS,
+    MAX_RECURSION_DEPTH,
+    MAX_STEPS_PER_REQUEST,
+    REQUEST_WALL_CLOCK_SECONDS,
+    TURN_WALL_CLOCK_SECONDS,
+    UserProfile,
+    ensure_dirs,
+)
+from .llm import LLMClient, LLMTimeoutError
 from .models import LLMResponse
 from .persistence import (
     append_to_journal,
@@ -112,6 +121,13 @@ class SummaryUpdated:
     path: str
 
 
+@dataclass
+class WallClockExceeded:
+    scope: str         # "llm_call" | "request" | "turn"
+    agent_code: str
+    elapsed_seconds: float
+
+
 # ---- Helpers --------------------------------------------------------------
 
 def _detect_language(text: str) -> str:
@@ -149,6 +165,7 @@ class Orchestrator:
         self.user_language: str = "und"
         self.turn_index: int = -1
         self._turn_exchanges: list[tuple[str, str]] = []
+        self._turn_started_at: float = 0.0
 
     # ---- Public API ------------------------------------------------------
 
@@ -218,6 +235,7 @@ class Orchestrator:
         """Process one user input. Yields events; the CLI consumes them."""
         self.user_language = _detect_language(user_input)
         self._turn_exchanges = []
+        self._turn_started_at = time.monotonic()
 
         if self.conv_folder is None:
             # CLI did not call bootstrap_conversation() — create lazily (backward compat).
@@ -343,16 +361,48 @@ class Orchestrator:
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n\n{system}\n\n---\n\n## User\n\n{running_user_text}\n")
 
+        start_ts = time.monotonic()
+        _timeout_scope: str | None = None
+        _timeout_elapsed: float = 0.0
+
         try:
             llm_steps = 0
             while llm_steps < MAX_STEPS_PER_REQUEST:
-                response: LLMResponse = self.llm.chat(
-                    system=system,
-                    user=running_user_text,
-                    tools=tools_payload,
-                    temperature=agent.temperature,
-                    thinking=agent.thinking_mode,
-                )
+                now = time.monotonic()
+                if now - start_ts > REQUEST_WALL_CLOCK_SECONDS:
+                    _timeout_scope = "request"
+                    _timeout_elapsed = now - start_ts
+                    break
+                if now - self._turn_started_at > TURN_WALL_CLOCK_SECONDS:
+                    _timeout_scope = "turn"
+                    _timeout_elapsed = now - self._turn_started_at
+                    break
+
+                try:
+                    response: LLMResponse = self.llm.chat(
+                        system=system,
+                        user=running_user_text,
+                        tools=tools_payload,
+                        temperature=agent.temperature,
+                        thinking=agent.thinking_mode,
+                    )
+                except LLMTimeoutError:
+                    _llm_elapsed = float(LLM_CALL_TIMEOUT_SECONDS)
+                    yield WallClockExceeded(
+                        scope="llm_call",
+                        agent_code=agent_code,
+                        elapsed_seconds=_llm_elapsed,
+                    )
+                    if time.monotonic() - self._turn_started_at < TURN_WALL_CLOCK_SECONDS:
+                        running_user_text = (
+                            "[ORCHESTRATOR] The previous LLM call timed out after "
+                            f"{LLM_CALL_TIMEOUT_SECONDS}s. Please conclude with "
+                            "the information already available to you."
+                        )
+                        continue
+                    _timeout_scope = "llm_call"
+                    _timeout_elapsed = _llm_elapsed
+                    break
                 llm_steps += 1
 
                 if response.thinking:
@@ -576,6 +626,25 @@ class Orchestrator:
             with db.connect() as conn:
                 db.update_request_status(conn, req_id, "failed", completed=True)
             raise
+
+        if _timeout_scope is not None:
+            error_msg = (
+                f"Wall-clock exceeded ({_timeout_scope}) — {_timeout_elapsed:.1f}s."
+            )
+            payload = json.dumps({
+                "status": f"{_timeout_scope}_wall_clock_exceeded",
+                "error": error_msg,
+            })
+            self._write_artifact(req_id, agent_code, "response", payload)
+            with db.connect() as conn:
+                db.update_request_status(conn, req_id, "failed", completed=True)
+            yield WallClockExceeded(
+                scope=_timeout_scope,
+                agent_code=agent_code,
+                elapsed_seconds=_timeout_elapsed,
+            )
+            yield OrchestrationFailed(reason=error_msg)
+            return payload, None, False
 
         exchanges_summary = "; ".join(
             f"Q: {q} → A: {a}" for q, a in self._turn_exchanges
