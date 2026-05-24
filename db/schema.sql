@@ -2069,3 +2069,8 @@ SET content = '- For medium_task requests, draft a brief routing plan in your th
 - A plan you cannot articulate is a plan you do not have. If you cannot describe what each delegation adds, delegate to planner instead of guessing.',
     modified_at = datetime('now')
 WHERE code = 'plan_before_complex_action';
+
+-- MIGRATION 029 — planner workspace write grant
+-- =================================================
+INSERT OR IGNORE INTO agent_workspace_grants (agent_id)
+SELECT id FROM agents WHERE code = 'planner';
