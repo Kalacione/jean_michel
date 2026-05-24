@@ -158,6 +158,34 @@ def _handler(conversation_id: str) -> str:
     )
 
 
+def budget_snapshot(conversation_id: str) -> str | None:
+    """Compact budget block for prompt injection.
+
+    Returns a short markdown-formatted string ready to embed in the system
+    prompt's ## Budget section, or None when there is nothing to report
+    (first request, no tool calls yet, no budget signals).
+    """
+    raw = json.loads(_handler(conversation_id))
+    if "error" in raw:
+        return None
+    if raw["total_tool_calls"] == 0 and not raw["budget_signals"]:
+        return None
+
+    lines: list[str] = [
+        f"- total_tool_calls: {raw['total_tool_calls']}",
+        f"- delegation_depth: {raw['depth_max']}",
+    ]
+    if raw["tool_calls_by_agent"]:
+        tc = ", ".join(
+            f"{agent}: {n}"
+            for agent, n in sorted(raw["tool_calls_by_agent"].items())
+        )
+        lines.append(f"- tool_calls_by_agent: {tc}")
+    for sig in raw["budget_signals"]:
+        lines.append(f"- SIGNAL: {sig}")
+    return "\n".join(lines)
+
+
 def make_spec(conversation_id: str) -> ToolSpec:
     """Return a ToolSpec bound to `conversation_id`."""
     return ToolSpec(

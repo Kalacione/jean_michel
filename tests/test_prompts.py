@@ -3,8 +3,54 @@
 from __future__ import annotations
 
 from jeanmichel.config import UserProfile
-from jeanmichel.prompts import tools_payload_for_agent
+from jeanmichel.models import Agent
+from jeanmichel.prompts import PromptContext, render_system_prompt, tools_payload_for_agent
 from jeanmichel.tools.clock import SPEC as CLOCK_SPEC
+
+
+def _minimal_ctx(**overrides) -> PromptContext:
+    defaults = dict(
+        agent=Agent(id=1, code="jean-michel", name="Jean-Michel", role="router",
+                    mission="Route requests.", temperature=0.5, thinking_mode=False),
+        paradigms=[],
+        user_profile=UserProfile(),
+        detected_language="fr",
+        conversation_id="abc123",
+        conversation_folder="/tmp/conv",
+        request_id="req1",
+        parent_request_id=None,
+        depth=0,
+        mode="analyse",
+        turn_index=0,
+        sender="human",
+        expected_outcome=None,
+        support_files=[],
+        inbound_text="hello",
+        tool_registry={},
+        available_agents=[],
+        turn_clarifications=[],
+    )
+    defaults.update(overrides)
+    return PromptContext(**defaults)
+
+
+class TestConvBudgetInjection:
+    def test_no_budget_section_when_none(self):
+        ctx = _minimal_ctx(conv_budget=None)
+        prompt = render_system_prompt(ctx)
+        assert "## Budget" not in prompt
+
+    def test_budget_section_present_when_provided(self):
+        ctx = _minimal_ctx(conv_budget="- total_tool_calls: 7\n- SIGNAL: WARNING: agent has 7 calls")
+        prompt = render_system_prompt(ctx)
+        assert "## Budget" in prompt
+        assert "total_tool_calls: 7" in prompt
+        assert "SIGNAL:" in prompt
+
+    def test_budget_appears_before_machine(self):
+        ctx = _minimal_ctx(conv_budget="- total_tool_calls: 3")
+        prompt = render_system_prompt(ctx)
+        assert prompt.index("## Budget") < prompt.index("## Machine")
 
 
 def test_control_tools_router_has_all_three():

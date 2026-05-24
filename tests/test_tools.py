@@ -433,6 +433,7 @@ class TestWebSearch:
 
 import sqlite3 as _sqlite3  # noqa: E402
 from jeanmichel.tools.conv_status import make_spec as conv_status_make_spec  # noqa: E402
+from jeanmichel.tools.conv_status import budget_snapshot  # noqa: E402
 
 
 def _seed_conv(db_path, conv_id, folder_path, agent_id=1):
@@ -547,3 +548,35 @@ class TestConvStatus:
 
         assert result["depth_max"] == 3
         assert any("depth" in s for s in result["budget_signals"])
+
+    def test_budget_snapshot_none_when_no_activity(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "snap-empty"
+        conv_folder.mkdir(parents=True)
+        _seed_conv(cfg.DB_PATH, "snap-empty-id", conv_folder)
+
+        assert budget_snapshot("snap-empty-id") is None
+
+    def test_budget_snapshot_returns_string_with_signal(self, tmp_env):
+        import jeanmichel.config as cfg
+        conv_folder = tmp_env / "conversations" / "snap-sig"
+        conv_folder.mkdir(parents=True)
+        req_id = _seed_conv(cfg.DB_PATH, "snap-sig-id", conv_folder)
+
+        for i in range(6):
+            fname = f"13000000{i}_jean-michel_tool_call.md"
+            (conv_folder / fname).write_text(f"tool: web_search\narguments:\n  query: q{i}\n")
+            with _sqlite3.connect(cfg.DB_PATH) as conn:
+                conn.execute(
+                    "INSERT INTO artifacts (request_id, relative_path, kind, created_at) "
+                    "VALUES (?, ?, 'tool_call', datetime('now'))",
+                    (req_id, fname),
+                )
+
+        result = budget_snapshot("snap-sig-id")
+        assert result is not None
+        assert "total_tool_calls: 6" in result
+        assert "SIGNAL:" in result
+
+    def test_budget_snapshot_unknown_conv_returns_none(self, tmp_env):
+        assert budget_snapshot("does-not-exist") is None

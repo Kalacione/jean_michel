@@ -174,6 +174,7 @@ class PromptContext:
     tool_registry: dict[str, ToolSpec]
     available_agents: list[Agent]
     turn_clarifications: list[tuple[str, str]]  # (question, answer) pairs from ask_human this turn
+    conv_budget: str | None = None  # pre-computed budget block injected by the orchestrator
 
 
 def render_directives(paradigms: list[Paradigm]) -> str:
@@ -304,7 +305,8 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"- mode: {ctx.mode}\n"
         f"- turn_index: {ctx.turn_index}\n"
         f"- conversation_folder: {ctx.conversation_folder}\n\n"
-        f"## Machine\n"
+        + (f"## Budget\n{ctx.conv_budget}\n\n" if ctx.conv_budget else "")
+        + f"## Machine\n"
         f"- os: {platform.system()} {platform.release()}\n"
         f"- cwd: {os.getcwd()}\n"
         f"- utc_now: {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}\n\n"

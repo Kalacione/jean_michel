@@ -29,6 +29,7 @@ from .prompts import (
     tools_payload_for_agent,
 )
 from .tools import build_registry
+from .tools.conv_status import budget_snapshot as _budget_snapshot
 
 # ---- Events emitted to the CLI -------------------------------------------
 
@@ -335,6 +336,7 @@ class Orchestrator:
             tool_registry=registry,
             available_agents=available_agents,
             turn_clarifications=list(self._turn_exchanges),
+            conv_budget=_budget_snapshot(self.conv_id) if agent.role == "router" else None,
         )
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry, depth=depth)
