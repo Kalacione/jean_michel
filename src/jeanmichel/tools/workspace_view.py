@@ -6,11 +6,10 @@ Supports view_range=[start, end] for line-range reads (1-indexed; -1 = last line
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ._base import ToolSpec
-from ._errors import tool_error
+from ._errors import tool_error, tool_ok
 from ._workspace import workspace_root_for
 
 
@@ -52,7 +51,11 @@ def make_spec(conv_folder: Path) -> ToolSpec:
                 if p.is_file():
                     entry["size_bytes"] = p.stat().st_size
                 entries.append(entry)
-            return json.dumps({"directory": display_path, "entries": entries})
+            return tool_ok(
+                f"{len(entries)} entries in {display_path or '(root)'}",
+                directory=display_path,
+                entries=entries,
+            )
 
         # File read
         data = target.read_bytes()
@@ -61,7 +64,8 @@ def make_spec(conv_folder: Path) -> ToolSpec:
         try:
             content = data.decode("utf-8")
         except UnicodeDecodeError:
-            return json.dumps({"error": "File is not valid UTF-8."})
+            return tool_error("not_utf8", "File is not valid UTF-8.",
+                              relative_path=relative_path)
 
         if view_range is not None:
             lines = content.splitlines(keepends=True)
@@ -70,7 +74,13 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             content = "".join(lines[start:end])
             truncated = False  # range read is already bounded
 
-        return json.dumps({"path": display_path, "content": content, "truncated": truncated})
+        suffix = " (truncated)" if truncated else ""
+        return tool_ok(
+            f"read file {display_path} ({len(content)} chars){suffix}",
+            path=display_path,
+            content=content,
+            truncated=truncated,
+        )
 
     return ToolSpec(
         name="workspace_view",

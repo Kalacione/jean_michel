@@ -5,11 +5,10 @@ old_str must appear exactly once. Writes atomically via a .tmp file.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ._base import ToolSpec
-from ._errors import tool_error
+from ._errors import tool_error, tool_ok
 from ._workspace import safe_resolve, workspace_root_for
 
 
@@ -18,7 +17,7 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
 
     def _handler(relative_path: str, old_str: str, new_str: str = "") -> str:
         if not has_write_grant:
-            return json.dumps({"error": "Write access not granted for this agent."})
+            return tool_error("no_write_grant", "Write access not granted for this agent.")
         ws_root = workspace_root_for(conv_folder)
         try:
             target = safe_resolve(ws_root, relative_path)
@@ -32,21 +31,26 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
         try:
             original = target.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            return json.dumps({"error": "File is not valid UTF-8."})
+            return tool_error("not_utf8", "File is not valid UTF-8.", relative_path=relative_path)
         count = original.count(old_str)
         if count == 0:
-            return json.dumps({"error": "old_str not found in file.", "occurrences": 0})
+            return tool_error("old_str_not_found", "old_str not found in file.", occurrences=0)
         if count > 1:
-            return json.dumps({"error": f"old_str appears {count} times — must be unique.", "occurrences": count})
+            return tool_error(
+                "old_str_not_unique",
+                f"old_str appears {count} times — must be unique.",
+                occurrences=count,
+            )
         updated = original.replace(old_str, new_str, 1)
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(updated, encoding="utf-8")
         tmp.replace(target)
-        return json.dumps({
-            "path": relative_path,
-            "occurrences_replaced": 1,
-            "bytes_after": len(updated.encode("utf-8")),
-        })
+        return tool_ok(
+            f"edited {relative_path} ({len(updated.encode('utf-8'))} bytes)",
+            path=relative_path,
+            occurrences_replaced=1,
+            bytes_after=len(updated.encode("utf-8")),
+        )
 
     return ToolSpec(
         name="workspace_str_replace",

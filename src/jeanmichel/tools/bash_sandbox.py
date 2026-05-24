@@ -24,15 +24,16 @@ sandbox_executions table via db.record_sandbox_execution.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
-from ..db import connect as db_connect, record_sandbox_execution
+from ..db import connect as db_connect
+from ..db import record_sandbox_execution
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 from ._workspace import workspace_root_for
 
 # Default image tag — used when the agent has no sandbox_image configured.
@@ -110,23 +111,25 @@ def make_spec(
         if first_word not in sandbox_grants:
             with db_connect() as conn:
                 record_sandbox_execution(conn, request_id, command, None, 0)
-            return json.dumps({
-                "error": (
+            return tool_error(
+                "command_not_allowed",
+                (
                     f"Command '{first_word}' is not in the allowed list for this agent. "
                     f"Allowed: {sorted(sandbox_grants)}"
                 ),
-                "exit_code": None,
-            })
+                exit_code=None,
+            )
 
         # Ensure container is running.
         if not _container_running(container_name):
             try:
                 _start_container(container_name, ws_root, image)
             except subprocess.CalledProcessError as e:
-                return json.dumps({
-                    "error": f"Failed to start sandbox container: {e.stderr}",
-                    "exit_code": None,
-                })
+                return tool_error(
+                    "sandbox_start_failed",
+                    f"Failed to start sandbox container: {e.stderr}",
+                    exit_code=None,
+                )
 
         # Execute the command.
         start = time.monotonic()
@@ -149,21 +152,24 @@ def make_spec(
             duration_ms = _SANDBOX_TIMEOUT_S * 1000
             with db_connect() as conn:
                 record_sandbox_execution(conn, request_id, command, None, duration_ms)
-            return json.dumps({
-                "error": f"Command timed out after {_SANDBOX_TIMEOUT_S}s.",
-                "exit_code": None,
-            })
+            return tool_error(
+                "sandbox_timeout",
+                f"Command timed out after {_SANDBOX_TIMEOUT_S}s.",
+                exit_code=None,
+            )
 
         with db_connect() as conn:
             record_sandbox_execution(conn, request_id, command, exit_code, duration_ms)
 
-        return json.dumps({
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "duration_ms": duration_ms,
-            "truncated": truncated,
-        })
+        return tool_ok(
+            f"{first_word!r} exit={exit_code} ({duration_ms}ms)"
+            + (" [out truncated]" if truncated else ""),
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=duration_ms,
+            truncated=truncated,
+        )
 
     return ToolSpec(
         name="bash_sandbox",

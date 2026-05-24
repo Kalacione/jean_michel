@@ -7,8 +7,8 @@ Safe to grant to any agent that needs to understand the system's configuration.
 
 from __future__ import annotations
 
-from ._base import ToolSpec
 from . import self_inspect as _core
+from ._base import ToolSpec
 
 SPEC = ToolSpec(
     name="self_inspect_config",

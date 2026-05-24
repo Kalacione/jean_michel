@@ -10,10 +10,10 @@ wrapper functions so missing installs surface as clear error strings.
 
 from __future__ import annotations
 
-import json
 import time
 
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 
 _SEARCH_RETRIES = 2      # extra attempts after first failure
 _RETRY_DELAY_S = 0.5    # seconds between retries
@@ -60,17 +60,20 @@ def _search_handler(query: str, results: int = 5) -> str:
     for attempt in range(_SEARCH_RETRIES + 1):
         try:
             titles = _wiki_search(query, results=results_count)
-            return json.dumps({"query": query, "results": titles})
+            head = " | ".join(t[:40] for t in titles[:3])
+            summary = f"{len(titles)} pages for {query!r}" + (f": {head}" if head else "")
+            return tool_ok(summary, query=query, results=titles)
         except Exception as e:  # noqa: BLE001
             last_err = e
             if "too busy" in str(e).lower() and attempt < _SEARCH_RETRIES:
                 time.sleep(_RETRY_DELAY_S)
                 continue
             break
-    return json.dumps({
-        "error": f"Wikipedia search failed: {last_err}",
-        "hint": "If the article title is well-known, try wikipedia_get_page with the exact title directly.",
-    })
+    return tool_error(
+        "wikipedia_search_failed",
+        f"Wikipedia search failed: {last_err}",
+        hint="If the article title is well-known, try wikipedia_get_page with the exact title directly.",
+    )
 
 
 def _get_page_handler(title: str, language: str = "en") -> str:
@@ -78,15 +81,22 @@ def _get_page_handler(title: str, language: str = "en") -> str:
         data = _wiki_get_page(title, language=language)
         data["content"] = data["content"][:_MAX_CONTENT_CHARS]
         data["summary"] = data["summary"][:_MAX_SUMMARY_CHARS]
-        return json.dumps(data)
+        return tool_ok(
+            f"page {data['title']!r} ({len(data['content'])} chars)",
+            title=data["title"],
+            url=data["url"],
+            page_summary=data["summary"],
+            content=data["content"],
+        )
     except Exception as e:
         # DisambiguationError carries an `options` list
         if hasattr(e, "options"):
-            return json.dumps({
-                "error": f"'{title}' is ambiguous — multiple Wikipedia articles match.",
-                "options": list(e.options)[:10],
-            })
-        return json.dumps({"error": f"Wikipedia page error: {e}"})
+            return tool_error(
+                "ambiguous_title",
+                f"'{title}' is ambiguous — multiple Wikipedia articles match.",
+                options=list(e.options)[:10],
+            )
+        return tool_error("wikipedia_page_error", f"Wikipedia page error: {e}")
 
 
 # ---------------------------------------------------------------------------

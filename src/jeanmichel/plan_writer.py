@@ -58,11 +58,15 @@ def _truncate(s: str, n: int) -> str:
 
 
 def _summarize_result(tool_name: str, result_str: str) -> str:
-    """Return a short, human-readable summary of a tool's result.
+    """Return the short one-line summary published by the tool itself.
 
-    ``result_str`` is the JSON-serialised tool response (or a raw string).
-    We parse defensively — any structural mismatch falls back to a generic
-    "ok" / truncated raw string.
+    Tools follow the standard contract in ``tools/_errors.py``: every JSON
+    response carries a ``summary`` field (`tool_ok` and `tool_error` both
+    emit it). The plan writer just trusts that field — no per-tool casing
+    here.
+
+    Any non-JSON / non-conformant payload falls back to a truncated raw
+    rendering so we never lose signal entirely.
     """
     raw = result_str or ""
     try:
@@ -73,68 +77,13 @@ def _summarize_result(tool_name: str, result_str: str) -> str:
     if not isinstance(data, dict):
         return _truncate(raw, 120)
 
+    summary = data.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return _truncate(summary, _MAX_SUMMARY_CHARS)
+
+    # Legacy / unstructured payload — keep a useful fallback.
     if data.get("error"):
         return f"error: {_truncate(str(data['error']), 100)}"
-
-    if tool_name == "web_search":
-        results = data.get("results") or []
-        n = len(results)
-        titles = [r.get("title", "") for r in results[:3] if isinstance(r, dict)]
-        if titles:
-            return f"{n} hits: " + " | ".join(_truncate(t, 40) for t in titles)
-        return f"{n} hits"
-
-    if tool_name in ("wikipedia_search",):
-        results = data.get("results") or []
-        n = len(results)
-        titles = [r.get("title", "") for r in results[:3] if isinstance(r, dict)]
-        if titles:
-            return f"{n} pages: " + " | ".join(_truncate(t, 40) for t in titles)
-        return f"{n} pages"
-
-    if tool_name in ("wikipedia_fetch", "wikipedia_summary"):
-        title = data.get("title") or data.get("page") or "?"
-        content = data.get("content") or data.get("summary") or ""
-        return f"page '{_truncate(title, 60)}' ({len(content)} chars)"
-
-    if tool_name == "weather":
-        loc = data.get("location") or data.get("city") or "?"
-        temp = data.get("temperature_c") or data.get("temperature") or "?"
-        cond = data.get("condition") or data.get("description") or ""
-        return f"{loc}: {temp}°C {_truncate(cond, 40)}".strip()
-
-    if tool_name == "workspace_create_file":
-        path = data.get("path") or "?"
-        size = data.get("bytes_written") or data.get("size") or 0
-        return f"wrote {path} ({size} bytes)"
-
-    if tool_name == "workspace_str_replace":
-        path = data.get("path") or "?"
-        return f"edited {path}"
-
-    if tool_name in ("workspace_list", "workspace_view", "conv_list"):
-        entries = data.get("entries") or data.get("files") or data.get("items") or []
-        if isinstance(entries, list):
-            return f"{len(entries)} entries"
-        return "ok"
-
-    if tool_name == "conv_read_file":
-        path = data.get("path") or "?"
-        content = data.get("content") or ""
-        return f"read {path} ({len(content)} chars)"
-
-    if tool_name == "conv_history_scan":
-        hits = data.get("matches") or data.get("hits") or []
-        return f"{len(hits)} matches" if isinstance(hits, list) else "ok"
-
-    if tool_name in ("self_inspect_agent", "self_inspect_paradigm"):
-        name = data.get("agent") or data.get("paradigm") or data.get("name") or "?"
-        return f"inspected '{name}'"
-
-    # Generic fallback: first useful field or truncated JSON.
-    for key in ("summary", "message", "status", "ok"):
-        if key in data:
-            return f"{key}={_truncate(str(data[key]), 100)}"
     return _truncate(raw, 100)
 
 

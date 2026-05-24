@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .. import config
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 
 # Soft limits — above these thresholds a budget_signal is emitted.
 _TOOL_CALL_SOFT_LIMIT = 5    # per agent per conversation
@@ -50,8 +51,9 @@ def _handler(conversation_id: str) -> str:
         ).fetchall()
 
         if not requests:
-            return json.dumps(
-                {"error": f"No requests found for conversation {conversation_id!r}"}
+            return tool_error(
+                "conversation_not_found",
+                f"No requests found for conversation {conversation_id!r}",
             )
 
         tool_call_artifacts = conn.execute(
@@ -141,20 +143,21 @@ def _handler(conversation_id: str) -> str:
             "possible loop, consider forcing synthesis"
         )
 
-    return json.dumps(
-        {
-            "conversation_id": conversation_id[:12],
-            "depth_max": depth_max,
-            "depth_current": depth_current,
-            "active_requests": active,
-            "delegations_by_agent": dict(delegations_by_agent),
-            "tool_calls_by_agent": dict(tc_by_agent),
-            "total_tool_calls": total_tool_calls,
-            "repeated_calls": repeated_calls,
-            "budget_signals": budget_signals,
-        },
-        ensure_ascii=False,
-        indent=2,
+    summary = (
+        f"depth={depth_max} calls={total_tool_calls} active={len(active)} "
+        f"signals={len(budget_signals)}"
+    )
+    return tool_ok(
+        summary,
+        conversation_id=conversation_id[:12],
+        depth_max=depth_max,
+        depth_current=depth_current,
+        active_requests=active,
+        delegations_by_agent=dict(delegations_by_agent),
+        tool_calls_by_agent=dict(tc_by_agent),
+        total_tool_calls=total_tool_calls,
+        repeated_calls=repeated_calls,
+        budget_signals=budget_signals,
     )
 
 

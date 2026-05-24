@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -103,15 +104,15 @@ def _handler(query: str, language: str = "fr-FR", results: int = 5) -> str:
 
     err = _ensure_running()
     if err:
-        return json.dumps({"error": err})
+        return tool_error("searxng_unavailable", err)
 
     try:
         raw = _do_search(query, language, results)
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:200]
-        return json.dumps({"error": f"SearXNG HTTP {e.code}: {body}"})
+        return tool_error("http_error", f"SearXNG HTTP {e.code}: {body}")
     except Exception as e:  # noqa: BLE001
-        return json.dumps({"error": f"Search failed: {e}"})
+        return tool_error("search_failed", f"Search failed: {e}")
 
     hits = [
         {
@@ -121,7 +122,16 @@ def _handler(query: str, language: str = "fr-FR", results: int = 5) -> str:
         }
         for r in raw[:results]
     ]
-    return json.dumps({"query": query, "results": hits})
+    titles = [_truncate_title(h["title"]) for h in hits[:3]]
+    summary = f"{len(hits)} hits for {query!r}"
+    if titles:
+        summary += ": " + " | ".join(titles)
+    return tool_ok(summary, query=query, results=hits)
+
+
+def _truncate_title(t: str, n: int = 40) -> str:
+    t = (t or "").strip()
+    return t if len(t) <= n else t[: n - 1].rstrip() + "…"
 
 
 # ---------------------------------------------------------------------------

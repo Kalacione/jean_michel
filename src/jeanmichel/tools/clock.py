@@ -6,19 +6,23 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 
 
 def _handler(timezone: str = "UTC") -> str:
     try:
         tz = ZoneInfo(timezone)
     except Exception:
-        return f'{{"error": "Unknown timezone: {timezone}"}}'
+        return tool_error("unknown_timezone", f"Unknown timezone: {timezone}")
     now_utc = datetime.now(UTC)
     now_local = now_utc.astimezone(tz)
-    return (
-        f'{{"utc": "{now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")}", '
-        f'"local": "{now_local.isoformat()}", '
-        f'"timezone": "{timezone}"}}'
+    utc_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    local_str = now_local.isoformat()
+    return tool_ok(
+        f"{timezone}: {local_str} (UTC {utc_str})",
+        utc=utc_str,
+        local=local_str,
+        timezone=timezone,
     )
 
 

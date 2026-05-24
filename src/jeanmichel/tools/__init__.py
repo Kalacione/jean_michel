@@ -15,13 +15,13 @@ from pathlib import Path
 
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
+from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_read_file as _conv_read_file_mod
+from . import conv_status as _conv_status_mod
 from . import self_inspect as _self_inspect_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
-from . import conv_history_scan as _conv_history_scan_mod
-from . import conv_status as _conv_status_mod
 from . import weather as _weather_mod
 from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod

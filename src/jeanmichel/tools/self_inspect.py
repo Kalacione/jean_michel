@@ -11,12 +11,12 @@ Stateless tool: connects to DB_PATH at call time.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 
 from .. import config
 from ._base import ToolSpec
+from ._errors import tool_error, tool_ok
 
 
 def _handler(scope: str = "full") -> str:
@@ -33,7 +33,7 @@ def _handler(scope: str = "full") -> str:
     """
     valid_scopes = ("agents", "paradigms", "conversations", "sandbox", "recent_summaries", "architecture", "full")
     if scope not in valid_scopes:
-        return json.dumps({"error": f"Invalid scope '{scope}'. Valid: {valid_scopes}"})
+        return tool_error("invalid_scope", f"Invalid scope '{scope}'. Valid: {valid_scopes}")
 
     try:
         conn = sqlite3.connect(config.DB_PATH)
@@ -61,10 +61,27 @@ def _handler(scope: str = "full") -> str:
             result["architecture"] = _architecture_snapshot()
 
         conn.close()
-        return json.dumps(result, indent=2)
+
+        # Build a short summary of what scope returned.
+        bits: list[str] = []
+        if "agents" in result:
+            bits.append(f"{len(result['agents'])} agents")
+        if "paradigms" in result:
+            bits.append(f"{len(result['paradigms'])} paradigms")
+        if "activity" in result:
+            bits.append("activity")
+        if "sandbox_executions" in result:
+            bits.append(f"{len(result['sandbox_executions'])} sandbox rows")
+        if "recent_summaries" in result:
+            bits.append(f"{len(result['recent_summaries'])} summaries")
+        if "architecture" in result:
+            bits.append("architecture")
+        summary = f"scope={scope}: " + (", ".join(bits) if bits else "empty")
+
+        return tool_ok(summary, **result)
 
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return tool_error("self_inspect_failed", str(e))
 
 
 def _agents_snapshot(conn: sqlite3.Connection) -> list[dict]:

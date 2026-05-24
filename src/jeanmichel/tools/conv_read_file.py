@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ._base import ToolSpec
-from ._errors import tool_error
+from ._errors import tool_error, tool_ok
 
 
 def make_spec(conv_folder: Path) -> ToolSpec:
@@ -24,9 +24,15 @@ def make_spec(conv_folder: Path) -> ToolSpec:
                               relative_path=relative_path)
         data = target.read_bytes()[:max_bytes]
         try:
-            return data.decode("utf-8")
+            content = data.decode("utf-8")
         except UnicodeDecodeError:
-            return '{"error": "File is not valid UTF-8."}'
+            return tool_error("not_utf8", "File is not valid UTF-8.",
+                              relative_path=relative_path)
+        return tool_ok(
+            f"read {relative_path} ({len(content)} chars)",
+            path=relative_path,
+            content=content,
+        )
 
     return ToolSpec(
         name="conv_read_file",

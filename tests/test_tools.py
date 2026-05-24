@@ -34,7 +34,9 @@ class TestConvReadFile:
         conv.mkdir()
         (conv / "note.txt").write_text("hello world")
         spec = make_spec(conv)
-        assert spec.handler("note.txt") == "hello world"
+        result = json.loads(spec.handler("note.txt"))
+        assert result["content"] == "hello world"
+        assert "summary" in result
 
     def test_file_not_found(self, tmp_path):
         conv = tmp_path / "conv"
@@ -52,8 +54,8 @@ class TestConvReadFile:
         conv = tmp_path / "conv"
         conv.mkdir()
         (conv / "big.txt").write_bytes(b"x" * 200)
-        result = make_spec(conv).handler("big.txt", max_bytes=10)
-        assert len(result) == 10
+        result = json.loads(make_spec(conv).handler("big.txt", max_bytes=10))
+        assert len(result["content"]) == 10
 
     def test_non_utf8_returns_error(self, tmp_path):
         conv = tmp_path / "conv"

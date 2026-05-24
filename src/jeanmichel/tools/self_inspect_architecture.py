@@ -8,8 +8,8 @@ No activity data, no conversation history, no agent config.
 
 from __future__ import annotations
 
-from ._base import ToolSpec
 from . import self_inspect as _core
+from ._base import ToolSpec
 
 SPEC = ToolSpec(
     name="self_inspect_architecture",

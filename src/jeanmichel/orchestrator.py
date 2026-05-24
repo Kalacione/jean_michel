@@ -248,6 +248,20 @@ def _new_uuid() -> str:
 
 _WS_RE = re.compile(r"\s+")
 
+# Read-only, idempotent tools. Duplicate calls to these are blocked (so we
+# don't waste budget re-reading the same file), BUT they do not count toward
+# the 3-consecutive-duplicates force-stop. Re-reading a file is a legitimate
+# uncertainty-resolution attempt, not a runaway loop.
+_IDEMPOTENT_READ_TOOLS: frozenset[str] = frozenset({
+    "conv_read_file",
+    "conv_list",
+    "conv_history_scan",
+    "workspace_view",
+    "workspace_list",
+    "self_inspect_agent",
+    "self_inspect_paradigm",
+})
+
 
 def _normalise_value(v: object) -> object:
     if isinstance(v, str):
@@ -1101,6 +1115,12 @@ class Orchestrator:
                                 "different tool) — not a surface reformulation."
                             ),
                         }))
+                        # Idempotent read tools (conv_read_file, workspace_view, …)
+                        # don't count toward force-stop: re-reading is a legitimate
+                        # uncertainty-resolution attempt, not a runaway loop. The
+                        # block above is sufficient to stop budget waste.
+                        if call.name in _IDEMPOTENT_READ_TOOLS:
+                            continue
                         _consecutive_duplicates += 1
                         if _consecutive_duplicates >= 3:
                             err_msg = "3 consecutive duplicate-blocked calls — force-stopping."

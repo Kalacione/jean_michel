@@ -13,6 +13,7 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 
 from ._base import ToolSpec
+from ._errors import tool_error
 
 # ---------------------------------------------------------------------------
 # WMO weather interpretation codes (WW)
@@ -98,9 +99,9 @@ def _handler(
         try:
             lat, lon, display_name = _geocode_openmeteo(location.strip())
         except ValueError as e:
-            return json.dumps({"error": str(e)})
+            return tool_error("location_not_found", str(e))
         except Exception as e:
-            return json.dumps({"error": f"Geocoding failed: {e}"})
+            return tool_error("geocoding_failed", f"Geocoding failed: {e}")
 
     # --- Build API params ---------------------------------------------------
     params: dict[str, object] = {
@@ -137,8 +138,9 @@ def _handler(
         params["forecast_days"] = 0
 
     else:
-        return json.dumps(
-            {"error": f"Unknown mode: {mode!r}. Use 'current', 'forecast' or 'history'."}
+        return tool_error(
+            "unknown_mode",
+            f"Unknown mode: {mode!r}. Use 'current', 'forecast' or 'history'.",
         )
 
     # --- Fetch weather ------------------------------------------------------
@@ -146,7 +148,7 @@ def _handler(
         url = _BASE_URL + "?" + urllib.parse.urlencode(params)
         raw = _http_get_json(url)
     except Exception as e:
-        return json.dumps({"error": f"open-meteo request failed: {e}"})
+        return tool_error("open_meteo_failed", f"open-meteo request failed: {e}")
 
     # --- Assemble result ----------------------------------------------------
     utc_offset_seconds = raw.get("utc_offset_seconds", 0)
@@ -163,7 +165,23 @@ def _handler(
             result[key] = raw[key]
     result["wmo_descriptions"] = _extract_wmo_descriptions(raw)
 
-    serialized = json.dumps(result)
+    # Build a short human summary for the plan log.
+    if mode == "current" and "current" in raw:
+        cur = raw["current"]
+        temp = cur.get("temperature_2m")
+        wc = cur.get("weather_code")
+        cond = _WMO_CODES.get(int(wc), "") if wc is not None else ""
+        summary = f"{display_name}: {temp}°C {cond}".strip()
+    elif mode == "forecast":
+        days = len(raw.get("daily", {}).get("time", []))
+        summary = f"{display_name}: {days}-day forecast"
+    elif mode == "history":
+        days = len(raw.get("daily", {}).get("time", []))
+        summary = f"{display_name}: {days}-day history"
+    else:
+        summary = f"{display_name}: {mode}"
+
+    serialized = json.dumps({"summary": summary, **result})
     if len(serialized) > _MAX_RESPONSE_CHARS:
         serialized = serialized[:_MAX_RESPONSE_CHARS] + '"}'
     return serialized

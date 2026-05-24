@@ -5,12 +5,11 @@ Read-only. Supports optional sub-path to list a specific subdirectory.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ._base import ToolSpec
-from ._errors import tool_error
+from ._errors import tool_error, tool_ok
 from ._workspace import safe_resolve, workspace_root_for
 
 
@@ -50,7 +49,12 @@ def make_spec(conv_folder: Path) -> ToolSpec:
 
         children = [_entry(p, 1) for p in sorted(start.iterdir())]
         display = sub_path or ""
-        return json.dumps({"workspace": display, "entries": children})
+        label = f" in {display}" if display else ""
+        return tool_ok(
+            f"{len(children)} entries{label}",
+            workspace=display,
+            entries=children,
+        )
 
     return ToolSpec(
         name="workspace_list",

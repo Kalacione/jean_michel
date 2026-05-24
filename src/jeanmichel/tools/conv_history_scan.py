@@ -7,12 +7,12 @@ et formuler des propositions d'amélioration.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 
 from .. import config
 from ._base import ToolSpec
+from ._errors import tool_ok
 
 
 def _handler(limit: int = 10, status: str = "all") -> str:
@@ -61,7 +61,11 @@ def _handler(limit: int = 10, status: str = "all") -> str:
             "content": content_text,
         })
 
-    return json.dumps({"conversations": results, "count": len(results)})
+    return tool_ok(
+        f"{len(results)} conversations scanned",
+        conversations=results,
+        count=len(results),
+    )
 
 
 SPEC = ToolSpec(
