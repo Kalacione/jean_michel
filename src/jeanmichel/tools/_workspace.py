@@ -5,9 +5,14 @@ Centralizes path validation, quota check, and workspace root resolution.
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 from ..config import WORKSPACE_QUOTA_BYTES
+
+_log = logging.getLogger(__name__)
+_STRIP_PREFIX_RE = re.compile(r"^(?:\./)?workspace/+", re.IGNORECASE)
 
 
 def workspace_root_for(conv_folder: Path) -> Path:
@@ -24,11 +29,26 @@ def safe_resolve(workspace_root: Path, relative_path: str) -> Path:
     operations in workspace_view that can also read conversation root files).
     Always validates that the result stays inside workspace_root.
     """
-    candidate = (workspace_root / relative_path).resolve()
-    if not candidate.is_relative_to(workspace_root.resolve()):
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise ValueError("relative_path must be a non-empty string.")
+    raw = relative_path
+    if raw.startswith("/"):
         raise ValueError(
-            f"Path {relative_path!r} escapes the workspace root."
+            f"Path {raw!r} is absolute. Use a path relative to the workspace root."
         )
+    if ".." in Path(raw).parts:
+        raise ValueError(f"Path {raw!r} contains '..', which is not allowed.")
+    normalised = _STRIP_PREFIX_RE.sub("", raw, count=1)
+    if normalised != raw:
+        _log.warning(
+            "workspace path normalised: %r → %r (leading 'workspace/' stripped)",
+            raw, normalised,
+        )
+    if not normalised or not normalised.strip("/"):
+        raise ValueError(f"Path {raw!r} resolves to the workspace root itself.")
+    candidate = (workspace_root / normalised).resolve()
+    if not candidate.is_relative_to(workspace_root.resolve()):
+        raise ValueError(f"Path {raw!r} escapes the workspace root.")
     return candidate
 
 
