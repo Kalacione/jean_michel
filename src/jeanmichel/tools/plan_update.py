@@ -134,11 +134,17 @@ def _do_init(plan_path: Path, title: str = "", steps: list | None = None,
 
 
 def _do_mark(plan_path: Path, step_id: str = "", status: str = "",
-             findings: str = "", **_) -> str:
+             findings: str | None = None, **_) -> str:
     if not step_id:
         raise _PlanError("'step_id' is required for action='mark'.")
     if status and status not in _STATUS_MAP:
         raise _PlanError(f"Invalid status {status!r}. Valid: {list(_STATUS_MAP)}")
+    if findings is not None:
+        if not isinstance(findings, str) or not findings.strip():
+            raise _PlanError(
+                "'findings' must be a non-empty string when provided. "
+                f"Got: {type(findings).__name__} = {repr(findings)[:80]}"
+            )
     if not plan_path.exists():
         raise _PlanError("plan.md does not exist. Call plan_update(action='init') first.")
 
@@ -295,9 +301,22 @@ def _do_read(plan_path: Path) -> str:
     return json.dumps({"action": "read", "content": plan_path.read_text(encoding="utf-8")})
 
 
-def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
+def make_spec(conv_folder: Path, has_write_grant: bool = False,
+              agent_role: str = "specialist") -> ToolSpec:
+    _WRITE_ACTIONS = {"init", "mark", "add_substep", "reset"}
+
     def _handler(action: str, **kwargs) -> str:
-        if not has_write_grant and action != "read":
+        if action in _WRITE_ACTIONS and agent_role != "router":
+            return json.dumps({
+                "error": (
+                    f"action='{action}' is reserved for the router (jean-michel). "
+                    "Specialists may only call plan_update(action='read'). "
+                    "Use report_findings to surface findings to the router; "
+                    "the router will update the plan."
+                ),
+                "error_code": "plan_write_forbidden_for_specialist",
+            })
+        if action not in ("read",) and not has_write_grant:
             return json.dumps({"error": "Write access not granted for this agent."})
         ws_root = workspace_root_for(conv_folder)
         try:

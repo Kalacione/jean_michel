@@ -13,12 +13,17 @@ from jeanmichel.tools.workspace_create_file import make_spec as ws_create_spec
 
 # ---- Helpers ---------------------------------------------------------------
 
-def _spec(tmp_path: Path, write: bool = True):
-    return make_spec(tmp_path, has_write_grant=write)
+def _spec(tmp_path: Path, write: bool = True, role: str = "router"):
+    return make_spec(tmp_path, has_write_grant=write, agent_role=role)
 
 
-def _handler(tmp_path: Path, write: bool = True):
-    return _spec(tmp_path, write).handler
+def _handler(tmp_path: Path, write: bool = True, role: str = "router"):
+    return _spec(tmp_path, write, role).handler
+
+
+def _specialist_handler(tmp_path: Path):
+    """Handler that behaves like a specialist (read-only on plan)."""
+    return make_spec(tmp_path, has_write_grant=True, agent_role="specialist").handler
 
 
 def _init(h, title="Test Plan", steps=None):
@@ -266,3 +271,93 @@ class TestWorkspaceCreateFileGuard:
         spec = ws_create_spec(tmp_path, has_write_grant=True)
         result = json.loads(spec.handler(relative_path="notes.md", content="# Notes"))
         assert "bytes_written" in result
+
+
+# ---- role restriction ------------------------------------------------------
+
+class TestRoleRestriction:
+    """Specialists may only call action='read'. Write actions are router-only."""
+
+    def test_specialist_cannot_init(self, tmp_path):
+        h = _specialist_handler(tmp_path)
+        result = json.loads(h(action="init", title="T", steps=[{"title": "s"}]))
+        assert "error" in result
+        assert result.get("error_code") == "plan_write_forbidden_for_specialist"
+
+    def test_specialist_cannot_mark(self, tmp_path):
+        h_router = _handler(tmp_path)
+        _init(h_router)
+        h = _specialist_handler(tmp_path)
+        result = json.loads(h(action="mark", step_id="S1", status="done"))
+        assert "error" in result
+        assert result.get("error_code") == "plan_write_forbidden_for_specialist"
+
+    def test_specialist_cannot_add_substep(self, tmp_path):
+        h_router = _handler(tmp_path)
+        _init(h_router)
+        h = _specialist_handler(tmp_path)
+        result = json.loads(h(action="add_substep", parent_step_id="S1", title="x"))
+        assert "error" in result
+        assert result.get("error_code") == "plan_write_forbidden_for_specialist"
+
+    def test_specialist_cannot_reset(self, tmp_path):
+        h_router = _handler(tmp_path)
+        _init(h_router)
+        h = _specialist_handler(tmp_path)
+        result = json.loads(h(action="reset", title="T", new_steps=[{"title": "s"}]))
+        assert "error" in result
+        assert result.get("error_code") == "plan_write_forbidden_for_specialist"
+
+    def test_specialist_can_read(self, tmp_path):
+        h_router = _handler(tmp_path)
+        _init(h_router)
+        h = _specialist_handler(tmp_path)
+        result = json.loads(h(action="read"))
+        assert result["action"] == "read"
+        assert "# Plan" in result["content"]
+
+    def test_router_can_all_write_actions(self, tmp_path):
+        h = _handler(tmp_path, role="router")
+        result = json.loads(h(action="init", title="T", steps=[{"title": "s"}]))
+        assert result["action"] == "init"
+        result = json.loads(h(action="mark", step_id="S1", status="done"))
+        assert result["step_id"] == "S1"
+        result = json.loads(h(action="add_substep", parent_step_id="S1", title="sub"))
+        assert "new_step_id" in result
+
+
+# ---- findings validation ---------------------------------------------------
+
+class TestFindingsValidation:
+    """findings= must be a non-empty string or absent."""
+
+    def test_mark_rejects_bool_findings(self, tmp_path):
+        h = _handler(tmp_path)
+        _init(h)
+        result = json.loads(h(action="mark", step_id="S1", status="done",
+                               findings=False))
+        assert "error" in result
+        assert "findings" in result["error"]
+
+    def test_mark_rejects_empty_string_findings(self, tmp_path):
+        h = _handler(tmp_path)
+        _init(h)
+        result = json.loads(h(action="mark", step_id="S1", status="done",
+                               findings=""))
+        assert "error" in result
+        assert "findings" in result["error"]
+
+    def test_mark_rejects_int_findings(self, tmp_path):
+        h = _handler(tmp_path)
+        _init(h)
+        result = json.loads(h(action="mark", step_id="S1", status="done",
+                               findings=123))
+        assert "error" in result
+        assert "findings" in result["error"]
+
+    def test_mark_accepts_none_findings(self, tmp_path):
+        """findings=None (absent) is perfectly fine — not an error."""
+        h = _handler(tmp_path)
+        _init(h)
+        result = json.loads(h(action="mark", step_id="S1", status="done"))
+        assert "error" not in result

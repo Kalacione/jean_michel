@@ -40,6 +40,7 @@ def build_registry(
     request_id_provider: Callable[[], str] | None = None,
     sandbox_grants: list[str] | None = None,
     sandbox_image: str | None = None,
+    agent_role: str = "specialist",
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context."""
     conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
@@ -48,7 +49,8 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
-    plan_update_spec = _plan_update_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
+    plan_update_spec = _plan_update_mod.make_spec(conv_folder, has_write_grant=has_workspace_write,
+                                                   agent_role=agent_role)
     registry = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         conv_read_file_spec.name: conv_read_file_spec,
