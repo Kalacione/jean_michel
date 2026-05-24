@@ -82,8 +82,8 @@ class TestDelegationWhitelist:
                       briefing="summarize", expected="summary")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search", expected="results")),
-            # summarizer tries to delegate (blocked), then returns directly
-            _resp(_tc("return_to_user", answer="summary text")),
+            # summarizer tries to delegate (blocked), then reports findings
+            _resp(_tc("report_findings", summary="summary text", confidence="high")),
             _resp(_tc("return_to_user", answer="done")),
             _resp(_tc("return_to_user", answer="archived")),
         ])
@@ -147,16 +147,15 @@ class TestCriticCanDelegateAtDepth2:
         assert "document-builder" not in child_agents
 
 
-# ---- signal_convergence at depth=2 ----------------------------------------
+# ---- report_findings replaces signal_convergence at all depths -------------
 
 class TestSignalConvergenceAtDepth2:
-    def test_signal_convergence_offered_at_depth_2(self, tmp_env):
-        """web-search-specialist at depth=2 should have signal_convergence in its payload."""
+    def test_report_findings_offered_to_specialist(self, tmp_env):
+        """specialists have report_findings (replaces signal_convergence)."""
         with db.connect() as conn:
             agent = db.get_agent_by_code(conn, "web-search-specialist")
             tool_grants = db.load_tool_grants(conn, agent.id)
             registry: dict = {}
-        # At depth >= 2 with role='specialist', signal_convergence is in the static list
         payload = tools_payload_for_agent(
             agent_role="specialist",
             tool_grants=tool_grants,
@@ -164,19 +163,19 @@ class TestSignalConvergenceAtDepth2:
             depth=2,
         )
         tool_names = [t["function"]["name"] for t in payload]
-        assert "signal_convergence" in tool_names
+        assert "report_findings" in tool_names
+        assert "signal_convergence" not in tool_names
+        assert "return_to_user" not in tool_names
 
-    def test_signal_convergence_not_at_depth_1(self, tmp_env):
-        """specialist at depth=1 still has signal_convergence (it's in the static list)."""
-        # signal_convergence is statically in _CONTROL_TOOLS_BY_ROLE for 'specialist'
-        # (not just at depth>=2), so depth=1 specialist also has it.
-        # This test just confirms the static presence.
+    def test_report_findings_offered_at_depth_1_too(self, tmp_env):
+        """report_findings is statically granted to specialists at any depth."""
         with db.connect() as conn:
             tool_grants = db.load_tool_grants(conn,
                 db.get_agent_by_code(conn, "critical-thinker").id)
         payload = tools_payload_for_agent("specialist", tool_grants, {}, depth=1)
         tool_names = [t["function"]["name"] for t in payload]
-        assert "signal_convergence" in tool_names
+        assert "report_findings" in tool_names
+        assert "signal_convergence" not in tool_names
 
 
 # ---- DB helpers ------------------------------------------------------------

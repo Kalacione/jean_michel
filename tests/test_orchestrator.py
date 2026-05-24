@@ -88,9 +88,9 @@ class TestDelegation:
                     "support_files": [],
                 }),
             ]),
-            # summarizer returns
+            # summarizer returns via report_findings
             LLMResponse(thinking="", content="", tool_calls=[
-                ToolCall(name="return_to_user", arguments={"answer": "Hello."}),
+                ToolCall(name="report_findings", arguments={"summary": "Hello.", "confidence": "high"}),
             ]),
             # jean-michel resumes and returns
             LLMResponse(thinking="", content="", tool_calls=[

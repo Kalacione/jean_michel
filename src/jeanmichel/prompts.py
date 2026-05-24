@@ -96,8 +96,12 @@ _DELEGATE_TO: dict[str, Any] = {
                             "type": "string",
                             "enum": [
                                 "gather_done", "critic_done", "build_done",
-                                "return_to_user", "signal_convergence",
+                                "return_to_user", "report_findings",
                             ],
+                            "description": (
+                                "The control verb the child should use to conclude. "
+                                "Use 'report_findings' as the default for specialist delegations."
+                            ),
                         },
                         "workspace_artifacts": {
                             "type": "array",
@@ -134,45 +138,82 @@ _RETURN_TO_USER: dict[str, Any] = {
 }
 
 # Per-role grants for control tools.
-# - router: full set
-# - specialist: full set (may delegate further, may need clarification)
-# - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
-_SIGNAL_CONVERGENCE: dict[str, Any] = {
+# - router: full set including planner_done phase verb
+# - specialist: report_findings + phase verbs (NO return_to_user)
+# - finalizer: only return_to_user
+_REPORT_FINDINGS: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": "signal_convergence",
+        "name": "report_findings",
         "description": (
-            "Call this when you have reached the limit of what you can contribute "
-            "at this recursion depth and further analysis would be redundant. "
-            "Provide your best synthesis so far and list any questions that remain "
-            "open for the parent agent to resolve. "
-            "Do NOT call this if you still have meaningful work to do."
+            "Specialist completion verb. Call this when you finish (or reach the limit of) "
+            "the work the parent agent delegated to you. "
+            "Provide a structured report so the parent can update the global plan and decide next steps. "
+            "Do NOT use return_to_user — that verb is reserved for the router answering the human."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "synthesis": {
+                "summary": {
                     "type": "string",
-                    "description": "Your best current synthesis or conclusion.",
+                    "description": (
+                        "One concise paragraph (3–8 sentences) summarising what you did and found. "
+                        "Be specific: name the key findings, sources consulted, files written."
+                    ),
                 },
-                "open_questions": {
+                "files_produced": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Questions or gaps that remain unresolved and should be "
-                        "addressed by the parent agent."
+                        "Workspace-relative paths of files you created or modified. "
+                        "Used by the parent to mark deliverables in the plan."
+                    ),
+                },
+                "sub_questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {"type": "string"},
+                            "why": {
+                                "type": "string",
+                                "description": "Why this needs follow-up.",
+                            },
+                            "suggested_agent": {
+                                "type": "string",
+                                "description": "Optional: which specialist would best handle it.",
+                            },
+                        },
+                        "required": ["question"],
+                    },
+                    "description": (
+                        "Unresolved questions / ambiguities / promising leads. "
+                        "The parent decides whether to spawn follow-up delegations. "
+                        "Leave empty if work is fully closed."
+                    ),
+                },
+                "blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Hard blockers preventing completion (missing tool, missing grant, "
+                        "external service down). Empty list if none."
+                    ),
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": (
+                        "Self-assessment of completeness against the briefing. "
+                        "low = significant gaps, medium = main goal met but some uncertainty, "
+                        "high = fully delivered."
                     ),
                 },
             },
-            "required": ["synthesis"],
+            "required": ["summary", "confidence"],
         },
     },
 }
-
-# Per-role grants for control tools.
-# - router: full set including planner_done phase verb
-# - specialist: full set + gather/critic/build phase verbs
-# - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
 
 def _phase_verb(name: str, desc: str) -> dict[str, Any]:
     return {
@@ -222,7 +263,7 @@ _BUILD_DONE = _phase_verb(
 
 _CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
     "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER, _PLANNER_DONE],
-    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER, _SIGNAL_CONVERGENCE,
+    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _REPORT_FINDINGS,
                    _GATHER_DONE, _CRITIC_DONE, _BUILD_DONE],
     "finalizer":  [_RETURN_TO_USER],
 }
@@ -383,9 +424,7 @@ def tools_payload_for_agent(agent_role: str,
                             depth: int = 0) -> list[dict[str, Any]]:
     """Build the tools payload (control tools filtered by role + native tools)."""
     payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
-    # specialist already has _SIGNAL_CONVERGENCE in its static list; only add dynamically for router.
-    if depth >= 2 and agent_role == "router":
-        payload.append(_SIGNAL_CONVERGENCE)
+    # No legacy signal_convergence offered — report_findings replaces it entirely.
     for tool_name in tool_grants:
         spec = registry.get(tool_name)
         if spec is None:

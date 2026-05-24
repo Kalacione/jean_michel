@@ -172,6 +172,31 @@ class QuotaWarning:
     total_bytes: int
 
 
+@dataclass
+class ReportFindingsReceived:
+    agent_code: str
+    confidence: str
+    files_produced: list[str]
+    sub_questions_count: int
+
+
+@dataclass
+class SignalConvergenceRedirected:
+    agent_code: str
+
+
+@dataclass(frozen=True)
+class SynthesisReminderInjected:
+    agent_code: str
+    child_agent_code: str
+
+
+@dataclass(frozen=True)
+class PlanInitLoopDetected:
+    agent_code: str
+    count: int
+
+
 # Phase verbs: maps verb name → set of agent codes allowed to call it.
 _PHASE_VERB_OWNER: dict[str, set[str]] = {
     "planner_done": {"jean-michel"},
@@ -194,6 +219,56 @@ _PHASE_NEXT: dict[str | None, set[str]] = {
 _PIPELINE_GATHER_AGENTS = frozenset({"web-search-specialist", "wikipedia-specialist"})
 _PIPELINE_CRITIC_AGENTS = frozenset({"critical-thinker"})
 _PIPELINE_BUILD_AGENTS  = frozenset({"document-builder"})
+
+# Roles that may NOT call return_to_user (must use report_findings instead).
+_SPECIALIST_ROLES = frozenset({"specialist"})
+
+
+def _format_report_for_parent(agent_code: str, payload: dict) -> str:
+    """Render a report_findings payload as the markdown the parent agent will see."""
+    confidence = payload.get("confidence", "?")
+    summary = payload.get("summary", "")
+    files = payload.get("files_produced") or []
+    sub_qs = payload.get("sub_questions") or []
+    blockers = payload.get("blockers") or []
+
+    lines = [
+        f"## Report from {agent_code} (confidence: {confidence})",
+        "",
+        "### Summary",
+        summary,
+        "",
+        "### Files produced",
+    ]
+    if files:
+        lines += [f"- {f}" for f in files]
+    else:
+        lines.append("None.")
+    lines.append("")
+
+    lines.append(f"### Sub-questions ({len(sub_qs)})")
+    if sub_qs:
+        for i, sq in enumerate(sub_qs, start=1):
+            q = sq.get("question", "")
+            why = sq.get("why", "")
+            agent = sq.get("suggested_agent", "")
+            parts = [f"{i}. {q}"]
+            if why:
+                parts.append(f"   Why: {why}")
+            if agent:
+                parts.append(f"   Suggested agent: {agent}")
+            lines += parts
+    else:
+        lines.append("None.")
+    lines.append("")
+
+    lines.append("### Blockers")
+    if blockers:
+        lines += [f"- {b}" for b in blockers]
+    else:
+        lines.append("None.")
+
+    return "\n".join(lines)
 
 
 def _expected_completion_for_target(target: str) -> str | None:
@@ -452,6 +527,7 @@ class Orchestrator:
             request_id_provider=_req_id_provider,
             sandbox_grants=sandbox_grants if sandbox_grants else None,
             sandbox_image=agent.sandbox_image,
+            agent_role=agent.role,
         )
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
@@ -494,6 +570,9 @@ class Orchestrator:
         start_ts = time.monotonic()
         _timeout_scope: str | None = None
         _timeout_elapsed: float = 0.0
+        _pending_synthesis: str | None = None   # child agent code after report_findings
+        _synthesis_reminder_sent: bool = False   # cap: at most 1 reminder per pending
+        _idempotent_init_count: int = 0          # plan_update(init) already_exists counter
 
         try:
             llm_steps = 0
@@ -568,6 +647,37 @@ class Orchestrator:
                     self._write_artifact(req_id, agent_code, "tool_call",
                         f"**{call.name}**\n\n```json\n{call.arguments}\n```")
 
+                    # ---- Synthesis reminder (router only, after specialist returns) ---
+                    _SYNTHESIS_ALLOWED = frozenset({
+                        "plan_update", "delegate_to", "ask_human", "return_to_user",
+                    })
+                    if (_pending_synthesis is not None
+                            and agent.role == "router"
+                            and call.name not in _SYNTHESIS_ALLOWED
+                            and not _synthesis_reminder_sent):
+                        _synthesis_reminder_sent = True
+                        _reminder = (
+                            f"[ORCHESTRATOR] You just received a report from "
+                            f"{_pending_synthesis!r}. Before doing anything else, "
+                            f"call plan_update(action='mark', step_id='<the step you "
+                            f"delegated>', status=..., findings='<one-line synthesis of "
+                            f"the report>'). If the report included sub_questions, add "
+                            f"them via plan_update(action='add_substep', "
+                            f"parent_step_id=..., title=..., reason=...). Only then "
+                            f"continue with the next delegation or answer the human."
+                        )
+                        tool_responses.append(json.dumps({
+                            "tool": call.name,
+                            "warning": "synthesis_required",
+                            "message": _reminder,
+                        }))
+                        yield SynthesisReminderInjected(
+                            agent_code=agent_code,
+                            child_agent_code=_pending_synthesis,
+                        )
+                        # Do not execute the call — let the next LLM turn re-decide.
+                        continue
+
                     # ---- Control tools --------------------------------------
                     if call.name == "return_to_user":
                         answer = (call.arguments.get("answer") or "").strip()
@@ -578,6 +688,19 @@ class Orchestrator:
                                     "Your answer contains tokenisation markers "
                                     "(e.g. '<thought'). Rewrite a clean final answer "
                                     "without any XML-like markers."
+                                ),
+                            }))
+                            continue
+                        # Specialists must use report_findings, not return_to_user.
+                        if agent.role in _SPECIALIST_ROLES:
+                            tool_responses.append(json.dumps({
+                                "tool": "return_to_user",
+                                "error": (
+                                    "Specialists must use report_findings to conclude, "
+                                    "not return_to_user. return_to_user is reserved for "
+                                    "the router (jean-michel) answering the human at the "
+                                    "top level. Call report_findings(summary=..., "
+                                    "confidence=...) instead."
                                 ),
                             }))
                             continue
@@ -603,25 +726,84 @@ class Orchestrator:
                         return answer, artifact, False
 
                     if call.name == "signal_convergence":
-                        synthesis = (call.arguments.get("synthesis") or "").strip()
-                        if _looks_corrupted(synthesis):
+                        # Deprecated — redirect to report_findings.
+                        yield SignalConvergenceRedirected(agent_code=agent_code)
+                        tool_responses.append(json.dumps({
+                            "tool": "signal_convergence",
+                            "error": (
+                                "signal_convergence is deprecated. "
+                                "Use report_findings(summary=..., confidence=...) instead. "
+                                "report_findings accepts the same 'synthesis' content as "
+                                "your 'summary' field, plus optional files_produced, "
+                                "sub_questions, and blockers."
+                            ),
+                        }))
+                        continue
+
+                    if call.name == "report_findings":
+                        summary = (call.arguments.get("summary") or "").strip()
+                        confidence = (call.arguments.get("confidence") or "").strip()
+                        files_produced = list(call.arguments.get("files_produced") or [])
+                        sub_questions = list(call.arguments.get("sub_questions") or [])
+                        blockers = list(call.arguments.get("blockers") or [])
+
+                        if not summary:
                             tool_responses.append(json.dumps({
-                                "tool": "signal_convergence",
+                                "tool": "report_findings",
+                                "error": "summary is required and must be a non-empty string.",
+                            }))
+                            continue
+                        if confidence not in {"low", "medium", "high"}:
+                            tool_responses.append(json.dumps({
+                                "tool": "report_findings",
+                                "error": "confidence must be one of: low, medium, high.",
+                            }))
+                            continue
+                        if _looks_corrupted(summary):
+                            tool_responses.append(json.dumps({
+                                "tool": "report_findings",
+                                "error": "summary contains tokenisation markers.",
+                            }))
+                            continue
+
+                        # Guard: declared files must exist.
+                        ws_root = self.conv_folder / "workspace"
+                        missing_files = [
+                            p for p in files_produced
+                            if not (ws_root / p).exists()
+                        ]
+                        if missing_files:
+                            tool_responses.append(json.dumps({
+                                "tool": "report_findings",
                                 "error": (
-                                    "Your synthesis contains tokenisation markers. "
-                                    "Rewrite a clean synthesis without any XML-like markers."
+                                    f"Declared files_produced not found on disk: {missing_files}. "
+                                    "Write them with workspace_create_file before calling "
+                                    "report_findings."
                                 ),
                             }))
                             continue
-                        open_qs = call.arguments.get("open_questions") or []
-                        if open_qs:
-                            synthesis += "\n\nOpen questions:\n" + "\n".join(
-                                f"- {q}" for q in open_qs
-                            )
-                        artifact = self._write_artifact(req_id, agent_code, "response", synthesis)
+
+                        payload = {
+                            "summary": summary,
+                            "confidence": confidence,
+                            "files_produced": files_produced,
+                            "sub_questions": sub_questions,
+                            "blockers": blockers,
+                        }
+                        artifact = self._write_artifact(
+                            req_id, agent_code, "report",
+                            json.dumps(payload, ensure_ascii=False, indent=2),
+                        )
+                        parent_view = _format_report_for_parent(agent_code, payload)
+                        yield ReportFindingsReceived(
+                            agent_code=agent_code,
+                            confidence=confidence,
+                            files_produced=files_produced,
+                            sub_questions_count=len(sub_questions),
+                        )
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
-                        return synthesis, artifact, True
+                        return parent_view, artifact, True
 
                     if call.name in _PHASE_VERBS:
                         if agent_code not in _PHASE_VERB_OWNER[call.name]:
@@ -710,7 +892,7 @@ class Orchestrator:
                                     f"Allowed targets: {sorted(delegation_targets) or '[none]'}. "
                                     "If you have completed your work, use the appropriate "
                                     "completion verb (gather_done, critic_done, build_done, "
-                                    "signal_convergence) or return_to_user instead."
+                                    "report_findings) or return_to_user instead."
                                 ),
                             }))
                             continue
@@ -817,6 +999,10 @@ class Orchestrator:
                                         f"missing required workspace artifacts: {missing_req}"
                                     )
                             tool_responses.append(json.dumps(response_obj))
+                            # If specialist returned via report_findings, track for synthesis.
+                            if child_converged and agent.role == "router":
+                                _pending_synthesis = child_code
+                                _synthesis_reminder_sent = False
                             # Refresh pipeline state — specialist may have updated phase.
                             if agent_code == "jean-michel":
                                 with db.connect() as conn:
@@ -973,6 +1159,54 @@ class Orchestrator:
                             _current_phase = "planner_done"
                             ctx.pipeline_state = _pipeline_state_block(_task_class, _current_phase)
                             system = render_system_prompt(ctx)
+
+                    # Sub-sprint C: synthesis discipline + idempotent init loop detection
+                    if call.name == "plan_update":
+                        try:
+                            _pu_result = json.loads(result) if isinstance(result, str) else {}
+                        except (json.JSONDecodeError, ValueError):
+                            _pu_result = {}
+                        _pu_action = call.arguments.get("action", "")
+                        # Clear pending synthesis when router marks/add_substeps.
+                        if _pu_action in {"mark", "add_substep"} and _pending_synthesis is not None:
+                            _pending_synthesis = None
+                            _synthesis_reminder_sent = False
+                        # Detect idempotent init loop.
+                        if _pu_result.get("already_exists") is True:
+                            _idempotent_init_count += 1
+                            if _idempotent_init_count == 2:
+                                _init_reminder = (
+                                    "[ORCHESTRATOR] You already received the existing plan "
+                                    "via init. Call plan_update(action='read') or proceed "
+                                    "with mark/add_substep instead of init."
+                                )
+                                tool_responses[-1] = json.dumps(
+                                    dict(_pu_result, warning=_init_reminder)
+                                )
+                                yield PlanInitLoopDetected(
+                                    agent_code=agent_code, count=_idempotent_init_count
+                                )
+                            elif _idempotent_init_count >= 3:
+                                yield PlanInitLoopDetected(
+                                    agent_code=agent_code, count=_idempotent_init_count
+                                )
+                                fail_payload = json.dumps({
+                                    "status": "plan_init_loop",
+                                    "agent": agent_code,
+                                    "error": (
+                                        "plan_update(init) returned already_exists=true "
+                                        f"{_idempotent_init_count} times. "
+                                        "Failing fast to prevent infinite loop."
+                                    ),
+                                })
+                                self._write_artifact(
+                                    req_id, agent_code, "response", fail_payload
+                                )
+                                with db.connect() as conn:
+                                    db.update_request_status(
+                                        conn, req_id, "failed", completed=True
+                                    )
+                                return fail_payload, None, False
 
                 # Feed all tool responses back to the model on the next iteration.
                 running_user_text = (

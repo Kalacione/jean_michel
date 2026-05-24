@@ -68,10 +68,10 @@ class TestWorkspaceE2E:
                     "description": "test note",
                 }),
             ]),
-            # document-builder: view file then return
+            # document-builder: view file then report findings
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="workspace_view", arguments={"relative_path": "notes.md"}),
-                ToolCall(name="return_to_user", arguments={"answer": "Created notes.md with 'hello world'."}),
+                ToolCall(name="report_findings", arguments={"summary": "Created notes.md with 'hello world'.", "confidence": "high"}),
             ]),
             # jean-michel wraps up
             LLMResponse(thinking="", content="", tool_calls=[
@@ -124,7 +124,7 @@ class TestWorkspaceE2E:
                     "old_str": "wrold",
                     "new_str": "world",
                 }),
-                ToolCall(name="return_to_user", arguments={"answer": "Typo fixed."}),
+                ToolCall(name="report_findings", arguments={"summary": "Typo fixed.", "confidence": "high"}),
             ]),
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "Fixed."}),
@@ -160,7 +160,7 @@ class TestWorkspaceE2E:
                 ToolCall(name="workspace_list", arguments={}),
             ]),
             LLMResponse(thinking="", content="", tool_calls=[
-                ToolCall(name="return_to_user", arguments={"answer": "Listed."}),
+                ToolCall(name="report_findings", arguments={"summary": "Listed.", "confidence": "high"}),
             ]),
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "Done."}),
@@ -191,7 +191,7 @@ class TestWorkspaceE2E:
                     "content": "x",
                     "description": "test",
                 }),
-                ToolCall(name="return_to_user", arguments={"answer": "ok"}),
+                ToolCall(name="report_findings", arguments={"summary": "File created.", "confidence": "high"}),
             ]),
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "Done."}),
@@ -232,7 +232,7 @@ class TestWorkspaceE2E:
                     "content": "bad",
                     "description": "attack",
                 }),
-                ToolCall(name="return_to_user", arguments={"answer": "tried"}),
+                ToolCall(name="report_findings", arguments={"summary": "Tried path traversal.", "confidence": "high"}),
             ]),
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="return_to_user", arguments={"answer": "Done."}),
