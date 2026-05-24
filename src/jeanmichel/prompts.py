@@ -262,9 +262,8 @@ _BUILD_DONE = _phase_verb(
 )
 
 _CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
-    "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER, _PLANNER_DONE],
-    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _REPORT_FINDINGS,
-                   _GATHER_DONE, _CRITIC_DONE, _BUILD_DONE],
+    "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
+    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _REPORT_FINDINGS],
     "finalizer":  [_RETURN_TO_USER],
 }
 
@@ -290,7 +289,6 @@ class PromptContext:
     available_agents: list[Agent]
     turn_clarifications: list[tuple[str, str]]  # (question, answer) pairs from ask_human this turn
     conv_budget: str | None = None  # pre-computed budget block injected by the orchestrator
-    pipeline_state: str | None = None  # PIPELINE STATE block for deep_research tasks
 
 
 def render_directives(paradigms: list[Paradigm]) -> str:
@@ -411,7 +409,6 @@ def render_system_prompt(ctx: PromptContext) -> str:
         f"{ctx.inbound_text}\n\n"
         + _render_prior_clarifications(ctx.turn_clarifications)
         + delegation_section
-        + (f"# PIPELINE STATE\n{ctx.pipeline_state}\n\n" if ctx.pipeline_state else "")
         + f"# DIRECTIVES\n"
         f"{render_directives(ctx.paradigms)}\n\n"
         f"{_render_output_contract(a.role)}"

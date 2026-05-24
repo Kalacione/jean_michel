@@ -2992,3 +2992,27 @@ INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
 SELECT a.id, p.id
 FROM agents a, paradigms p
 WHERE a.code = 'jean-michel' AND p.code = 'router_synthesis_discipline';
+
+-- ============================================================
+-- MIGRATION 050 — plan.md devient un side-effect déterministe
+-- plan_update supprimé ; plan_writer.py construit plan.md via
+-- les événements delegate_to / report_findings.
+-- ============================================================
+
+DELETE FROM agent_tools WHERE tool_code = 'plan_update';
+
+DELETE FROM agent_paradigms
+WHERE paradigm_id IN (
+    SELECT id FROM paradigms
+    WHERE code IN ('task_plan_file', 'orchestration_plan_maintenance')
+);
+
+DELETE FROM paradigms WHERE code IN ('task_plan_file', 'orchestration_plan_maintenance');
+
+UPDATE paradigms
+SET content = '- After a specialist returns via report_findings, decide: follow up with another delegation, or synthesize for the user.
+- If the report includes sub_questions you want to follow up on, delegate to the appropriate agent.
+- When all necessary research is done, synthesize the results and call return_to_user.
+- Never re-delegate the same question without narrowing the scope.',
+    modified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE code = 'router_synthesis_discipline';

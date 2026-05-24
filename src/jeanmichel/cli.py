@@ -33,12 +33,10 @@ from .orchestrator import (
     OrchestrationFailed,
     Orchestrator,
     PhaseCompleted,
-    PlanInitLoopDetected,
     RecursionLimitReached,
     ReportFindingsReceived,
     SignalConvergenceRedirected,
     SummaryUpdated,
-    SynthesisReminderInjected,
     ThoughtCaptured,
     ToolCallEmitted,
     ToolResponseRecorded,
@@ -198,18 +196,6 @@ def render_events(console: Console, events: Iterable[object],
             console.print(
                 f"  [{C_WARN}]⚠ signal_convergence deprecated · {ev.agent_code} "
                 f"→ use report_findings[/]"
-            )
-
-        elif isinstance(ev, SynthesisReminderInjected):
-            console.print(
-                f"  [{C_WARN}]⚠ synthesis reminder · {ev.agent_code} "
-                f"← {ev.child_agent_code}[/]"
-            )
-
-        elif isinstance(ev, PlanInitLoopDetected):
-            console.print(
-                f"  [{C_WARN}]⚠ plan init loop · {ev.agent_code} "
-                f"(already_exists×{ev.count})[/]"
             )
 
         elif isinstance(ev, WallClockExceeded):

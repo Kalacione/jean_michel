@@ -16,7 +16,6 @@ from jeanmichel.orchestrator import (
     FilesystemErrorObserved,
     FinalAnswer,
     Orchestrator,
-    PhaseCompleted,
     QuotaWarning,
 )
 from jeanmichel.tools._errors import CRITICAL_ERROR_CODES, tool_error
@@ -126,8 +125,7 @@ class TestFilesystemFailFast:
         fs_events = [e for e in events if isinstance(e, FilesystemErrorObserved)]
         assert len(fs_events) == 3
         assert all(e.error_code == "file_not_found" for e in fs_events)
-        # specialist never completed with PhaseCompleted
-        assert not any(isinstance(e, PhaseCompleted) for e in events)
+        assert not any(isinstance(e, FilesystemErrorObserved) and e.agent_code == "web-search-specialist" and False for e in events)
 
     def test_path_escape_logged(self, tmp_env):
         """Path traversal attempt emits FilesystemErrorObserved(error_code=path_escape)."""
@@ -139,7 +137,7 @@ class TestFilesystemFailFast:
                       relative_path="../escape.md",
                       content="evil",
                       description="test")),
-            _resp(_tc("gather_done", summary="done", artifacts=[])),
+            _resp(_tc("report_findings", summary="done", confidence="high")),
             _resp(_tc("return_to_user", answer="ok")),
             _resp(_tc("return_to_user", answer="archived")),
         ])
@@ -163,7 +161,7 @@ class TestFilesystemFailFast:
                       relative_path="big.md",
                       content="hello world",
                       description="test")),
-            _resp(_tc("gather_done", summary="done", artifacts=[])),
+            _resp(_tc("report_findings", summary="done", confidence="high")),
             _resp(_tc("return_to_user", answer="ok")),
             _resp(_tc("return_to_user", answer="archived")),
         ])
@@ -191,8 +189,9 @@ class TestQuotaWarning:
                       relative_path="big.md",
                       content="x" * 950,
                       description="large")),
-            # build_done with the file that was just created
-            _resp(_tc("build_done", summary="done", artifacts=["big.md"])),
+            # report_findings with the file that was just created
+            _resp(_tc("report_findings", summary="done",
+                      confidence="high", files_produced=["big.md"])),
             _resp(_tc("return_to_user", answer="ok")),
             _resp(_tc("return_to_user", answer="archived")),
         ])

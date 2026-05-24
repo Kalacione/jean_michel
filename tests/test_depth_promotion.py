@@ -44,8 +44,8 @@ class TestDelegationWhitelist:
             # wikipedia-specialist tries to delegate to planner (whitelist blocks it)
             _resp(_tc("delegate_to", agent_code="planner",
                       briefing="plan this", expected="plan")),
-            # after block, use gather_done
-            _resp(_tc("gather_done", summary="done", artifacts=[])),
+            # after block, use report_findings
+            _resp(_tc("report_findings", summary="done", confidence="high")),
             # jean-michel returns
             _resp(_tc("return_to_user", answer="done")),
             # archivist
@@ -64,10 +64,10 @@ class TestDelegationWhitelist:
         orch = _orch([
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search", expected="gather_done")),
-            _resp(_tc("gather_done", summary="sources found", artifacts=[])),
+            _resp(_tc("report_findings", summary="sources found", confidence="high")),
             _resp(_tc("delegate_to", agent_code="critical-thinker",
                       briefing="critique", expected="critic_done")),
-            _resp(_tc("critic_done", summary="ok", artifacts=[])),
+            _resp(_tc("report_findings", summary="ok", confidence="high")),
             _resp(_tc("return_to_user", answer="done")),
             _resp(_tc("return_to_user", answer="archived")),
         ])
@@ -108,10 +108,10 @@ class TestCriticCanDelegateAtDepth2:
             # critical-thinker delegates to web-search to verify a fact (depth=2)
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources for claim X", expected="gather_done")),
-            # web-search at depth=2 returns gather_done
-            _resp(_tc("gather_done", summary="found confirmation", artifacts=[])),
+            # web-search at depth=2 returns via report_findings
+            _resp(_tc("report_findings", summary="found confirmation", confidence="high")),
             # critical-thinker resumes and concludes
-            _resp(_tc("critic_done", summary="claim is supported", artifacts=[])),
+            _resp(_tc("report_findings", summary="claim is supported", confidence="high")),
             # jean-michel returns
             _resp(_tc("return_to_user", answer="done")),
             # archivist
@@ -135,7 +135,7 @@ class TestCriticCanDelegateAtDepth2:
             _resp(_tc("delegate_to", agent_code="document-builder",
                       briefing="write report", expected="report")),
             # after block, conclude
-            _resp(_tc("critic_done", summary="critique done", artifacts=[])),
+            _resp(_tc("report_findings", summary="critique done", confidence="high")),
             _resp(_tc("return_to_user", answer="done")),
             _resp(_tc("return_to_user", answer="archived")),
         ])

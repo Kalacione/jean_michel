@@ -17,8 +17,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config, db
+from . import plan_writer as _plan_writer
 from .config import (
     LLM_CALL_TIMEOUT_SECONDS,
+    MAX_DELEGATIONS,
     MAX_RECURSION_DEPTH,
     MAX_STEPS_PER_REQUEST,
     REQUEST_WALL_CLOCK_SECONDS,
@@ -150,15 +152,6 @@ class CorruptedOutputDetected:
 
 
 @dataclass
-class PhaseCompleted:
-    agent_code: str
-    phase: str
-    summary: str
-    artifacts: list[str]
-    next_hint: str
-
-
-@dataclass
 class FilesystemErrorObserved:
     agent_code: str
     tool_name: str
@@ -180,45 +173,10 @@ class ReportFindingsReceived:
     sub_questions_count: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class SignalConvergenceRedirected:
     agent_code: str
 
-
-@dataclass(frozen=True)
-class SynthesisReminderInjected:
-    agent_code: str
-    child_agent_code: str
-
-
-@dataclass(frozen=True)
-class PlanInitLoopDetected:
-    agent_code: str
-    count: int
-
-
-# Phase verbs: maps verb name → set of agent codes allowed to call it.
-_PHASE_VERB_OWNER: dict[str, set[str]] = {
-    "planner_done": {"jean-michel"},
-    "gather_done":  {"web-search-specialist", "wikipedia-specialist"},
-    "critic_done":  {"critical-thinker"},
-    "build_done":   {"document-builder"},
-}
-
-_PHASE_VERBS = frozenset(_PHASE_VERB_OWNER)
-
-# Pipeline state machine (deep_research tasks — jean-michel only)
-_PHASE_NEXT: dict[str | None, set[str]] = {
-    None:           {"planner_done"},
-    "planner_done": {"gather_done"},
-    "gather_done":  {"critic_done", "gather_done"},
-    "critic_done":  {"build_done", "gather_done"},
-    "build_done":   {"return_to_user"},
-}
-
-_PIPELINE_GATHER_AGENTS = frozenset({"web-search-specialist", "wikipedia-specialist"})
-_PIPELINE_CRITIC_AGENTS = frozenset({"critical-thinker"})
-_PIPELINE_BUILD_AGENTS  = frozenset({"document-builder"})
 
 # Roles that may NOT call return_to_user (must use report_findings instead).
 _SPECIALIST_ROLES = frozenset({"specialist"})
@@ -270,35 +228,6 @@ def _format_report_for_parent(agent_code: str, payload: dict) -> str:
 
     return "\n".join(lines)
 
-
-def _expected_completion_for_target(target: str) -> str | None:
-    if target in _PIPELINE_GATHER_AGENTS:
-        return "gather_done"
-    if target in _PIPELINE_CRITIC_AGENTS:
-        return "critic_done"
-    if target in _PIPELINE_BUILD_AGENTS:
-        return "build_done"
-    return None
-
-
-def _pipeline_state_block(task_class: str | None, current_phase: str | None) -> str | None:
-    if task_class != "deep_research":
-        return None
-    allowed = _PHASE_NEXT.get(current_phase, set())
-    _labels: dict[str, str] = {
-        "planner_done": "planner_done (call plan_update(action='init', ...))",
-        "gather_done":  "gather_done (delegate_to web-search-specialist or wikipedia-specialist)",
-        "critic_done":  "critic_done (delegate_to critical-thinker)",
-        "build_done":   "build_done (delegate_to document-builder)",
-        "return_to_user": "return_to_user (call return_to_user to conclude)",
-    }
-    parts = [_labels.get(p, p) for p in sorted(allowed)]
-    next_str = " OR ".join(parts) if parts else "(none — pipeline complete)"
-    return (
-        f"task_class: {task_class}\n"
-        f"current_phase: {current_phase or 'none'}\n"
-        f"next_allowed: {next_str}"
-    )
 
 def _detect_language(text: str) -> str:
     try:
@@ -362,6 +291,11 @@ class Orchestrator:
         self.turn_index: int = -1
         self._turn_exchanges: list[tuple[str, str]] = []
         self._turn_started_at: float = 0.0
+        # Plan state — deterministic side-effect of delegate_to + report_findings.
+        # Reset at the start of every turn.
+        self._plan_steps: list[dict] = []
+        self._plan_counters: dict[int, int] = {}
+        self._total_delegations: int = 0
 
     # ---- Public API ------------------------------------------------------
 
@@ -432,6 +366,9 @@ class Orchestrator:
         self.user_language = _detect_language(user_input)
         self._turn_exchanges = []
         self._turn_started_at = time.monotonic()
+        self._plan_steps = []
+        self._plan_counters = {}
+        self._total_delegations = 0
 
         if self.conv_folder is None:
             # CLI did not call bootstrap_conversation() — create lazily (backward compat).
@@ -506,11 +443,6 @@ class Orchestrator:
                 turn_index=self.turn_index,
             )
             db.update_request_status(conn, req_id, "running")
-            # Pipeline state — read once for jean-michel; updated in-place during the request.
-            _task_class: str | None = None
-            _current_phase: str | None = None
-            if agent_code == "jean-michel":
-                _task_class, _current_phase = db.get_pipeline_state(conn, self.conv_id)
 
         yield AgentStarted(agent_code=agent_code, request_id=req_id, depth=depth)
 
@@ -527,7 +459,6 @@ class Orchestrator:
             request_id_provider=_req_id_provider,
             sandbox_grants=sandbox_grants if sandbox_grants else None,
             sandbox_image=agent.sandbox_image,
-            agent_role=agent.role,
         )
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
@@ -560,7 +491,6 @@ class Orchestrator:
             available_agents=available_agents,
             turn_clarifications=list(self._turn_exchanges),
             conv_budget=_budget_snapshot(self.conv_id) if agent.role == "router" else None,
-            pipeline_state=_pipeline_state_block(_task_class, _current_phase),
         )
         system = render_system_prompt(ctx)
         tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry, depth=depth)
@@ -570,9 +500,6 @@ class Orchestrator:
         start_ts = time.monotonic()
         _timeout_scope: str | None = None
         _timeout_elapsed: float = 0.0
-        _pending_synthesis: str | None = None   # child agent code after report_findings
-        _synthesis_reminder_sent: bool = False   # cap: at most 1 reminder per pending
-        _idempotent_init_count: int = 0          # plan_update(init) already_exists counter
 
         try:
             llm_steps = 0
@@ -647,37 +574,6 @@ class Orchestrator:
                     self._write_artifact(req_id, agent_code, "tool_call",
                         f"**{call.name}**\n\n```json\n{call.arguments}\n```")
 
-                    # ---- Synthesis reminder (router only, after specialist returns) ---
-                    _SYNTHESIS_ALLOWED = frozenset({
-                        "plan_update", "delegate_to", "ask_human", "return_to_user",
-                    })
-                    if (_pending_synthesis is not None
-                            and agent.role == "router"
-                            and call.name not in _SYNTHESIS_ALLOWED
-                            and not _synthesis_reminder_sent):
-                        _synthesis_reminder_sent = True
-                        _reminder = (
-                            f"[ORCHESTRATOR] You just received a report from "
-                            f"{_pending_synthesis!r}. Before doing anything else, "
-                            f"call plan_update(action='mark', step_id='<the step you "
-                            f"delegated>', status=..., findings='<one-line synthesis of "
-                            f"the report>'). If the report included sub_questions, add "
-                            f"them via plan_update(action='add_substep', "
-                            f"parent_step_id=..., title=..., reason=...). Only then "
-                            f"continue with the next delegation or answer the human."
-                        )
-                        tool_responses.append(json.dumps({
-                            "tool": call.name,
-                            "warning": "synthesis_required",
-                            "message": _reminder,
-                        }))
-                        yield SynthesisReminderInjected(
-                            agent_code=agent_code,
-                            child_agent_code=_pending_synthesis,
-                        )
-                        # Do not execute the call — let the next LLM turn re-decide.
-                        continue
-
                     # ---- Control tools --------------------------------------
                     if call.name == "return_to_user":
                         answer = (call.arguments.get("answer") or "").strip()
@@ -701,22 +597,6 @@ class Orchestrator:
                                     "the router (jean-michel) answering the human at the "
                                     "top level. Call report_findings(summary=..., "
                                     "confidence=...) instead."
-                                ),
-                            }))
-                            continue
-                        # Pipeline enforcement: deep_research requires build_done
-                        if (agent_code == "jean-michel"
-                                and _task_class == "deep_research"
-                                and _current_phase != "build_done"):
-                            _allowed = sorted(_PHASE_NEXT.get(_current_phase, set()))
-                            tool_responses.append(json.dumps({
-                                "tool": "return_to_user",
-                                "error": (
-                                    f"Pipeline violation: current phase is {_current_phase!r} "
-                                    "for a deep_research task. You cannot return_to_user yet. "
-                                    "Complete the research pipeline first. "
-                                    f"Next expected: {_allowed}. "
-                                    "See # PIPELINE STATE in your system prompt."
                                 ),
                             }))
                             continue
@@ -805,55 +685,6 @@ class Orchestrator:
                             db.update_request_status(conn, req_id, "completed", completed=True)
                         return parent_view, artifact, True
 
-                    if call.name in _PHASE_VERBS:
-                        if agent_code not in _PHASE_VERB_OWNER[call.name]:
-                            tool_responses.append(json.dumps({
-                                "tool": call.name,
-                                "error": (
-                                    f"'{call.name}' is not available to agent '{agent_code}'. "
-                                    f"It belongs to: {sorted(_PHASE_VERB_OWNER[call.name])}."
-                                ),
-                            }))
-                            continue
-                        summary = (call.arguments.get("summary") or "").strip()
-                        artifacts = list(call.arguments.get("artifacts") or [])
-                        # Guard: every declared artifact must actually exist.
-                        ws_root = self.conv_folder / "workspace"
-                        missing_arts = [a for a in artifacts if not (ws_root / a).exists()]
-                        if missing_arts:
-                            tool_responses.append(json.dumps({
-                                "tool": call.name,
-                                "error": (
-                                    f"You declared artifacts {missing_arts} but they do not "
-                                    "exist in the workspace. Call workspace_create_file to "
-                                    "write them before signalling this verb."
-                                ),
-                            }))
-                            continue
-                        next_hint = (call.arguments.get("next_hint") or "").strip()
-                        phase = call.name.replace("_done", "")
-                        payload = json.dumps({
-                            "phase": phase,
-                            "summary": summary,
-                            "artifacts": artifacts,
-                            "next_hint": next_hint,
-                        })
-                        artifact = self._write_artifact(req_id, agent_code, "response", payload)
-                        with db.connect() as conn:
-                            db.update_request_status(conn, req_id, "completed", completed=True)
-                            db.record_phase_completion(
-                                conn, self.conv_id, phase, agent_code, summary,
-                            )
-                            db.update_conversation_phase(conn, self.conv_id, call.name)
-                        yield PhaseCompleted(
-                            agent_code=agent_code,
-                            phase=phase,
-                            summary=summary,
-                            artifacts=artifacts,
-                            next_hint=next_hint,
-                        )
-                        return payload, artifact, False
-
                     if call.name == "ask_human":
                         if seen_ask:
                             tool_responses.append(json.dumps({
@@ -890,9 +721,8 @@ class Orchestrator:
                                 "error": (
                                     f"You ({agent_code}) cannot delegate to {child_code!r}. "
                                     f"Allowed targets: {sorted(delegation_targets) or '[none]'}. "
-                                    "If you have completed your work, use the appropriate "
-                                    "completion verb (gather_done, critic_done, build_done, "
-                                    "report_findings) or return_to_user instead."
+                                    "If you have completed your work, use "
+                                    "report_findings or return_to_user instead."
                                 ),
                             }))
                             continue
@@ -907,13 +737,21 @@ class Orchestrator:
                                 ),
                             }))
                             continue
+                        # Guardrail: max delegations per turn to avoid runaway research.
+                        self._total_delegations += 1
+                        if self._total_delegations > MAX_DELEGATIONS:
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    f"delegation_budget_exhausted: you have used "
+                                    f"{MAX_DELEGATIONS} delegations this turn. "
+                                    "Synthesize what you have and call return_to_user."
+                                ),
+                            }))
+                            continue
                         briefing = call.arguments.get("briefing", "")
                         expected = call.arguments.get("expected", "")
                         sup_files = call.arguments.get("support_files") or []
-                        # Validate that every support_file actually exists in the
-                        # conversation folder. Agents can only write to the workspace
-                        # (workspace_create_file) — they cannot write to conv_folder.
-                        # support_files is exclusively for orchestrator-written artifacts.
                         missing = [f for f in sup_files
                                    if not (self.conv_folder / f).exists()]
                         if missing:
@@ -934,27 +772,24 @@ class Orchestrator:
                                 ),
                             }))
                             continue
-                        # Pipeline enforcement: jean-michel + deep_research
-                        if agent_code == "jean-michel" and _task_class == "deep_research":
-                            _exp = _expected_completion_for_target(child_code)
-                            if _exp is not None:
-                                _allowed = _PHASE_NEXT.get(_current_phase, set())
-                                if _exp not in _allowed:
-                                    tool_responses.append(json.dumps({
-                                        "tool": "delegate_to",
-                                        "error": (
-                                            f"Pipeline violation: current phase is "
-                                            f"{_current_phase!r}. "
-                                            f"Next expected completion: {sorted(_allowed)}. "
-                                            f"Delegating to {child_code!r} would produce "
-                                            f"{_exp!r}. "
-                                            "Follow the GATHER → CRITIC → BUILD pipeline. "
-                                            "See # PIPELINE STATE in your system prompt."
-                                        ),
-                                    }))
-                                    continue
                         yield DelegationStarted(parent_agent=agent_code,
                                                 child_agent=child_code, briefing=briefing)
+                        # --- Deterministic plan.md update ---
+                        _depth_cnt = self._plan_counters.get(depth, 0) + 1
+                        self._plan_counters[depth] = _depth_cnt
+                        if depth == 0:
+                            _step_id = f"S{_depth_cnt}"
+                        else:
+                            _parent_cnt = self._plan_counters.get(depth - 1, 1)
+                            _step_id = f"S{_parent_cnt}.{_depth_cnt}"
+                        self._plan_steps.append({
+                            "id": _step_id,
+                            "agent": child_code,
+                            "briefing": briefing,
+                            "status": "in_progress",
+                            "summary": "",
+                        })
+                        _plan_writer.write(self.conv_folder, self._plan_steps)
                         # Normalise expected: legacy string → structured dict.
                         expected_raw = call.arguments.get("expected", "")
                         if isinstance(expected_raw, str):
@@ -999,20 +834,28 @@ class Orchestrator:
                                         f"missing required workspace artifacts: {missing_req}"
                                     )
                             tool_responses.append(json.dumps(response_obj))
-                            # If specialist returned via report_findings, track for synthesis.
-                            if child_converged and agent.role == "router":
-                                _pending_synthesis = child_code
-                                _synthesis_reminder_sent = False
-                            # Refresh pipeline state — specialist may have updated phase.
-                            if agent_code == "jean-michel":
-                                with db.connect() as conn:
-                                    _task_class, _current_phase = db.get_pipeline_state(
-                                        conn, self.conv_id
-                                    )
-                                ctx.pipeline_state = _pipeline_state_block(
-                                    _task_class, _current_phase
-                                )
-                                system = render_system_prompt(ctx)
+                            # Update plan step: done if child converged, else blocked.
+                            if child_converged:
+                                # Extract summary from formatted report ("### Summary\n...")
+                                _sm_start = child_answer.find("### Summary\n")
+                                _plan_summary = ""
+                                if _sm_start >= 0:
+                                    _rest = child_answer[_sm_start + 12:]
+                                    _sm_end = _rest.find("\n###")
+                                    _plan_summary = (_rest[:_sm_end] if _sm_end >= 0 else _rest).strip()
+                                    if len(_plan_summary) > 120:
+                                        _plan_summary = _plan_summary[:117] + "…"
+                                _step_status = "done"
+                            else:
+                                _plan_summary = ""
+                                _step_status = "done"
+                            # Update the step in-place.
+                            for _s in self._plan_steps:
+                                if _s["id"] == _step_id:
+                                    _s["status"] = _step_status
+                                    _s["summary"] = _plan_summary
+                                    break
+                            _plan_writer.write(self.conv_folder, self._plan_steps)
                         except KeyError:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
@@ -1145,68 +988,6 @@ class Orchestrator:
                                 remaining_bytes=_remaining,
                                 total_bytes=config.WORKSPACE_QUOTA_BYTES,
                             )
-                    # Detect plan_update(action="init") → promote to deep_research pipeline
-                    if call.name == "plan_update" and agent_code == "jean-michel":
-                        try:
-                            _robj = json.loads(result)
-                        except (json.JSONDecodeError, ValueError):
-                            _robj = {}
-                        if _robj.get("action") == "init" and "steps_created" in _robj:
-                            with db.connect() as conn:
-                                db.set_task_class(conn, self.conv_id, "deep_research")
-                                db.update_conversation_phase(conn, self.conv_id, "planner_done")
-                            _task_class = "deep_research"
-                            _current_phase = "planner_done"
-                            ctx.pipeline_state = _pipeline_state_block(_task_class, _current_phase)
-                            system = render_system_prompt(ctx)
-
-                    # Sub-sprint C: synthesis discipline + idempotent init loop detection
-                    if call.name == "plan_update":
-                        try:
-                            _pu_result = json.loads(result) if isinstance(result, str) else {}
-                        except (json.JSONDecodeError, ValueError):
-                            _pu_result = {}
-                        _pu_action = call.arguments.get("action", "")
-                        # Clear pending synthesis when router marks/add_substeps.
-                        if _pu_action in {"mark", "add_substep"} and _pending_synthesis is not None:
-                            _pending_synthesis = None
-                            _synthesis_reminder_sent = False
-                        # Detect idempotent init loop.
-                        if _pu_result.get("already_exists") is True:
-                            _idempotent_init_count += 1
-                            if _idempotent_init_count == 2:
-                                _init_reminder = (
-                                    "[ORCHESTRATOR] You already received the existing plan "
-                                    "via init. Call plan_update(action='read') or proceed "
-                                    "with mark/add_substep instead of init."
-                                )
-                                tool_responses[-1] = json.dumps(
-                                    dict(_pu_result, warning=_init_reminder)
-                                )
-                                yield PlanInitLoopDetected(
-                                    agent_code=agent_code, count=_idempotent_init_count
-                                )
-                            elif _idempotent_init_count >= 3:
-                                yield PlanInitLoopDetected(
-                                    agent_code=agent_code, count=_idempotent_init_count
-                                )
-                                fail_payload = json.dumps({
-                                    "status": "plan_init_loop",
-                                    "agent": agent_code,
-                                    "error": (
-                                        "plan_update(init) returned already_exists=true "
-                                        f"{_idempotent_init_count} times. "
-                                        "Failing fast to prevent infinite loop."
-                                    ),
-                                })
-                                self._write_artifact(
-                                    req_id, agent_code, "response", fail_payload
-                                )
-                                with db.connect() as conn:
-                                    db.update_request_status(
-                                        conn, req_id, "failed", completed=True
-                                    )
-                                return fail_payload, None, False
 
                 # Feed all tool responses back to the model on the next iteration.
                 running_user_text = (

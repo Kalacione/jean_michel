@@ -36,6 +36,10 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+# Hard cap on total delegations per turn. Prevents "aspirating the whole
+# internet" on a single user request.
+MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)
+
 # Wall-clock timeouts (configurable via env vars).
 LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 120)
 REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 900)
