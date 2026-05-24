@@ -139,13 +139,18 @@ def _summarize_result(tool_name: str, result_str: str) -> str:
 
 
 def _format_args(arguments: dict) -> str:
-    """Render call arguments as ``k=v`` pairs, truncated."""
+    """Render call arguments as ``k=v`` pairs.
+
+    String values are kept at full length up to 300 chars so the plan
+    preserves enough signal for peer agents to recognise — and avoid —
+    duplicate queries. Past that, we truncate with an ellipsis.
+    """
     if not arguments:
         return ""
     parts = []
     for k, v in arguments.items():
         if isinstance(v, str):
-            parts.append(f'{k}="{_truncate(v, 60)}"')
+            parts.append(f'{k}="{_truncate(v, 300)}"')
         elif isinstance(v, (int, float, bool)) or v is None:
             parts.append(f"{k}={v}")
         elif isinstance(v, (list, tuple)):
