@@ -110,6 +110,15 @@ def load_sandbox_grants(conn: sqlite3.Connection, agent_id: int) -> list[str]:
     return [r[0] for r in rows]
 
 
+def load_delegation_targets(conn: sqlite3.Connection, agent_id: int) -> set[str]:
+    """Return the set of agent codes this agent is allowed to delegate to."""
+    rows = conn.execute(
+        "SELECT target_code FROM agent_delegation_targets WHERE agent_id = ?",
+        (agent_id,),
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
 def record_sandbox_execution(
     conn: sqlite3.Connection,
     request_id: str,

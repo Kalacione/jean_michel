@@ -401,6 +401,7 @@ class Orchestrator:
             tool_grants = db.load_tool_grants(conn, agent.id)
             has_workspace_write = db.has_workspace_grant(conn, agent.id)
             sandbox_grants = db.load_sandbox_grants(conn, agent.id)
+            delegation_targets = db.load_delegation_targets(conn, agent.id)
             req_id = _new_uuid()
             db.create_request(
                 conn,
@@ -668,6 +669,19 @@ class Orchestrator:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
                                 "error": "archivist is an internal component and cannot be called via delegate_to.",
+                            }))
+                            continue
+                        # Delegation whitelist: only explicitly listed targets allowed.
+                        if child_code not in delegation_targets:
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    f"You ({agent_code}) cannot delegate to {child_code!r}. "
+                                    f"Allowed targets: {sorted(delegation_targets) or '[none]'}. "
+                                    "If you have completed your work, use the appropriate "
+                                    "completion verb (gather_done, critic_done, build_done, "
+                                    "signal_convergence) or return_to_user instead."
+                                ),
                             }))
                             continue
                         if depth + 1 > MAX_RECURSION_DEPTH:
