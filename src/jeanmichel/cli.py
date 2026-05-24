@@ -32,6 +32,7 @@ from .orchestrator import (
     HumanQuestionAsked,
     OrchestrationFailed,
     Orchestrator,
+    PhaseCompleted,
     RecursionLimitReached,
     SummaryUpdated,
     ThoughtCaptured,
@@ -163,6 +164,12 @@ def render_events(console: Console, events: Iterable[object],
         elif isinstance(ev, CorruptedOutputDetected):
             console.print(
                 f"[{C_WARN}]⚠ corrupted LLM output detected · {ev.agent_code} (escalating)[/]"
+            )
+
+        elif isinstance(ev, PhaseCompleted):
+            _hint = f" → {ev.next_hint}" if ev.next_hint else ""
+            console.print(
+                f"[{C_TOOL}]✓ phase:{ev.phase} · {ev.agent_code}{_hint}[/]"
             )
 
         elif isinstance(ev, DuplicateCallBlocked):

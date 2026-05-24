@@ -142,14 +142,60 @@ _SIGNAL_CONVERGENCE: dict[str, Any] = {
 }
 
 # Per-role grants for control tools.
-# - router: full set
-# - specialist: full set (may delegate further, may need clarification)
-# - planner: can clarify, cannot delegate (writes plan then returns)
+# - router: full set including planner_done phase verb
+# - specialist: full set + gather/critic/build phase verbs
 # - finalizer: only return_to_user (mechanical, no human interaction, no delegation)
+
+def _phase_verb(name: str, desc: str) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "One-paragraph summary of what was achieved in this phase.",
+                    },
+                    "artifacts": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Workspace paths produced during this phase (relative to workspace root).",
+                    },
+                    "next_hint": {
+                        "type": "string",
+                        "description": "Optional hint for the orchestrator about what should logically happen next.",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    }
+
+
+_PLANNER_DONE = _phase_verb(
+    "planner_done",
+    "Signal that the plan is up to date and you are ready to enter the GATHER phase.",
+)
+_GATHER_DONE = _phase_verb(
+    "gather_done",
+    "Signal that research collection is complete and findings are written to the workspace.",
+)
+_CRITIC_DONE = _phase_verb(
+    "critic_done",
+    "Signal that critical review is complete: biases and gaps have been identified.",
+)
+_BUILD_DONE = _phase_verb(
+    "build_done",
+    "Signal that the final document has been written to the workspace.",
+)
+
 _CONTROL_TOOLS_BY_ROLE: dict[str, list[dict[str, Any]]] = {
-    "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
-    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER],
-    "planner":    [_ASK_HUMAN, _RETURN_TO_USER],
+    "router":     [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER, _PLANNER_DONE],
+    "specialist": [_ASK_HUMAN, _DELEGATE_TO, _RETURN_TO_USER, _SIGNAL_CONVERGENCE,
+                   _GATHER_DONE, _CRITIC_DONE, _BUILD_DONE],
     "finalizer":  [_RETURN_TO_USER],
 }
 
@@ -192,21 +238,6 @@ def render_directives(paradigms: list[Paradigm]) -> str:
 
 def _render_output_contract(role: str) -> str:
     """The OUTPUT CONTRACT block adapts to the agent's role."""
-    if role == "planner":
-        return (
-            "# OUTPUT CONTRACT\n"
-            "- Reflect first in your thought channel; surface assumptions and ambiguities.\n"
-            "- If critical unknowns prevent planning: call ask_human(question, why). One call only.\n"
-            "- MANDATORY SEQUENCE — do not deviate:\n"
-            "  1. Call workspace_create_file(path='workspace/plan.md', content=<full plan markdown>) "
-            "to persist the plan file. This call must happen before anything else.\n"
-            "  2. Only after workspace_create_file succeeds: "
-            "call return_to_user(answer='workspace/plan.md written.') — nothing more.\n"
-            "- return_to_user is a handoff signal, not a content delivery. "
-            "Never put the plan content inside return_to_user. The file is the deliverable.\n"
-            "- Do not delegate to agents. Do not perform research or produce analysis.\n"
-            "- Inter-agent text: English. Human-facing output: see ## Human detected language.\n"
-        )
     if role == "finalizer":
         return (
             "# OUTPUT CONTRACT\n"
@@ -261,7 +292,7 @@ def render_system_prompt(ctx: PromptContext) -> str:
     )
     specialists = [
         ag for ag in ctx.available_agents
-        if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer", "planner")
+        if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
         and ag.code != "archivist"  # archivist is orchestrator-only, never user-callable
     ]
     agents_block = (
@@ -273,13 +304,6 @@ def render_system_prompt(ctx: PromptContext) -> str:
             f"## Delegation targets\n"
             f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
             f"Never use an agent code as a direct tool function name — it will always fail.\n"
-            f"{agents_block}\n\n"
-        )
-    elif a.role == "planner":
-        delegation_section = (
-            f"## Available agents (reference only — do not call)\n"
-            f"These are the agents the orchestrator can delegate to. "
-            f"Reference them by code in plan Steps — the orchestrator will call them.\n"
             f"{agents_block}\n\n"
         )
     else:
@@ -329,7 +353,8 @@ def tools_payload_for_agent(agent_role: str,
                             depth: int = 0) -> list[dict[str, Any]]:
     """Build the tools payload (control tools filtered by role + native tools)."""
     payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
-    if depth >= 2 and agent_role not in ("finalizer", "planner"):
+    # specialist already has _SIGNAL_CONVERGENCE in its static list; only add dynamically for router.
+    if depth >= 2 and agent_role == "router":
         payload.append(_SIGNAL_CONVERGENCE)
     for tool_name in tool_grants:
         spec = registry.get(tool_name)

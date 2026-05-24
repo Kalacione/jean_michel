@@ -220,6 +220,16 @@ def record_artifact(conn: sqlite3.Connection, request_id: str,
     )
 
 
+def record_phase_completion(conn: sqlite3.Connection, conversation_id: str,
+                            phase: str, agent_code: str, summary: str) -> None:
+    conn.execute(
+        "INSERT INTO conversation_phases "
+        "(conversation_id, phase, agent_code, summary, recorded_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (conversation_id, phase, agent_code, summary, _now()),
+    )
+
+
 # ---- Admin write helpers --------------------------------------------------
 
 def grant_tool(conn: sqlite3.Connection, agent_code: str, tool_code: str) -> None:

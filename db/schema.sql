@@ -71,7 +71,8 @@ CREATE TABLE agents (
   id             INTEGER PRIMARY KEY,
   code           TEXT UNIQUE NOT NULL,
   name           TEXT NOT NULL,
-  role           TEXT NOT NULL CHECK (role IN ('router','specialist','finalizer','planner')),
+  role           TEXT NOT NULL CHECK (role IN ('router','specialist','finalizer')),
+  -- NOTE: 'planner' role deprecated and removed by migration 044.
   mission        TEXT NOT NULL,
   thinking_mode  INTEGER NOT NULL DEFAULT 1,
   temperature    REAL NOT NULL DEFAULT 0.2,
@@ -180,6 +181,19 @@ CREATE TABLE sandbox_executions (
 );
 
 CREATE INDEX idx_sandbox_exec_request ON sandbox_executions(request_id);
+
+-- Phase completion tracking (added by migration 044)
+CREATE TABLE IF NOT EXISTS conversation_phases (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id),
+  phase           TEXT NOT NULL CHECK (phase IN ('planner','gather','critic','build')),
+  agent_code      TEXT NOT NULL,
+  summary         TEXT NOT NULL,
+  recorded_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_phases_conv
+  ON conversation_phases(conversation_id);
 
 -- =============================================================
 -- SEEDS — SECTIONS
@@ -887,7 +901,7 @@ INSERT INTO paradigms (id, category_id, code, title, content, rationale, is_glob
  '- Before acting on a request, classify it in your thought channel as one of:
   - single_fact: one tool call or direct answer (weather, time, translation, simple factual lookup). Handle immediately, no plan.
   - medium_task: 2-3 independent delegations, no chain of dependent phases, no structured synthesis document as output. Draft routing plan in thought channel only.
-  - deep_research: ALWAYS delegate to planner first. A task is deep_research if ANY of these apply:
+  - deep_research: A task is deep_research if ANY of these apply:
       (a) it involves a chain of dependent phases (e.g. gather → critique → build, or search → compare → synthesize)
       (b) the expected output is a structured workspace document (report, table, specification, comparative analysis)
       (c) it requires 3 or more distinct agents in sequence
@@ -1893,7 +1907,7 @@ INSERT OR IGNORE INTO categories (id, section_id, code, title, order_priority, a
 VALUES (35, (SELECT id FROM sections WHERE code='process'), 'planning', 'Planning', 25, 1, datetime('now'), datetime('now'));
 
 INSERT OR IGNORE INTO agents (id, code, name, role, mission, thinking_mode, temperature, active, created_at, modified_at)
-VALUES (14, 'dispatcher', 'Dispatcher', 'planner',
+VALUES (14, 'dispatcher', 'Dispatcher', 'specialist',
   'Analyse a complex request, surface unknowns and ambiguities, decompose it into a clear ordered sequence of steps, and write the resulting plan to workspace/plan.md. Return a concise summary of the plan. Do not execute the steps — plan only.',
   1, 0.3, 1, datetime('now'), datetime('now'));
 
@@ -1961,14 +1975,10 @@ SELECT id, 'workspace_create_file' FROM agents WHERE code='comparator-specialist
 INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
 SELECT id, 'workspace_str_replace' FROM agents WHERE code='comparator-specialist';
 
--- MIGRATION 025 — dispatcher role: specialist → planner
--- =======================================================
--- A planner receives [ask_human, return_to_user] only — no delegate_to, no Delegation targets.
--- Prevents the dispatcher from executing research steps instead of just planning them.
-
-UPDATE agents
-SET role = 'planner', modified_at = datetime('now')
-WHERE code = 'dispatcher';
+-- MIGRATION 025 — dispatcher role update
+-- =========================================
+-- Originally set role='planner'; removed by migration 044. Now a no-op.
+-- (The 'planner' role was removed from the CHECK constraint in migration 044.)
 
 -- MIGRATION 026 — rename agent dispatcher → planner
 -- =======================================================
@@ -2795,3 +2805,53 @@ SET content = '- Your system prompt contains a live ## Budget section, computed 
   Do not ignore a budget signal without stating in your thought why it is acceptable.',
     modified_at = datetime('now')
 WHERE code = 'metacog_live_monitor';
+
+-- MIGRATION 044 — remove `planner` agent + phase control verbs
+-- ====================================================================
+DELETE FROM agent_paradigms     WHERE agent_id = (SELECT id FROM agents WHERE code='planner');
+DELETE FROM agent_tools         WHERE agent_id = (SELECT id FROM agents WHERE code='planner');
+DELETE FROM agent_workspace_grants WHERE agent_id = (SELECT id FROM agents WHERE code='planner');
+
+UPDATE agents SET active = 0, modified_at = datetime('now') WHERE code = 'planner';
+
+UPDATE paradigms SET active = 0, modified_at = datetime('now')
+WHERE code IN ('planner_plan_format', 'plan_not_execute');
+
+UPDATE paradigms
+SET content = '- Before acting on a request, classify it in your thought channel as one of:
+  - single_fact: one tool call or direct answer (weather, time, translation, simple factual lookup). Handle immediately, no plan.
+  - medium_task: 2-3 independent delegations, no chain of dependent phases, no structured synthesis document as output. Draft routing plan in thought channel only.
+  - deep_research: A task is deep_research if ANY of these apply:
+      (a) it involves a chain of dependent phases (e.g. gather → critique → build, or search → compare → synthesize)
+      (b) the expected output is a structured workspace document (report, table, specification, comparative analysis)
+      (c) it requires 3 or more distinct agents in sequence
+- The number of tool calls is NOT the right criterion. "Web search + document creation" is two dependent phases: deep_research.
+- When in doubt between medium_task and deep_research, ask: "does step 2 depend on step 1''s output?" If yes → deep_research.',
+    modified_at = datetime('now')
+WHERE code = 'assess_complexity_first';
+
+UPDATE paradigms
+SET content = '- For medium_task requests, draft a brief routing plan in your thought channel before acting: which agents, in what order, what each delivers.
+- For deep_research requests, call plan_update FIRST — no exceptions. Do not start any research or delegation before plan.md exists.
+- plan_update will write plan.md. Follow it step by step.
+- A plan you cannot articulate is a plan you do not have. If you cannot describe what each delegation adds, call plan_update instead of guessing.
+- After plan_update returns: call workspace_view(''plan.md'') to read the current plan. Find the first ⬜ pending step in the Status table and execute it. Do NOT reconstruct the plan from memory — always read plan.md.
+- After each delegation completes:
+  Read the return_to_user answer. If the agent reported gaps (e.g. ''Missing: Geography''),
+  decide before marking ✅:
+    - Gap is minor or acceptable → mark ✅ done and continue.
+    - Gap requires a targeted follow-up → create a new focused sub-delegation first
+      (same agent, narrower mission: e.g. ''find Geography sources only'').
+    - Gap invalidates the plan → call plan_update to update plan.md before continuing.
+  Then call workspace_str_replace on plan.md to mark the step ✅ done.',
+    modified_at = datetime('now')
+WHERE code = 'plan_before_complex_action';
+
+UPDATE paradigms
+SET content = '- Applies to deep_research tasks only. For single_fact and medium_task, act directly.
+- After receiving a specialist result, check: does this change what needs to be done? If a step is proven impossible, a key assumption is invalidated, new necessary steps emerge, or a human clarification changes the scope — read workspace/plan.md via workspace_view.
+- If the course has changed, call plan_update with: (1) the full current content of workspace/plan.md, (2) the new findings in plain text, (3) explicit instruction: "Update the plan to reflect these findings."
+- Only trigger a plan update when the course genuinely changes. A result that confirms the existing plan needs no update — proceed to the next step.
+- A plan update costs a tool call. Only pay that cost when it buys something real.',
+    modified_at = datetime('now')
+WHERE code = 'orchestration_plan_maintenance';

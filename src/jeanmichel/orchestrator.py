@@ -147,7 +147,24 @@ class CorruptedOutputDetected:
     agent_code: str
 
 
-# ---- Helpers --------------------------------------------------------------
+@dataclass
+class PhaseCompleted:
+    agent_code: str
+    phase: str
+    summary: str
+    artifacts: list[str]
+    next_hint: str
+
+
+# Phase verbs: maps verb name → set of agent codes allowed to call it.
+_PHASE_VERB_OWNER: dict[str, set[str]] = {
+    "planner_done": {"jean-michel"},
+    "gather_done":  {"web-search-specialist", "wikipedia-specialist"},
+    "critic_done":  {"critical-thinker"},
+    "build_done":   {"document-builder"},
+}
+
+_PHASE_VERBS = frozenset(_PHASE_VERB_OWNER)
 
 def _detect_language(text: str) -> str:
     try:
@@ -522,6 +539,41 @@ class Orchestrator:
                         with db.connect() as conn:
                             db.update_request_status(conn, req_id, "completed", completed=True)
                         return synthesis, artifact, True
+
+                    if call.name in _PHASE_VERBS:
+                        if agent_code not in _PHASE_VERB_OWNER[call.name]:
+                            tool_responses.append(json.dumps({
+                                "tool": call.name,
+                                "error": (
+                                    f"'{call.name}' is not available to agent '{agent_code}'. "
+                                    f"It belongs to: {sorted(_PHASE_VERB_OWNER[call.name])}."
+                                ),
+                            }))
+                            continue
+                        summary = (call.arguments.get("summary") or "").strip()
+                        artifacts = list(call.arguments.get("artifacts") or [])
+                        next_hint = (call.arguments.get("next_hint") or "").strip()
+                        phase = call.name.replace("_done", "")
+                        payload = json.dumps({
+                            "phase": phase,
+                            "summary": summary,
+                            "artifacts": artifacts,
+                            "next_hint": next_hint,
+                        })
+                        artifact = self._write_artifact(req_id, agent_code, "response", payload)
+                        with db.connect() as conn:
+                            db.update_request_status(conn, req_id, "completed", completed=True)
+                            db.record_phase_completion(
+                                conn, self.conv_id, phase, agent_code, summary,
+                            )
+                        yield PhaseCompleted(
+                            agent_code=agent_code,
+                            phase=phase,
+                            summary=summary,
+                            artifacts=artifacts,
+                            next_hint=next_hint,
+                        )
+                        return payload, artifact, False
 
                     if call.name == "ask_human":
                         if seen_ask:
