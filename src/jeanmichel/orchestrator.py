@@ -282,7 +282,12 @@ def _extract_files_from_report(markdown: str) -> list[str]:
     in_section = False
     for line in markdown.splitlines():
         stripped = line.strip()
-        if stripped.startswith("### Files produced") or stripped.startswith("### Files written to workspace"):
+        if (
+            stripped.startswith("### Files produced")
+            or stripped.startswith("### Files written to workspace")
+            or stripped.startswith("### Fichiers produits")
+            or stripped.startswith("### Fichiers écrits dans le workspace")
+        ):
             in_section = True
             continue
         if in_section:
@@ -290,20 +295,24 @@ def _extract_files_from_report(markdown: str) -> list[str]:
                 break
             if stripped.startswith("- "):
                 candidate = stripped[2:].strip()
-                if candidate and candidate.lower() not in {"none.", "none", "—"}:
+                if candidate and candidate.lower() not in {"none.", "none", "—", "aucun.", "aucun"}:
                     files.append(candidate)
     return files
 
 
 def _build_partial_report(conv_folder, req_id: str, agent_code: str,
                           status: str, error: str,
-                          recent_tool_calls: list[dict]) -> tuple[str, str]:
+                          recent_tool_calls: list[dict],
+                          lang: str = "en") -> tuple[str, str]:
     """Build a partial findings report when a child crashes (loop/budget/wall-clock).
 
     Instead of returning a bare JSON error to the parent, surface:
       - the workspace files the child managed to write
       - the last few tool calls attempted
     so the parent can salvage work and decide where to redirect.
+
+    Localised in French when ``lang == "fr"`` so the human reading the
+    aborted report sees it in the language of their request.
 
     Returns (markdown_for_parent, json_payload_for_artifact).
     """
@@ -341,42 +350,84 @@ def _build_partial_report(conv_folder, req_id: str, agent_code: str,
         "recent_tool_calls": tool_snippets,
     }
 
+    fr = lang == "fr"
+    if fr:
+        T = {
+            "title": f"## Rapport interrompu de {agent_code}",
+            "status": "**Statut :**",
+            "reason": "**Raison :**",
+            "files_header": "### Fichiers écrits dans le workspace avant l'interruption",
+            "files_hint": (
+                "Ces fichiers contiennent ce que l'agent a réussi à persister. "
+                "Lis-les via workspace_view ou passe-les en support_files à une "
+                "autre délégation pour continuer à partir d'ici — ne redémarre "
+                "PAS de zéro."
+            ),
+            "files_none": "Aucun. L'agent n'a rien persisté dans le workspace.",
+            "tools_header": "### Derniers appels d'outils tentés",
+            "tools_none": "Aucun.",
+            "next_header": "### Prochaine action recommandée",
+            "next_body": (
+                "- Si files_produced n'est pas vide : synthétise à partir de "
+                "ces fichiers ou délègue un follow-up plus ciblé avec ces "
+                "fichiers en support_files.\n"
+                "- Si files_produced est vide : l'angle précédent n'a pas "
+                "fonctionné ; change d'angle ou délègue à un autre agent.\n"
+                "- Ne re-délègue PAS le même briefing — il échouera pareil."
+            ),
+        }
+    else:
+        T = {
+            "title": f"## Aborted report from {agent_code}",
+            "status": "**Status:**",
+            "reason": "**Reason:**",
+            "files_header": "### Files written to workspace before abort",
+            "files_hint": (
+                "These files contain whatever the agent managed to persist. "
+                "Read them via workspace_view or pass them as support_files to "
+                "another delegation to continue from this point — do NOT "
+                "restart from scratch."
+            ),
+            "files_none": "None. The agent did not persist anything to workspace.",
+            "tools_header": "### Last tool calls attempted",
+            "tools_none": "None.",
+            "next_header": "### Recommended next action",
+            "next_body": (
+                "- If files_produced has content: synthesize from those files "
+                "or delegate a narrower follow-up with these files as "
+                "support_files.\n"
+                "- If files_produced is empty: the previous angle did not "
+                "work; either change angle or delegate to a different agent.\n"
+                "- Do NOT re-delegate the same briefing — it will fail the "
+                "same way."
+            ),
+        }
+
     md_lines = [
-        f"## Aborted report from {agent_code}",
+        T["title"],
         "",
-        f"**Status:** {status}",
-        f"**Reason:** {error}",
+        f"{T['status']} {status}",
+        f"{T['reason']} {error}",
         "",
-        "### Files written to workspace before abort",
+        T["files_header"],
     ]
     if workspace_files:
         md_lines += [f"- {f}" for f in workspace_files]
         md_lines.append("")
-        md_lines.append(
-            "These files contain whatever the agent managed to persist. "
-            "Read them via workspace_view or pass them as support_files to "
-            "another delegation to continue from this point — do NOT restart "
-            "from scratch."
-        )
+        md_lines.append(T["files_hint"])
     else:
-        md_lines.append("None. The agent did not persist anything to workspace.")
+        md_lines.append(T["files_none"])
     md_lines.append("")
 
-    md_lines.append(f"### Last tool calls attempted ({len(tool_snippets)})")
+    md_lines.append(f"{T['tools_header']} ({len(tool_snippets)})")
     if tool_snippets:
         md_lines += [f"- {s}" for s in tool_snippets]
     else:
-        md_lines.append("None.")
+        md_lines.append(T["tools_none"])
     md_lines.append("")
 
-    md_lines.append("### Recommended next action")
-    md_lines.append(
-        "- If files_produced has content: synthesize from those files or "
-        "delegate a narrower follow-up with these files as support_files.\n"
-        "- If files_produced is empty: the previous angle did not work; "
-        "either change angle or delegate to a different agent.\n"
-        "- Do NOT re-delegate the same briefing — it will fail the same way."
-    )
+    md_lines.append(T["next_header"])
+    md_lines.append(T["next_body"])
 
     return "\n".join(md_lines), json.dumps(payload, ensure_ascii=False)
 
@@ -665,6 +716,7 @@ class Orchestrator:
                         self.conv_folder, req_id, agent_code,
                         status="llm_output_corrupted", error=err_msg,
                         recent_tool_calls=_recent_tool_calls,
+                        lang=self.user_language,
                     )
                     artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
                     with db.connect() as conn:
@@ -968,12 +1020,16 @@ class Orchestrator:
                                     if len(_plan_summary) > 120:
                                         _plan_summary = _plan_summary[:117] + "…"
                                 _step_status = "done"
-                            elif child_answer.startswith("## Aborted report"):
+                            elif child_answer.startswith("## Aborted report") or child_answer.startswith("## Rapport interrompu"):
                                 # Crash path: surface the abort reason in plan.md.
                                 _status_line = ""
                                 for _line in child_answer.split("\n"):
-                                    if _line.startswith("**Status:**"):
-                                        _status_line = _line.replace("**Status:**", "").strip()
+                                    if _line.startswith("**Status:**") or _line.startswith("**Statut :**"):
+                                        _status_line = (
+                                            _line.replace("**Status:**", "")
+                                                 .replace("**Statut :**", "")
+                                                 .strip()
+                                        )
                                         break
                                 _plan_summary = f"aborted: {_status_line}" if _status_line else "aborted"
                                 # If the child managed to persist files, the work
@@ -1051,6 +1107,7 @@ class Orchestrator:
                                 self.conv_folder, req_id, agent_code,
                                 status="loop_detected", error=err_msg,
                                 recent_tool_calls=_recent_tool_calls,
+                                lang=self.user_language,
                             )
                             artifact = self._write_artifact(req_id, agent_code, "response", payload)
                             with db.connect() as conn:
@@ -1118,6 +1175,7 @@ class Orchestrator:
                                 self.conv_folder, req_id, agent_code,
                                 status="critical_fs_errors", error=fs_err_msg,
                                 recent_tool_calls=_recent_tool_calls,
+                                lang=self.user_language,
                             )
                             artifact = self._write_artifact(req_id, agent_code, "response", fs_payload)
                             with db.connect() as conn:
@@ -1172,6 +1230,7 @@ class Orchestrator:
                 self.conv_folder, req_id, agent_code,
                 status=f"{_timeout_scope}_wall_clock_exceeded", error=error_msg,
                 recent_tool_calls=_recent_tool_calls,
+                lang=self.user_language,
             )
             artifact = self._write_artifact(req_id, agent_code, "response", payload)
             with db.connect() as conn:
@@ -1196,6 +1255,7 @@ class Orchestrator:
             self.conv_folder, req_id, agent_code,
             status="step_budget_exhausted", error=budget_error,
             recent_tool_calls=_recent_tool_calls,
+            lang=self.user_language,
         )
         artifact = self._write_artifact(req_id, agent_code, "response", error_payload)
         with db.connect() as conn:

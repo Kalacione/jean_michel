@@ -159,7 +159,8 @@ CREATE TABLE artifacts (
   kind           TEXT NOT NULL
                  CHECK (kind IN ('prompt','thought','briefing','tool_call',
                                  'tool_response','ask_human','human_answer',
-                                 'response','summary','report')),
+                                 'response','summary','report',
+                                 'duplicate_blocked')),
   created_at     TEXT NOT NULL
 );
 

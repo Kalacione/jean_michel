@@ -82,26 +82,25 @@ class TestPlanWriter:
         assert "🔄" in content
 
     def test_render_truncates_long_briefing(self, tmp_path):
-        long_briefing = "x" * 200
+        """Briefing is truncated in the rendered plan to keep it readable."""
+        long_briefing = "x" * 500
         steps = [{"id": "S1", "agent": "web-search-specialist",
                    "briefing": long_briefing, "status": "done", "summary": ""}]
         plan_writer.write(tmp_path, steps)
         content = plan_writer.plan_path(tmp_path).read_text()
-        # briefing truncated to 80 chars in the table cell
-        assert "x" * 80 in content
-        assert "x" * 81 not in content
+        # New hierarchical format truncates briefing at ~240 chars + ellipsis.
+        assert "x" * 200 in content
+        assert "x" * 500 not in content
+        assert "…" in content
 
-    def test_pipes_in_briefing_escaped(self, tmp_path):
-        """Pipe chars in briefing are replaced to avoid breaking markdown table."""
+    def test_pipes_in_briefing_preserved(self, tmp_path):
+        """Pipes no longer break anything: new format is hierarchical, not table."""
         steps = [{"id": "S1", "agent": "web-search-specialist",
                    "briefing": "a | b | c", "status": "done", "summary": "x | y"}]
         plan_writer.write(tmp_path, steps)
         content = plan_writer.plan_path(tmp_path).read_text()
-        # Markdown table pipes should be ∣ (U+2223), not |
-        lines = [l for l in content.splitlines() if "S1" in l]
-        assert len(lines) == 1
-        # Count raw pipes: 6 separators for a 5-column table (| c1 | c2 | c3 | c4 | c5 |)
-        assert lines[0].count("|") == 6   # exactly 6 column separators
+        assert "a | b | c" in content
+        assert "x | y" in content
 
     def test_write_overwrites_on_second_call(self, tmp_path):
         """Second write() replaces the previous plan.md content."""
