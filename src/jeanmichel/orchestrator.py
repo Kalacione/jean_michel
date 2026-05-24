@@ -39,6 +39,7 @@ from .persistence import (
 )
 from .prompts import (
     PromptContext,
+    render_plan_recap,
     render_system_prompt,
     tools_payload_for_agent,
 )
@@ -1210,8 +1211,15 @@ class Orchestrator:
                     )
 
                 # Feed all tool responses back to the model on the next iteration.
+                # Prepend a recap of the agent's current step (its own tool
+                # calls + summarised results) so it sees what it has already
+                # done even though the system prompt is rendered only once.
+                _recap = render_plan_recap(
+                    str(self.conv_folder), current_step_id=current_step_id,
+                )
                 running_user_text = (
-                    "[ORCHESTRATOR] Tool results below (one JSON object per "
+                    _recap
+                    + "[ORCHESTRATOR] Tool results below (one JSON object per "
                     "tool call, in the order of your calls). Resume execution "
                     "of your current task.\n\n"
                     + "\n".join(tool_responses)

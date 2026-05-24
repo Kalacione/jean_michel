@@ -419,6 +419,54 @@ def _render_plan_block(role: str, conversation_folder: str) -> str:
     )
 
 
+def render_plan_recap(conversation_folder: str, current_step_id: str | None = None) -> str:
+    """Render a compact plan recap to inject into the user message between
+    iterations of a single agent's request.
+
+    Unlike ``_render_plan_block`` (used in the system prompt, rendered ONCE
+    per request), this is meant to be re-injected at every iteration so the
+    agent sees its own most recent tool calls and avoids re-searching.
+
+    When ``current_step_id`` is provided, only that step's section is shown
+    (the agent's own work-in-progress). Otherwise we show the tail of the
+    full plan. Returns "" when there is nothing useful to show.
+    """
+    try:
+        p = plan_writer.plan_path(Path(conversation_folder))
+        if not p.exists():
+            return ""
+        content = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    if not content:
+        return ""
+
+    if current_step_id:
+        # Extract only the section for the current step.
+        marker = f"## {current_step_id} "
+        idx = content.find(marker)
+        if idx >= 0:
+            section = content[idx:]
+            # Stop at the next "## " (sibling step) — but keep nested headers (### …).
+            for i in range(1, len(section)):
+                if section[i] == "\n" and section[i + 1:i + 4] == "## ":
+                    section = section[:i]
+                    break
+            content = section
+
+    if len(content) > _PLAN_INJECTION_MAX_CHARS:
+        content = "(recap truncated — showing tail)\n…\n" + content[-_PLAN_INJECTION_MAX_CHARS:]
+
+    return (
+        "## Recap of your progress in the plan\n"
+        "Below is what the orchestrator has recorded for you so far this "
+        "request (your own tool calls + their summarised results). Review "
+        "it before issuing the next call — do NOT repeat searches whose "
+        "results are already listed here.\n"
+        f"```markdown\n{content}\n```\n\n"
+    )
+
+
 def render_system_prompt(ctx: PromptContext) -> str:
     """Render the consolidated system block."""
     a = ctx.agent
