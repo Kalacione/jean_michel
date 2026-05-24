@@ -255,20 +255,29 @@ def render_system_prompt(ctx: PromptContext) -> str:
     )
     specialists = [
         ag for ag in ctx.available_agents
-        if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
+        if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer", "planner")
         and ag.code != "archivist"  # archivist is orchestrator-only, never user-callable
     ]
     agents_block = (
         "\n".join(f"- {ag.code}: {ag.mission}" for ag in specialists)
         if specialists else "(none)"
     )
-    delegation_section = (
-        f"## Delegation targets\n"
-        f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
-        f"Never use an agent code as a direct tool function name — it will always fail.\n"
-        f"{agents_block}\n\n"
-        if has_delegation else ""
-    )
+    if has_delegation:
+        delegation_section = (
+            f"## Delegation targets\n"
+            f"These are AGENTS, not tools. To use one, call delegate_to(agent_code='...'). "
+            f"Never use an agent code as a direct tool function name — it will always fail.\n"
+            f"{agents_block}\n\n"
+        )
+    elif a.role == "planner":
+        delegation_section = (
+            f"## Available agents (reference only — do not call)\n"
+            f"These are the agents the orchestrator can delegate to. "
+            f"Reference them by code in plan Steps — the orchestrator will call them.\n"
+            f"{agents_block}\n\n"
+        )
+    else:
+        delegation_section = ""
 
     return (
         f"# IDENTITY\n"
