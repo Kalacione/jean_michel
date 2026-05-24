@@ -33,8 +33,12 @@ from .orchestrator import (
     OrchestrationFailed,
     Orchestrator,
     PhaseCompleted,
+    PlanInitLoopDetected,
     RecursionLimitReached,
+    ReportFindingsReceived,
+    SignalConvergenceRedirected,
     SummaryUpdated,
+    SynthesisReminderInjected,
     ThoughtCaptured,
     ToolCallEmitted,
     ToolResponseRecorded,
@@ -180,6 +184,32 @@ def render_events(console: Console, events: Iterable[object],
         elif isinstance(ev, ForcedConvergence):
             console.print(
                 f"[{C_WARN}]■ forced convergence ({ev.agent_code}) — {ev.reason}[/]"
+            )
+
+        elif isinstance(ev, ReportFindingsReceived):
+            _files = f" · {len(ev.files_produced)} file(s)" if ev.files_produced else ""
+            _qs = f" · {ev.sub_questions_count} sub-q(s)" if ev.sub_questions_count else ""
+            console.print(
+                f"  [{C_TOOL}]✓ report_findings · {ev.agent_code} "
+                f"[confidence:{ev.confidence}]{_files}{_qs}[/]"
+            )
+
+        elif isinstance(ev, SignalConvergenceRedirected):
+            console.print(
+                f"  [{C_WARN}]⚠ signal_convergence deprecated · {ev.agent_code} "
+                f"→ use report_findings[/]"
+            )
+
+        elif isinstance(ev, SynthesisReminderInjected):
+            console.print(
+                f"  [{C_WARN}]⚠ synthesis reminder · {ev.agent_code} "
+                f"← {ev.child_agent_code}[/]"
+            )
+
+        elif isinstance(ev, PlanInitLoopDetected):
+            console.print(
+                f"  [{C_WARN}]⚠ plan init loop · {ev.agent_code} "
+                f"(already_exists×{ev.count})[/]"
             )
 
         elif isinstance(ev, WallClockExceeded):
