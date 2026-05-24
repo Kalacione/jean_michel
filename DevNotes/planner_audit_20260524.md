@@ -198,21 +198,28 @@ Pas de code. Migrations SQL + tests comportementaux sur conversation mock.
 
 ---
 
-### Sprint C — Investigation tool_response formatting (estimé : 1 session, peut rester)
+### Sprint C — Investigation tool_response formatting ✅ RÉSOLU (non-issue)
 
-| # | Problème | Fix | Fichier |
-|---|----------|-----|--------|
-| C1 | workspace_view retourne "X bytes" au lieu du contenu dans l'historique | Investiguer orchestrator/artifact formatting | `orchestrator.py` |
+**Résultat de l'investigation :** `orchestrator.py` lignes 551-558 :
+```python
+if call.name in ("workspace_view", "conv_read_file"):
+    # stub artifact to avoid duplicating content already on disk.
+    artifact_body = f"**{call.name}** → `{_path}` ({_bytes} bytes){_trunc}"
+...
+tool_responses.append(result)  # LLM reçoit le JSON complet
+```
 
-Peut rester si le contenu est bien disponible au moment de la décision LLM (le résumé "1645 bytes" est peut-être juste le display dans les artifacts, pas ce que le LLM voit réellement).
+L'artifact `**workspace_view** → \`plan.md\` (1645 bytes)` est un **stub intentionnel** pour éviter de stocker le contenu du fichier en double dans les artifacts de conversation. Le LLM reçoit bien le JSON complet (avec `content`) via `tool_responses`. Aucune troncation côté LLM.
+
+**Conclusion** : pas de correctif nécessaire.
 
 ---
 
 ## Décision recommandée
 
-Lancer **Sprint A immédiatement** — ce sont trois corrections de paradigmes, sans risque, sans code.  
-Sprint B ensuite — format plan plus riche + comportement jean-michel.  
-Sprint C en dernier ou à la demande.
+~~Lancer **Sprint A immédiatement**~~ ✅ Sprint A appliqué (migrations 030-032).  
+~~Sprint B ensuite~~ ✅ Sprint B appliqué (migration 033).  
+~~Sprint C en dernier ou à la demande~~ ✅ Sprint C investigué — non-issue, artifact stub intentionnel.
 
 ---
 
