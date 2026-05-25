@@ -43,6 +43,14 @@ _STATUS_ICON = {
     "partial": "⚠️",
 }
 
+_TODO_ICON = {
+    "completed": "✅",
+    "in_progress": "🔄",
+    "pending": "⏸",
+    "skipped": "⏭",
+    "blocked": "🚫",
+}
+
 _MAX_ACTIONS_PER_STEP = 40
 _MAX_SUMMARY_CHARS = 160
 _MAX_BRIEFING_CHARS = 240
@@ -171,12 +179,52 @@ def _render_step(step: dict) -> str:
     return "\n".join(out)
 
 
+def _render_todo_block(conv_folder: Path) -> str | None:
+    """Render a Markdown TODO summary block from todo.json, or None if absent."""
+    todo_path = conv_folder / "todo.json"
+    if not todo_path.exists():
+        return None
+    try:
+        data = json.loads(todo_path.read_text(encoding="utf-8"))
+        todos = data.get("todos", []) if isinstance(data, dict) else []
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not todos:
+        return None
+
+    n_total = len(todos)
+    n_done = sum(1 for t in todos if t.get("status") in ("completed", "skipped"))
+    lines = [f"## TODOs ({n_done}/{n_total})"]
+    for item in todos:
+        status = item.get("status", "pending")
+        icon = _TODO_ICON.get(status, "⏸")
+        checked = "x" if status in ("completed", "skipped") else " "
+        item_id = item.get("id", "?")
+        title = item.get("title", "")
+        extras = []
+        if status not in ("completed", "skipped") and item.get("depends_on"):
+            deps = ", ".join(item["depends_on"])
+            extras.append(f"depends_on: {deps}")
+        if status == "in_progress":
+            extras.append("in_progress")
+        suffix = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- [{checked}] {icon} {item_id}  {title}{suffix}")
+    return "\n".join(lines)
+
+
 def write(conv_folder: Path, steps: list[dict]) -> None:
     """Serialise the full plan to ``plan.md``."""
     path = plan_path(conv_folder)
     path.parent.mkdir(parents=True, exist_ok=True)
+    todo_block = _render_todo_block(conv_folder)
     if not steps:
-        path.write_text("# Plan\n\n_(no delegated steps yet)_\n", encoding="utf-8")
+        if todo_block:
+            path.write_text(f"# Plan\n\n{todo_block}\n\n_(no delegated steps yet)_\n", encoding="utf-8")
+        else:
+            path.write_text("# Plan\n\n_(no delegated steps yet)_\n", encoding="utf-8")
         return
     body = "\n\n".join(_render_step(s) for s in steps)
-    path.write_text(f"# Plan\n\n{body}\n", encoding="utf-8")
+    if todo_block:
+        path.write_text(f"# Plan\n\n{todo_block}\n\n{body}\n", encoding="utf-8")
+    else:
+        path.write_text(f"# Plan\n\n{body}\n", encoding="utf-8")
