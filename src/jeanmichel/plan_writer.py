@@ -25,6 +25,7 @@ _LOGGED_TOOLS: frozenset[str] = frozenset({
     "wikipedia_summary",
     "weather",
     "workspace_create_file",
+    "workspace_append",
     "workspace_str_replace",
     "workspace_list",
     "workspace_view",

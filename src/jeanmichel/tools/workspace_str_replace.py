@@ -45,9 +45,10 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
         tmp = target.with_suffix(target.suffix + ".tmp")
         tmp.write_text(updated, encoding="utf-8")
         tmp.replace(target)
+        canonical = target.relative_to(ws_root).as_posix()
         return tool_ok(
-            f"edited {relative_path} ({len(updated.encode('utf-8'))} bytes)",
-            path=relative_path,
+            f"edited {canonical} ({len(updated.encode('utf-8'))} bytes)",
+            path=canonical,
             occurrences_replaced=1,
             bytes_after=len(updated.encode("utf-8")),
         )
