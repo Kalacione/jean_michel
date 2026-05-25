@@ -822,7 +822,10 @@ class Orchestrator:
                 effective_tools = tools_payload
                 if (
                     agent.role == "router"
-                    and (self.conv_folder / "plan.md").exists()
+                    and (
+                        (self.conv_folder / "plan.md").exists()
+                        or _current_task_class == "deep_research"
+                    )
                 ):
                     effective_tools = [
                         t for t in tools_payload
