@@ -145,7 +145,7 @@ class TestWorkspaceAppend:
         spec = append_spec(tmp_conv, has_write_grant=True)
         result = json.loads(spec.handler("plan.md", "more"))
         assert "error" in result
-        assert result.get("action_required") == "plan_update"
+        assert result["error_code"] == "reserved_path"
 
     def test_append_quota_exceeded(self, tmp_conv, monkeypatch):
         import jeanmichel.tools._workspace as ws_mod

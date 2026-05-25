@@ -26,16 +26,18 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             msg = str(e)
             code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
             return tool_error(code, msg)
-        # plan.md is owned exclusively by plan_update
+        # plan.md is owned exclusively by the orchestrator (see plan_writer.py).
+        # It is rewritten automatically when delegate_to fires and when a child
+        # converges. Agents must not write to it directly.
         if target == safe_resolve(ws_root, "plan.md"):
             return tool_error(
                 "reserved_path",
                 (
-                    "plan.md is managed by the plan_update tool. "
-                    "Use plan_update(action='init', ...) to create it, "
-                    "plan_update(action='mark', ...) to update steps."
+                    "plan.md is managed automatically by the orchestrator "
+                    "as a side-effect of delegate_to. Agents cannot write to it directly. "
+                    "To organise your own task list, call manage_todo_list or write to "
+                    "another workspace file."
                 ),
-                action_required="plan_update",
             )
         if target.exists():
             try:

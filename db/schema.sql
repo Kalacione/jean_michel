@@ -3196,7 +3196,7 @@ WHERE a.code IN (
 );
 
 -- =============================================================
--- MIGRATION 058 — coherence audit fixes (2026-05-25)
+-- MIGRATION 059 — coherence audit fixes (2026-05-25)
 -- =============================================================
 -- 1. Unbind archivist from document_workspace_output (archivist has no tools).
 DELETE FROM agent_paradigms
