@@ -64,6 +64,15 @@ _ROUTER_DEEP_RESEARCH_FORBIDDEN_TOOLS: frozenset[str] = frozenset({
 # In vocal mode the interaction is conversational; gates would add friction.
 _PLANNING_MODES: frozenset[str] = frozenset({"analyse", "chat"})
 
+# Tool names that count toward the per-request search budget.
+_SEARCH_TOOL_NAMES: frozenset[str] = frozenset({
+    "web_search",
+    "wikipedia_search",
+    "wikipedia_fetch",
+    "wikipedia_summary",
+    "wikipedia_get_page",
+})
+
 
 def _auto_update_todos(
     conv_folder: Path, agent_code: str, from_status: str, to_status: str
@@ -178,6 +187,17 @@ class WallClockExceeded:
     scope: str         # "llm_call" | "request" | "turn"
     agent_code: str
     elapsed_seconds: float
+
+
+@dataclass
+class SearchBudgetReached:
+    """Emitted when a specialist hits the search-call hard cap.
+
+    The agent is then restricted to its conclusion tool only and asked
+    to synthesize what it already has without making further searches.
+    """
+    agent_code: str
+    search_count: int
 
 
 @dataclass
@@ -781,6 +801,8 @@ class Orchestrator:
         _timeout_scope: str | None = None
         _timeout_elapsed: float = 0.0
         _soft_deadline_triggered = False
+        _search_budget_gate_triggered = False
+        _search_call_count = 0
         # Conclusion tool the agent is allowed to keep once the soft deadline
         # fires. None for unknown roles (no restriction applied).
         if agent.role == "specialist":
@@ -840,6 +862,33 @@ class Orchestrator:
                             agent_code=agent_code,
                             elapsed_seconds=_soft_el,
                         )
+
+                # Search budget gate: force conclusion when specialist hits the
+                # hard cap on search-tool calls. Prevents research agents from
+                # "aspirating the internet" when they keep issuing new queries
+                # instead of synthesizing. Fires once per request, like the
+                # soft deadline, and only when a conclusion tool is available.
+                if (
+                    not _search_budget_gate_triggered
+                    and _conclusion_tool is not None
+                    and _search_call_count >= config.MAX_SEARCH_CALLS_PER_REQUEST
+                ):
+                    _search_budget_gate_triggered = True
+                    tools_payload = [
+                        t for t in tools_payload
+                        if t.get("function", {}).get("name") == _conclusion_tool
+                    ]
+                    running_user_text = (
+                        f"[ORCHESTRATOR] Search budget reached: {_search_call_count} search "
+                        f"calls made (hard limit: {config.MAX_SEARCH_CALLS_PER_REQUEST}). "
+                        "No further searches are allowed. "
+                        "Synthesize what you already have into a workspace file "
+                        f"and call {_conclusion_tool} immediately."
+                    )
+                    yield SearchBudgetReached(
+                        agent_code=agent_code,
+                        search_count=_search_call_count,
+                    )
 
                 # Deep-research guard for the router. Once any delegation has
                 # happened in this conversation (signalled by plan.md existing),
@@ -1158,8 +1207,11 @@ class Orchestrator:
                             continue
                         briefing = call.arguments.get("briefing", "")
                         sup_files = call.arguments.get("support_files") or []
-                        missing = [f for f in sup_files
-                                   if not (self.conv_folder / f).exists()]
+                        missing = [
+                            f for f in sup_files
+                            if not (self.conv_folder / f).exists()
+                            and not (self.conv_folder / "workspace" / f).exists()
+                        ]
                         if missing:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
@@ -1407,6 +1459,8 @@ class Orchestrator:
                         continue
                     _seen_calls.add(fp)
                     _consecutive_duplicates = 0
+                    if call.name in _SEARCH_TOOL_NAMES:
+                        _search_call_count += 1
                     try:
                         result = spec.handler(**call.arguments)
                     except TypeError as e:

@@ -46,6 +46,12 @@ def _int_env(name: str, default: int) -> int:
 # internet" on a single user request.
 MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)
 
+# Hard cap on distinct search-tool calls within a single specialist request.
+# Counts web_search, wikipedia_search, wikipedia_fetch, wikipedia_get_page.
+# When reached the agent is restricted to its conclusion tool (report_findings)
+# so it must synthesize what it already has instead of keep searching.
+MAX_SEARCH_CALLS_PER_REQUEST = _int_env("JEANMICHEL_MAX_SEARCH_CALLS", 10)
+
 # Wall-clock timeouts (configurable via env vars).
 #
 # Three nested scopes, checked at every iteration of the orchestrator loop:
