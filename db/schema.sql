@@ -3093,3 +3093,27 @@ UPDATE paradigms SET
 - Never paste raw JSON, full article excerpts, or long passages into report_findings.summary — those belong in the workspace file.',
   modified_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE code = 'research_return_format';
+
+-- migrate_055 + 056: source admission criteria (anti-hallucination for listing tasks)
+-- 056 generalized 055 to remove domain-specific examples and brand blacklists.
+INSERT OR IGNORE INTO paradigms (id, category_id, code, title, content, rationale, is_global, order_priority, active, created_at, modified_at) VALUES (
+  122,
+  16,
+  'source_admission_criteria',
+  'Source admission criteria for listing tasks',
+  '- When the briefing asks for a list of items (sources, tools, papers, products…), each entry must be a SPECIFIC, NAMED instance that the user could identify and use directly. Do not use category labels as entries unless the briefing explicitly asks for categories.
+- Each listed entry must be grounded in a tool_response from THIS research session. If you cannot point to the search result or page where the entry was surfaced, do not list it. Pre-existing knowledge about a name is not evidence that the name corresponds to what you claim about it.
+- The description column for each entry must add information that distinguishes THIS entry from the others (its angle, format, access mode, license, scope). Generic descriptions that merely paraphrase the entry name are a red flag — they signal you cannot actually characterize what makes the entry relevant.
+- When unsure whether an entry truly matches the brief''s constraints (e.g. public access, free tier, documented API, current availability), EXCLUDE it. A short, accurate list always beats a longer list padded with entries you cannot defend.
+- Brand recognition is not verification. Many well-known brands no longer offer what they once did, or offer it only under commercial contract. Always check the tool_response evidence, not your memory of the brand.',
+  'Generalised anti-hallucination paradigm for listing tasks. Targets: category-as-entry failure, brand-vs-product confusion, generic descriptions. Derived from comparison of 3 model outputs on a sourcing task, 2026-05-24.',
+  0,
+  55,
+  1,
+  strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+  strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+);
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (13, 122); -- web-search-specialist
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (5,  122); -- wikipedia-specialist
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id) VALUES (9,  122); -- document-builder
