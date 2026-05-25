@@ -57,7 +57,7 @@ WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",
-    "gemma4:26b",
+    "gemma4:latest", # gemma4:26b est putain de lent
 )
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
