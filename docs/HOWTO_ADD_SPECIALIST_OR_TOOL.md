@@ -249,3 +249,74 @@ Images disponibles :
 - `jeanmichel-sandbox:node-alpine` — Node 22, TypeScript, ts-node
 
 Build : `./jm.sh --build-docker all` (une seule fois, ou après modification d'un Dockerfile).
+
+---
+
+## Outils scopés au niveau requête vs conversation
+
+Certains outils ont besoin d'écrire dans un fichier dont le chemin dépend soit
+de la conversation (partagé entre agents), soit de la requête en cours
+(isolé par spécialiste). Le pattern utilisé par `manage_todo_list` est la
+référence pour implémenter ce type d'outil.
+
+### Pattern `agent_role` + `request_id_provider`
+
+```python
+# src/jeanmichel/tools/mon_outil_scope.py
+
+def make_spec(
+    conv_folder: Path,
+    agent_role: str,                            # "router" | "specialist"
+    request_id_provider: Callable[[], str] | None,
+) -> ToolSpec:
+    def _target_path() -> Path:
+        if agent_role == "router":
+            return conv_folder / "mon_outil.json"       # conv-level
+        if agent_role == "specialist":
+            return conv_folder / f"mon_outil_{request_id_provider()}.json"  # request-level
+        raise RuntimeError(f"unexpected role: {agent_role!r}")
+
+    def _handler(...) -> str:
+        path = _target_path()
+        ...
+    return ToolSpec(name="mon_outil_scope", ...)
+```
+
+### Intégration dans `build_registry`
+
+```python
+# src/jeanmichel/tools/__init__.py
+if agent_role in {"router", "specialist"} and request_id_provider is not None:
+    spec = _mon_outil_scope_mod.make_spec(conv_folder, agent_role, request_id_provider)
+    registry[spec.name] = spec
+```
+
+### Propagation depuis l'orchestrateur
+
+Le paramètre `agent_role` est déjà propagé depuis `orchestrator.py` :
+
+```python
+registry = build_registry(
+    self.conv_folder,
+    ...
+    agent_role=agent.role,   # "router" | "specialist" | "finalizer"
+)
+```
+
+### Règles de scoping
+
+| Rôle | Portée | Fichier créé |
+|---|---|---|
+| `router` | Conversation | `conv_folder/mon_outil.json` |
+| `specialist` | Requête | `conv_folder/mon_outil_<req_id>.json` |
+| `finalizer` | Pas de grant (outil non exposé) | — |
+
+Le scoping est **opaque au LLM** : le chemin est déterminé uniquement par
+le rôle de l'agent, pas par un paramètre visible.
+
+### Cleanup et inspection
+
+Les fichiers request-level sont conservés comme les autres artefacts de la
+conversation. Ils sont visibles via `--inspect-conv` si vous ajoutez une
+section dédiée dans `debug/inspect_conv.py` (voir `_print_todo_snapshots`
+comme modèle).

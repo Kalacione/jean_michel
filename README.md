@@ -100,6 +100,7 @@ L'**archivist** est le seul agent non délégable : il est invoqué uniquement p
 - **Pipeline de recherche prescrit** : les agents de collecte (web-search-specialist, wikipedia-specialist) retournent un résumé compact structuré — le contenu brut va dans le workspace, pas dans le briefing de retour.
 - **Méthodes scientifiques** : paradigmes `evidence_hierarchy`, `burden_of_proof`, `occam_razor` sur jean-michel et critical-thinker.
 - **Métacognition orchestrateur** : paradigme `orchestrator_inquiry_loop` sur jean-michel — réévalue après chaque retour d'agent. `plan.md` est maintenu déterministiquement par l'orchestrateur (module `plan_writer`), pas par un LLM.
+- **Planification explicite** : paradigme `planning_with_todos` sur jean-michel et les spécialistes capables de décomposer (comparator, critical-thinker, meta-analyst, document-builder, code-runner) — pour les requêtes ≥ 3 sous-questions, l'agent pose d'abord sa TODO list via `manage_todo_list` avant toute délégation. Les todos conv-level (`todo.json`) sont prepended à `plan.md` ; les todos request-level (`todo_<req_id>.json`) restent scopées au spécialiste. Actif en modes `analyse` et `chat` uniquement.
 
 ## Persistance
 
@@ -266,6 +267,7 @@ jeanmichel/
 │   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
 │   │   ├── conv_status.py    # état budget / step count (context-bound)
 │   │   ├── conv_history_scan.py  # scan d'historique conversationnel (context-bound)
+│   │   ├── manage_todo_list.py   # TODO list conv+request scopée (context-bound)
 │   │   ├── self_inspect_architecture.py  # vue archi (agents, rôles, paradigmes)
 │   │   ├── self_inspect_config.py        # vue config (paths, timeouts, modèles)
 │   │   ├── self_inspect_activity.py      # vue activité (conversations, requêtes)

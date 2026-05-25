@@ -1,6 +1,6 @@
 # Spec — Outil `manage_todo_list` pour Jean-Michel
 
-**Statut** : draft initial — sources externes glanées + intégration codebase.
+**Statut** : ✅ implémenté V1 — migration `058`, commit `feat: manage_todo_list`.
 **Auteur** : analyse Copilot (2026-05-25).
 **Contexte** : la méta-cognition de Jean-Michel est aujourd'hui **réactive**
 (décision après chaque retour d'agent). Pour les requêtes comparatives /
