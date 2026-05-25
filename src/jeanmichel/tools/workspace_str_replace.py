@@ -55,7 +55,10 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
     return ToolSpec(
         name="workspace_str_replace",
         description=(
+            "SIGNATURE: workspace_str_replace(relative_path, old_str, new_str). "
             "Replace a unique string in a workspace file. "
+            "Parameter names are EXACT — do not use 'old_content', 'new_content', "
+            "'old_string' or 'new_string'. The required names are 'old_str' and 'new_str'. "
             "old_str must appear exactly once in the file. "
             "new_str can be empty to delete the matched text. "
             "Writes atomically."

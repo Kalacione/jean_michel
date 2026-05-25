@@ -44,7 +44,7 @@ from .prompts import (
     tools_payload_for_agent,
 )
 from .tools import build_registry
-from .tools._errors import CRITICAL_ERROR_CODES
+from .tools._errors import CRITICAL_ERROR_CODES, tool_error
 from .tools._workspace import quota_remaining, workspace_root_for
 from .tools.conv_status import budget_snapshot as _budget_snapshot
 
@@ -278,9 +278,25 @@ def _spec_defaults(spec) -> dict:
     return {k: v["default"] for k, v in props.items() if "default" in v}
 
 
+# For read-only tools, the fingerprint is built ONLY from the identifying
+# argument (the file path). This collapses semantically-equivalent calls that
+# differ only in display parameters like view_range, max_bytes, etc. — which
+# the LLM otherwise uses (sometimes accidentally) to bypass the duplicate
+# detector while asking for the same data.
+_READ_TOOL_IDENTITY_ARGS: dict[str, tuple[str, ...]] = {
+    "workspace_view": ("relative_path",),
+    "workspace_list": ("sub_path",),
+    "conv_read_file": ("relative_path",),
+}
+
+
 def _fingerprint(tool_name: str, args: dict, defaults: dict) -> str:
-    merged = {**defaults, **(args or {})}
-    norm = {k: _normalise_value(v) for k, v in merged.items()}
+    if tool_name in _READ_TOOL_IDENTITY_ARGS:
+        keys = _READ_TOOL_IDENTITY_ARGS[tool_name]
+        norm = {k: _normalise_value((args or {}).get(k, "")) for k in keys}
+    else:
+        merged = {**defaults, **(args or {})}
+        norm = {k: _normalise_value(v) for k, v in merged.items()}
     return f"{tool_name}:{json.dumps(norm, sort_keys=True, ensure_ascii=False)}"
 
 
@@ -646,6 +662,8 @@ class Orchestrator:
         running_user_text = inbound_text
         seen_ask = False  # at most one ask_human across all steps of this request
         _seen_calls: set[str] = set()  # normalised fingerprints — registered before execution
+        _call_results: dict[str, str] = {}  # fp -> last result (for replay on duplicate)
+        _duplicate_counts: dict[str, int] = {}  # fp -> how many times we've blocked it
         _consecutive_duplicates: int = 0
         _critical_fs_errors: int = 0
         _recent_tool_calls: list[dict] = []  # for partial report on crash
@@ -1104,17 +1122,50 @@ class Orchestrator:
                             + json.dumps(call.arguments, ensure_ascii=False, indent=2)
                             + "\n```\n",
                         )
-                        tool_responses.append(json.dumps({
-                            "tool": call.name,
-                            "error": (
-                                "Duplicate call blocked. This call (after normalising whitespace, "
-                                "casing, and default-valued arguments) was already executed in "
-                                "this request. Re-running it cannot change the result. "
-                                "Either: (a) use the result you already have, or (b) change the "
-                                "ANGLE of your query (different keyword, different domain, "
-                                "different tool) — not a surface reformulation."
-                            ),
-                        }))
+                        # Replay the cached result so the LLM has the data it was
+                        # trying to re-fetch — prevents loops where the model keeps
+                        # asking again because it forgot the previous response.
+                        # We only re-inject the FULL payload the first time we block;
+                        # subsequent duplicates get a short pointer so the context
+                        # doesn't balloon if the LLM keeps banging on the same call.
+                        cached = _call_results.get(fp)
+                        dup_count = _duplicate_counts.get(fp, 0) + 1
+                        _duplicate_counts[fp] = dup_count
+                        if cached is not None and dup_count == 1:
+                            tool_responses.append(json.dumps({
+                                "tool": call.name,
+                                "cached": True,
+                                "notice": (
+                                    "This exact call was already executed earlier in this "
+                                    "request. Returning the cached result. Do NOT call this "
+                                    "tool with the same arguments again — use the data below."
+                                ),
+                                "previous_result": cached,
+                            }))
+                        elif cached is not None:
+                            tool_responses.append(json.dumps({
+                                "tool": call.name,
+                                "cached": True,
+                                "duplicate_count": dup_count,
+                                "notice": (
+                                    f"Blocked: this call has now been attempted {dup_count} times. "
+                                    "The result was already returned earlier in this conversation. "
+                                    "Stop calling this tool and act on the data you already have, "
+                                    "or change your approach entirely."
+                                ),
+                            }))
+                        else:
+                            tool_responses.append(json.dumps({
+                                "tool": call.name,
+                                "error": (
+                                    "Duplicate call blocked. This call (after normalising whitespace, "
+                                    "casing, and default-valued arguments) was already executed in "
+                                    "this request. Re-running it cannot change the result. "
+                                    "Either: (a) use the result you already have, or (b) change the "
+                                    "ANGLE of your query (different keyword, different domain, "
+                                    "different tool) — not a surface reformulation."
+                                ),
+                            }))
                         # Idempotent read tools (conv_read_file, workspace_view, …)
                         # don't count toward force-stop: re-reading is a legitimate
                         # uncertainty-resolution attempt, not a runaway loop. The
@@ -1147,14 +1198,17 @@ class Orchestrator:
                         valid = list(
                             spec.parameters.get("properties", {}).keys()
                         )
-                        result = json.dumps({
-                            "error": (
-                                f"Bad arguments for tool '{call.name}': {e}. "
-                                f"Valid parameters: {valid}"
-                            )
-                        })
+                        result = tool_error(
+                            "bad_arguments",
+                            f"Bad arguments for tool '{call.name}': {e}",
+                            valid_parameters=valid,
+                        )
                     except Exception as e:  # noqa: BLE001
-                        result = json.dumps({"error": f"Tool failed: {e}"})
+                        result = tool_error("tool_failed", f"Tool failed: {e}")
+                    # Cache successful results so a future duplicate call (e.g.
+                    # the LLM forgot it already read this file) can be served
+                    # the same response without re-executing or losing data.
+                    _call_results[fp] = result
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
                     # For tools that return existing file content, write a stub
