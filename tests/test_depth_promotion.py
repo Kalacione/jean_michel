@@ -39,6 +39,7 @@ class TestDelegationWhitelist:
         """
         orch = _orch([
             # jean-michel routes to wikipedia-specialist
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="wikipedia-specialist",
                       briefing="find info", expected="gather_done")),
             # wikipedia-specialist tries to delegate to planner (whitelist blocks it)
@@ -62,6 +63,7 @@ class TestDelegationWhitelist:
     def test_jean_michel_can_delegate_to_all_listed(self, tmp_env):
         """jean-michel can delegate to web-search and critical-thinker."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search", expected="gather_done")),
             _resp(_tc("report_findings", summary="sources found", confidence="high")),
@@ -78,6 +80,7 @@ class TestDelegationWhitelist:
     def test_whitelist_empty_means_no_delegation(self, tmp_env):
         """summarizer has no delegation targets → any delegate_to is rejected."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="summarizer",
                       briefing="summarize", expected="summary")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
@@ -103,6 +106,7 @@ class TestCriticCanDelegateAtDepth2:
         """critical-thinker (depth=1) can delegate to web-search-specialist (depth=2)."""
         orch = _orch([
             # jean-michel delegates to critical-thinker
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="critical-thinker",
                       briefing="check this claim", expected="critic_done")),
             # critical-thinker delegates to web-search to verify a fact (depth=2)
@@ -129,6 +133,7 @@ class TestCriticCanDelegateAtDepth2:
     def test_critic_cannot_delegate_to_document_builder(self, tmp_env):
         """critical-thinker cannot delegate to document-builder (not in its whitelist)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="critical-thinker",
                       briefing="critique", expected="critic_done")),
             # critic tries to delegate to document-builder (blocked)

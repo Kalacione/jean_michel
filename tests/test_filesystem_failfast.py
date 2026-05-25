@@ -104,6 +104,7 @@ class TestFilesystemFailFast:
     def test_file_not_found_counts(self, tmp_env):
         """3 file_not_found errors in one request trigger fail-fast."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="look for files", expected="gather_done")),
             # specialist calls 3 different missing files in one turn → 3 critical errors
@@ -129,6 +130,7 @@ class TestFilesystemFailFast:
     def test_path_escape_logged(self, tmp_env):
         """Path traversal attempt emits FilesystemErrorObserved(error_code=path_escape)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="try to escape", expected="gather_done")),
             # specialist tries path traversal, fails, then gathers legitimately
@@ -153,6 +155,7 @@ class TestFilesystemFailFast:
         monkeypatch.setattr(_ws_mod, "WORKSPACE_QUOTA_BYTES", 5)
         monkeypatch.setattr(_cfg, "WORKSPACE_QUOTA_BYTES", 5)
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="write too much", expected="gather_done")),
             # over-quota write → quota_exceeded
@@ -181,6 +184,7 @@ class TestQuotaWarning:
         monkeypatch.setattr(_ws_mod, "WORKSPACE_QUOTA_BYTES", 1000)
         monkeypatch.setattr(_cfg, "WORKSPACE_QUOTA_BYTES", 1000)
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="document-builder",
                       briefing="write a large file", expected="build_done")),
             # write 950 UTF-8 bytes

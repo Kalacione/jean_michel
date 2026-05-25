@@ -3248,3 +3248,31 @@ SET
 - After each delegation completes, evaluate the result. If there is a gap: follow up with a targeted sub-delegation, or proceed to synthesis if the gap is acceptable.',
     modified_at = datetime('now')
 WHERE code = 'plan_before_complex_action';
+
+-- ── MIGRATION 060 ────────────────────────────────────────────────────────────
+
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
+VALUES (1, 'set_task_class');
+
+UPDATE paradigms
+SET content = '- Before acting on a request, classify it as one of:
+  - single_fact: one tool call or direct answer (weather, time, translation, simple factual lookup). Handle immediately, no plan.
+  - medium_task: 2-3 independent delegations, no chain of dependent phases, no structured synthesis document as output. Draft routing plan in thought channel only.
+  - deep_research: A task is deep_research if ANY of these apply:
+      (a) it involves a chain of dependent phases (e.g. gather → critique → build, or search → compare → synthesize)
+      (b) the expected output is a structured workspace document (report, table, specification, comparative analysis)
+      (c) it requires 3 or more distinct agents in sequence
+- The number of tool calls is NOT the right criterion. "Web search + document creation" is two dependent phases: deep_research.
+- When in doubt between medium_task and deep_research, ask: "does step 2 depend on step 1''s output?" If yes → deep_research.
+- After classifying in your thought channel, call set_task_class(task_class=...) to persist the classification before any delegation.',
+    modified_at = datetime('now')
+WHERE code = 'assess_complexity_first';
+
+UPDATE paradigms
+SET content = 'For deep_research requests: after set_task_class("deep_research"), you MUST call manage_todo_list(operation="write", todos=[...]) before any delegation. List all planned steps with their assignee_hint and expected deliverables.
+
+For medium_task requests with 3+ sub-questions or comparative work: also call manage_todo_list(operation="write") to externalise the routing plan before delegating.
+
+IMPORTANT: writing your plan in <think> is NOT sufficient — it is ephemeral and private. The TODO list is persisted and surfaced in plan.md so the orchestrator and peer specialists can track progress.',
+    modified_at = datetime('now')
+WHERE code = 'planning_with_todos';

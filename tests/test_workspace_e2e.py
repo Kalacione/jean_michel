@@ -48,7 +48,10 @@ class TestWorkspaceE2E:
         import jeanmichel.config as cfg
 
         orch = _orch([
-            # jean-michel delegates to document-builder
+            # jean-michel classifies then delegates to document-builder
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="set_task_class", arguments={"task_class": "medium_task"}),
+            ]),
             LLMResponse(thinking="", content="", tool_calls=[
                 ToolCall(name="delegate_to", arguments={
                     "agent_code": "document-builder",

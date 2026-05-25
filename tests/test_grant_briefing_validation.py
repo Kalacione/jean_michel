@@ -29,11 +29,13 @@ def _orch(script: list[LLMResponse]) -> Orchestrator:
 
 class TestArtifactGuard:
     def test_report_findings_without_artifact_rejected(self, tmp_env):
-        """report_findings(files_produced=["nope.md"]) blocked when file does not exist.
+        """
+        report_findings(files_produced=["nope.md"]) blocked when file does not exist.
 
         Specialist tries again with empty files_produced — allowed.
         """
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find stuff", expected="report_findings")),
             # specialist declares nope.md which doesn't exist → blocked
@@ -53,6 +55,7 @@ class TestArtifactGuard:
     def test_report_findings_with_existing_file_accepted(self, tmp_env):
         """report_findings(files_produced=["report.md"]) accepted when file exists."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find stuff", expected="report_findings")),
             # specialist writes the file first
@@ -75,6 +78,7 @@ class TestArtifactGuard:
     def test_report_findings_empty_files_allowed(self, tmp_env):
         """report_findings with no files_produced is allowed."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="quick lookup", expected="report_findings")),
             _resp(_tc("report_findings", summary="found nothing notable",
@@ -94,6 +98,7 @@ class TestPostDelegationValidation:
         """Parent receives validation_error when child didn't produce declared artifact."""
         orch = _orch([
             # jean-michel delegates with workspace_artifacts contract
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find info",
                       expected={
@@ -114,6 +119,7 @@ class TestPostDelegationValidation:
     def test_validation_passes_when_artifact_present(self, tmp_env):
         """No validation_error when child produces all declared workspace_artifacts."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="write x.md",
                       expected={
@@ -142,6 +148,7 @@ class TestLegacyStringExpected:
     def test_legacy_string_expected_accepted(self, tmp_env):
         """Passing expected as a plain string is still accepted (backward compat)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find something",
                       expected="a markdown summary")),   # legacy string

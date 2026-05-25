@@ -123,6 +123,7 @@ class TestPlanWrittenByOrchestrator:
     def test_plan_md_created_on_first_delegation(self, tmp_env):
         """plan.md is created as soon as the first delegate_to fires."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find info on X", expected="report_findings")),
             _resp(_tc("report_findings", summary="found X", confidence="high")),
@@ -139,6 +140,7 @@ class TestPlanWrittenByOrchestrator:
     def test_plan_md_not_in_workspace(self, tmp_env):
         """plan.md is in conv_folder, NOT inside workspace/ (quota-free)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find Y", expected="report_findings")),
             _resp(_tc("report_findings", summary="done", confidence="high")),
@@ -154,6 +156,7 @@ class TestPlanWrittenByOrchestrator:
     def test_plan_step_ids_sequential(self, tmp_env):
         """Two top-level delegations produce S1 then S2."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="gather sources", expected="report_findings")),
             _resp(_tc("report_findings", summary="3 sources", confidence="high")),
@@ -171,6 +174,7 @@ class TestPlanWrittenByOrchestrator:
     def test_plan_step_marked_done_after_child_converges(self, tmp_env):
         """After a child converges, its plan step shows done status (✅)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search for Z", expected="report_findings")),
             _resp(_tc("report_findings", summary="found Z", confidence="high")),
@@ -195,6 +199,7 @@ class TestMaxDelegationsGuardrail:
 
         orch = _orch([
             # delegation 1 — succeeds
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search 1", expected="report_findings")),
             _resp(_tc("report_findings", summary="done 1", confidence="high")),
@@ -225,6 +230,7 @@ class TestMaxDelegationsGuardrail:
 
         orch = _orch([
             # Turn 1: 1 delegation — succeeds
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="search", expected="report_findings")),
             _resp(_tc("report_findings", summary="done", confidence="high")),
@@ -271,6 +277,8 @@ class TestRouterDeepResearchGuard:
         is filtered out of subsequent tools_payload calls — the router must
         delegate, not gather data itself."""
         spy = _SpyLLM([
+            # Call 0 (router, no plan.md yet) → set_task_class
+            _resp(_tc("set_task_class", task_class="medium_task")),
             # Call 1 (router, no plan.md yet) → delegate
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find X", expected="report_findings")),
@@ -286,11 +294,11 @@ class TestRouterDeepResearchGuard:
 
         # First router call: plan.md does not exist yet → web_search present
         assert "web_search" in spy.tools_per_call[0]
-        # Third call is the router resuming after the delegation → plan.md
+        # Fourth call is the router resuming after the delegation → plan.md
         # exists → web_search must have been stripped.
-        assert "web_search" not in spy.tools_per_call[2]
+        assert "web_search" not in spy.tools_per_call[3]
         # delegate_to remains available so the router can still orchestrate.
-        assert "delegate_to" in spy.tools_per_call[2]
+        assert "delegate_to" in spy.tools_per_call[3]
 
     def test_trivial_request_keeps_web_search(self, tmp_env):
         """A trivial request that does not trigger any delegation keeps the

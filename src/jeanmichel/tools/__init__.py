@@ -16,6 +16,7 @@ from pathlib import Path
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import manage_todo_list as _manage_todo_list_mod
+from . import set_task_class as _set_task_class_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_read_file as _conv_read_file_mod
 from . import conv_status as _conv_status_mod
@@ -86,6 +87,9 @@ def build_registry(
             conv_folder, agent_role, request_id_provider
         )
         registry[todo_spec.name] = todo_spec
+    if agent_role == "router" and conv_id:
+        stc_spec = _set_task_class_mod.make_spec(conv_id)
+        registry[stc_spec.name] = stc_spec
     if conv_id and request_id_provider is not None and sandbox_grants is not None:
         sandbox_spec = _bash_sandbox_mod.make_spec(
             conv_folder, conv_id, request_id_provider, sandbox_grants,

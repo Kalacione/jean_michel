@@ -33,7 +33,8 @@ class TestReportFindingsValidation:
 
     def test_validates_summary_required(self, tmp_env):
         orch = _orch([
-            # router delegates
+            # router classifies then delegates
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             # specialist calls report_findings without summary → error
@@ -51,6 +52,7 @@ class TestReportFindingsValidation:
 
     def test_validates_confidence_enum(self, tmp_env):
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             # bad confidence
@@ -67,6 +69,7 @@ class TestReportFindingsValidation:
 
     def test_rejects_missing_files_produced(self, tmp_env):
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             # declares a file that doesn't exist
@@ -84,6 +87,7 @@ class TestReportFindingsValidation:
     def test_terminates_specialist_request(self, tmp_env):
         """report_findings must terminate the specialist sub-request (convergent=True)."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             _resp(_tc("report_findings", summary="Found sources.", confidence="high")),
@@ -112,6 +116,7 @@ class TestReportFindingsParentView:
                 return super().chat(system=system, user=user, tools=tools, **kwargs)
 
         script = [
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             _resp(_tc("report_findings", summary="Found 10 APIs.", confidence="medium",
@@ -142,6 +147,7 @@ class TestSpecialistCannotReturnToUser:
         """When a specialist calls return_to_user, it must receive an error
         steering it to report_findings instead."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             # specialist (wrongly) calls return_to_user
@@ -166,6 +172,7 @@ class TestSignalConvergenceDeprecated:
         """If a specialist (via inertia) calls signal_convergence,
         the orchestrator must issue a redirect error and yield SignalConvergenceRedirected."""
         orch = _orch([
+            _resp(_tc("set_task_class", task_class="medium_task")),
             _resp(_tc("delegate_to", agent_code="web-search-specialist",
                       briefing="find sources", expected={"completion_verb": "report_findings"})),
             # specialist uses old verb

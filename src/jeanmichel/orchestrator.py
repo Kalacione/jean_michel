@@ -60,6 +60,10 @@ _ROUTER_DEEP_RESEARCH_FORBIDDEN_TOOLS: frozenset[str] = frozenset({
     "wikipedia_summary",
 })
 
+# Modes where the task-class gate and todo-planning gate are enforced.
+# In vocal mode the interaction is conversational; gates would add friction.
+_PLANNING_MODES: frozenset[str] = frozenset({"analyse", "chat"})
+
 # ---- Events emitted to the CLI -------------------------------------------
 
 @dataclass
@@ -703,6 +707,14 @@ class Orchestrator:
         _critical_fs_errors: int = 0
         _recent_tool_calls: list[dict] = []  # for partial report on crash
 
+        # Task-class gate: router must call set_task_class before delegating
+        # in planning modes. Load the persisted class (set by a prior turn, if
+        # any) so the gate is transparent for turn 2+.
+        _current_task_class: str | None = None
+        if agent.role == "router" and self.mode in _PLANNING_MODES:
+            with db.connect() as conn:
+                _current_task_class, _ = db.get_pipeline_state(conn, self.conv_id)
+
         # Build the system prompt once — the mission is immutable for the
         # lifetime of this request. Only the LLM user message changes between
         # tool-call iterations.
@@ -1021,6 +1033,49 @@ class Orchestrator:
                                 "error": "archivist is an internal component and cannot be called via delegate_to.",
                             }))
                             continue
+
+                        # Gate 1 — classify_first: router must call set_task_class
+                        # before any delegation in planning modes.
+                        if (
+                            self.mode in _PLANNING_MODES
+                            and agent.role == "router"
+                            and "set_task_class" in tool_grants
+                            and _current_task_class is None
+                        ):
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    "classify_first: Before delegating, call "
+                                    "set_task_class(task_class=...) to declare the "
+                                    "complexity of this request. Use 'single_fact', "
+                                    "'medium_task', or 'deep_research' — see the "
+                                    "assess_complexity_first directive for criteria."
+                                ),
+                            }))
+                            continue
+
+                        # Gate 2 — plan_first: deep_research requires an externalised
+                        # plan (manage_todo_list) before the first delegation.
+                        if (
+                            self.mode in _PLANNING_MODES
+                            and agent.role == "router"
+                            and _current_task_class == "deep_research"
+                            and "manage_todo_list" in tool_grants
+                            and not any(fp.startswith("manage_todo_list:") for fp in _seen_calls)
+                            and not (self.conv_folder / "todo.json").exists()
+                        ):
+                            tool_responses.append(json.dumps({
+                                "tool": "delegate_to",
+                                "error": (
+                                    "plan_first_required: This request is classified as "
+                                    "deep_research. Before delegating, call "
+                                    "manage_todo_list(operation='write', todos=[...]) to "
+                                    "externalise your routing plan. List all planned steps "
+                                    "with their assignee_hint, then come back to delegate."
+                                ),
+                            }))
+                            continue
+
                         # Delegation whitelist: only explicitly listed targets allowed.
                         if child_code not in delegation_targets:
                             tool_responses.append(json.dumps({
@@ -1330,6 +1385,14 @@ class Orchestrator:
                                 if _scope == "conversation":
                                     _plan_writer.write(self.conv_folder, self._plan_steps)
                         except (json.JSONDecodeError, TypeError, KeyError):
+                            pass
+                    # Update local task-class cache after a successful set_task_class call.
+                    if call.name == "set_task_class":
+                        try:
+                            _stc = json.loads(result)
+                            if "error_code" not in _stc:
+                                _current_task_class = call.arguments.get("task_class")
+                        except (json.JSONDecodeError, TypeError):
                             pass
                     # For tools that return existing file content, write a stub
                     # artifact to avoid duplicating content already on disk.
