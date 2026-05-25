@@ -32,6 +32,16 @@ from . import workspace_str_replace as _ws_replace_mod
 from . import workspace_view as _ws_view_mod
 from ._base import ToolSpec
 
+# Workspace write tools — exposing any of these without an
+# agent_workspace_grants row will always fail at runtime with no_write_grant.
+# Centralised here so tools_payload_for_agent and the DB-consistency test
+# stay in sync.
+WORKSPACE_WRITE_TOOLS: frozenset[str] = frozenset({
+    "workspace_create_file",
+    "workspace_str_replace",
+    "workspace_append",
+})
+
 
 def build_registry(
     conv_folder: Path,
@@ -78,4 +88,4 @@ def build_registry(
     return registry
 
 
-__all__ = ["ToolSpec", "build_registry"]
+__all__ = ["ToolSpec", "WORKSPACE_WRITE_TOOLS", "build_registry"]

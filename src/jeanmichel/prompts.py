@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 from dataclasses import dataclass
@@ -12,7 +13,9 @@ from typing import Any
 from . import plan_writer
 from .config import MAX_RECURSION_DEPTH, UserProfile
 from .models import Agent, Paradigm
-from .tools import ToolSpec
+from .tools import WORKSPACE_WRITE_TOOLS, ToolSpec
+
+logger = logging.getLogger(__name__)
 
 # Maximum characters of plan.md injected into the router's system prompt.
 # Truncates from the end (most recent steps matter most).
@@ -295,6 +298,7 @@ class PromptContext:
     available_agents: list[Agent]
     turn_clarifications: list[tuple[str, str]]  # (question, answer) pairs from ask_human this turn
     conv_budget: str | None = None  # pre-computed budget block injected by the orchestrator
+    delegation_targets: frozenset[str] = frozenset()  # whitelist of allowed target agent codes; empty = no whitelist (legacy behaviour: all specialists/finalizers visible)
 
 
 def render_directives(paradigms: list[Paradigm]) -> str:
@@ -486,6 +490,11 @@ def render_system_prompt(ctx: PromptContext) -> str:
         if ag.code != ctx.agent.code and ag.role in ("specialist", "finalizer")
         and ag.code != "archivist"  # archivist is orchestrator-only, never user-callable
     ]
+    # If the agent has an explicit delegation whitelist in
+    # agent_delegation_targets, restrict the visible specialists to that set.
+    # Empty whitelist means "no rule" (legacy behaviour) — keep everything.
+    if ctx.delegation_targets:
+        specialists = [ag for ag in specialists if ag.code in ctx.delegation_targets]
     agents_block = (
         "\n".join(f"- {ag.code}: {ag.mission}" for ag in specialists)
         if specialists else "(none)"
@@ -542,11 +551,26 @@ def render_system_prompt(ctx: PromptContext) -> str:
 def tools_payload_for_agent(agent_role: str,
                             tool_grants: list[str],
                             registry: dict[str, ToolSpec],
-                            depth: int = 0) -> list[dict[str, Any]]:
-    """Build the tools payload (control tools filtered by role + native tools)."""
+                            depth: int = 0,
+                            has_workspace_write: bool = True,
+                            agent_code: str = "") -> list[dict[str, Any]]:
+    """Build the tools payload (control tools filtered by role + native tools).
+
+    If ``has_workspace_write`` is False, workspace write tools listed in
+    ``tool_grants`` are filtered out of the payload (and a warning is logged).
+    This prevents the LLM from seeing a tool it could never successfully call
+    when ``agent_tools`` and ``agent_workspace_grants`` drift apart.
+    """
     payload: list[dict[str, Any]] = list(_CONTROL_TOOLS_BY_ROLE.get(agent_role, []))
     # No legacy signal_convergence offered — report_findings replaces it entirely.
     for tool_name in tool_grants:
+        if not has_workspace_write and tool_name in WORKSPACE_WRITE_TOOLS:
+            logger.warning(
+                "Filtering workspace write tool %r from payload: agent %r has it in "
+                "agent_tools but no agent_workspace_grants row — DB drift, please fix.",
+                tool_name, agent_code or "<unknown>",
+            )
+            continue
         spec = registry.get(tool_name)
         if spec is None:
             continue

@@ -716,9 +716,13 @@ class Orchestrator:
             available_agents=available_agents,
             turn_clarifications=list(self._turn_exchanges),
             conv_budget=_budget_snapshot(self.conv_id) if agent.role == "router" else None,
+            delegation_targets=frozenset(delegation_targets),
         )
         system = render_system_prompt(ctx)
-        tools_payload = tools_payload_for_agent(agent.role, tool_grants, registry, depth=depth)
+        tools_payload = tools_payload_for_agent(
+            agent.role, tool_grants, registry, depth=depth,
+            has_workspace_write=has_workspace_write, agent_code=agent.code,
+        )
         self._write_artifact(req_id, agent_code, "prompt",
             f"## System\n\n{system}\n\n---\n\n## User\n\n{running_user_text}\n")
 
