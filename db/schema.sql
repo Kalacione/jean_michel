@@ -3158,3 +3158,68 @@ INSERT OR IGNORE INTO paradigms (
 
 INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
 SELECT id, 123 FROM agents WHERE code = 'comparator-specialist';
+
+-- MIGRATION 058 — manage_todo_list paradigme, bindings et grants
+INSERT OR IGNORE INTO paradigms (
+    category_id, code, title, content, rationale,
+    is_global, order_priority, active, created_at, modified_at
+) SELECT
+    (SELECT c.id FROM categories c JOIN sections s ON s.id = c.section_id
+     WHERE s.code = 'process' AND c.code = 'planning'),
+    'planning_with_todos',
+    'Plan multi-step work with manage_todo_list',
+    'For requests that decompose into 3 or more distinct sub-questions, or whenever comparative / cross-research / multi-source work is involved, START by calling `manage_todo_list` with operation="write" to lay out the full plan before any delegation. Update items via `update_status` as soon as a delegate_to or tool call returns a result. Before each new delegation, scan `pending` items: if several are independent (no `depends_on` overlap), emit multiple `delegate_to` calls in the same turn — the orchestrator processes them sequentially but you save one full re-decision cycle per item. Stop when all items are `completed` or `skipped`. Anti-pattern: do NOT create a todo list for trivial / single-step requests ("what time is it?").',
+    'Externalises the plan for transparency, fault tolerance, and to enable batched delegation on independent sub-questions.',
+    0, 10, 1, datetime('now'), datetime('now');
+
+INSERT OR IGNORE INTO agent_paradigms (agent_id, paradigm_id)
+SELECT a.id, p.id
+FROM agents a, paradigms p
+WHERE p.code = 'planning_with_todos'
+  AND a.code IN (
+      'jean-michel', 'comparator-specialist', 'critical-thinker',
+      'meta-analyst', 'document-builder', 'code-runner'
+  );
+
+INSERT OR IGNORE INTO paradigm_modes (paradigm_id, mode)
+SELECT p.id, m.mode
+FROM paradigms p,
+     (SELECT 'analyse' AS mode UNION ALL SELECT 'chat') AS m
+WHERE p.code = 'planning_with_todos';
+
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
+SELECT a.id, 'manage_todo_list'
+FROM agents a
+WHERE a.code IN (
+    'jean-michel', 'comparator-specialist', 'critical-thinker',
+    'meta-analyst', 'document-builder', 'code-runner'
+);
+
+-- =============================================================
+-- MIGRATION 058 — coherence audit fixes (2026-05-25)
+-- =============================================================
+-- 1. Unbind archivist from document_workspace_output (archivist has no tools).
+DELETE FROM agent_paradigms
+WHERE agent_id = (SELECT id FROM agents WHERE code = 'archivist')
+  AND paradigm_id = (SELECT id FROM paradigms WHERE code = 'document_workspace_output');
+
+-- 2. Grant workspace_str_replace to web-search-specialist (its paradigm references it).
+INSERT OR IGNORE INTO agent_tools (agent_id, tool_code)
+SELECT id, 'workspace_str_replace' FROM agents WHERE code = 'web-search-specialist';
+
+-- 3. Unbind the inactive paradigm wikipedia_deliver_directly from wikipedia-specialist.
+DELETE FROM agent_paradigms
+WHERE agent_id = (SELECT id FROM agents WHERE code = 'wikipedia-specialist')
+  AND paradigm_id = (SELECT id FROM paradigms WHERE code = 'wikipedia_deliver_directly');
+
+-- 4. workspace_append for every existing writer (sync of migration 056_workspace_append).
+INSERT INTO agent_tools (agent_id, tool_code)
+SELECT a.id, 'workspace_append'
+FROM agents a
+JOIN agent_tools at ON at.agent_id = a.id
+WHERE at.tool_code = 'workspace_create_file'
+ON CONFLICT DO NOTHING;
+
+-- 5. Drop obsolete inactive paradigms (105, 115, 116).
+DELETE FROM agent_paradigms WHERE paradigm_id IN (105, 115, 116);
+DELETE FROM paradigms WHERE id IN (105, 115, 116) AND active = 0;
