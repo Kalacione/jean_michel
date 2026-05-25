@@ -25,6 +25,7 @@ from . import self_inspect_config as _si_config_mod
 from . import weather as _weather_mod
 from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod
+from . import workspace_append as _ws_append_mod
 from . import workspace_create_file as _ws_create_mod
 from . import workspace_list as _ws_list_mod
 from . import workspace_str_replace as _ws_replace_mod
@@ -44,6 +45,7 @@ def build_registry(
     conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
     conv_status_spec = _conv_status_mod.make_spec(conv_id) if conv_id else None
     ws_create_spec = _ws_create_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
+    ws_append_spec = _ws_append_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
@@ -60,6 +62,7 @@ def build_registry(
         _si_architecture_mod.SPEC.name: _si_architecture_mod.SPEC,
         _conv_history_scan_mod.SPEC.name: _conv_history_scan_mod.SPEC,
         ws_create_spec.name: ws_create_spec,
+        ws_append_spec.name: ws_append_spec,
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,

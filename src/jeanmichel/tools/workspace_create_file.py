@@ -42,16 +42,22 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
                 existing = target.read_text(encoding="utf-8")[:6000]
             except OSError:
                 existing = None
-            extra: dict = {"action_required": "workspace_str_replace"}
+            extra: dict = {
+                "action_required": "workspace_append",
+                "alternatives": ["workspace_append", "workspace_str_replace"],
+            }
             if existing is not None:
                 extra["existing_content"] = existing
+            canonical = target.relative_to(ws_root).as_posix()
             return tool_error(
                 "file_exists",
                 (
-                    f"File already exists: {relative_path}. "
+                    f"File already exists: {canonical}. "
                     "DO NOT call workspace_create_file again. "
-                    "Call workspace_str_replace(relative_path, old_str, new_str) to update it."
+                    "To ADD new content at the end, call workspace_append(relative_path, content). "
+                    "To MODIFY existing content, call workspace_str_replace(relative_path, old_str, new_str)."
                 ),
+                path=canonical,
                 **extra,
             )
         encoded = content.encode("utf-8")
@@ -59,9 +65,10 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             return tool_error("quota_exceeded", "Quota exceeded. No space left in workspace.")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(encoded)
+        canonical = target.relative_to(ws_root).as_posix()
         return tool_ok(
-            f"wrote {relative_path} ({len(encoded)} bytes)",
-            path=relative_path,
+            f"wrote {canonical} ({len(encoded)} bytes)",
+            path=canonical,
             bytes_written=len(encoded),
         )
 

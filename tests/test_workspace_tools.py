@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from jeanmichel.tools.workspace_append import make_spec as append_spec
 from jeanmichel.tools.workspace_create_file import make_spec as create_spec
 from jeanmichel.tools.workspace_list import make_spec as list_spec
 from jeanmichel.tools.workspace_str_replace import make_spec as replace_spec
@@ -59,7 +60,10 @@ class TestWorkspaceCreateFile:
         (tmp_conv / "workspace" / "notes.md").write_text("# Notes\nstep 1")
         result = json.loads(spec.handler("notes.md", "# New Notes"))
         assert "error" in result
-        assert result.get("action_required") == "workspace_str_replace"
+        # The primary recommended action is now append (KISS for the common case);
+        # str_replace remains available as a secondary alternative.
+        assert result.get("action_required") == "workspace_append"
+        assert "workspace_str_replace" in result.get("alternatives", [])
         assert "existing_content" in result
         assert "step 1" in result["existing_content"]
 
@@ -89,6 +93,82 @@ class TestWorkspaceCreateFile:
         spec = create_spec(tmp_conv, has_write_grant=True)
         result = json.loads(spec.handler("ok.md", "data"))
         assert "bytes_written" in result
+
+
+# ---------------------------------------------------------------------------
+# workspace_str_replace
+# ---------------------------------------------------------------------------
+
+class TestWorkspaceAppend:
+    def _make_file(self, conv: Path, name: str, content: str) -> Path:
+        p = conv / "workspace" / name
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def test_append_nominal(self, tmp_conv):
+        self._make_file(tmp_conv, "notes.md", "first line\n")
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("notes.md", "second line\n"))
+        assert "bytes_appended" in result
+        assert result["bytes_appended"] == len(b"second line\n")
+        assert (tmp_conv / "workspace" / "notes.md").read_text() == "first line\nsecond line\n"
+
+    def test_append_inserts_separator_when_no_trailing_newline(self, tmp_conv):
+        self._make_file(tmp_conv, "notes.md", "first line")  # no trailing \n
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("notes.md", "second line"))
+        assert "bytes_appended" in result
+        # Auto-inserted newline between existing content and appended content
+        assert (tmp_conv / "workspace" / "notes.md").read_text() == "first line\nsecond line"
+
+    def test_append_no_grant(self, tmp_conv):
+        self._make_file(tmp_conv, "notes.md", "first\n")
+        spec = append_spec(tmp_conv, has_write_grant=False)
+        result = json.loads(spec.handler("notes.md", "second\n"))
+        assert "error" in result
+        assert (tmp_conv / "workspace" / "notes.md").read_text() == "first\n"
+
+    def test_append_to_missing_file_suggests_create(self, tmp_conv):
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("missing.md", "content"))
+        assert "error" in result
+        assert result.get("action_required") == "workspace_create_file"
+
+    def test_append_path_traversal_blocked(self, tmp_conv):
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("../escape.md", "evil"))
+        assert "error" in result
+        assert not (tmp_conv / "escape.md").exists()
+
+    def test_append_plan_md_reserved(self, tmp_conv):
+        (tmp_conv / "workspace" / "plan.md").write_text("# Plan\n")
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("plan.md", "more"))
+        assert "error" in result
+        assert result.get("action_required") == "plan_update"
+
+    def test_append_quota_exceeded(self, tmp_conv, monkeypatch):
+        import jeanmichel.tools._workspace as ws_mod
+        self._make_file(tmp_conv, "notes.md", "x" * 5)
+        monkeypatch.setattr(ws_mod, "WORKSPACE_QUOTA_BYTES", 6)
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        result = json.loads(spec.handler("notes.md", "x" * 100))
+        assert "error" in result
+        assert "quota" in result["error"].lower()
+
+    def test_append_atomicity(self, tmp_conv):
+        """If write fails mid-way, original file must be untouched."""
+        original = "original content\n"
+        f = self._make_file(tmp_conv, "notes.md", original)
+        spec = append_spec(tmp_conv, has_write_grant=True)
+        import contextlib
+        import unittest.mock as mock
+        with (
+            mock.patch("pathlib.Path.replace", side_effect=OSError("disk full")),
+            contextlib.suppress(OSError),
+        ):
+            spec.handler("notes.md", "more\n")
+        assert f.read_text() == original
 
 
 # ---------------------------------------------------------------------------
