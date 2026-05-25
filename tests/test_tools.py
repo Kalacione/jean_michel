@@ -373,7 +373,7 @@ import jeanmichel.tools.web_search as _ws_mod                     # noqa: E402
 
 _FAKE_SEARXNG_RESULTS = [
     {"title": "Résultat A", "url": "https://example.com/a", "content": "Snippet A"},
-    {"title": "Résultat B", "url": "https://example.com/b", "content": "Snippet B"},
+    {"title": "Autre source B", "url": "https://other.org/b", "content": "Snippet B"},
 ]
 
 

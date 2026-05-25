@@ -30,7 +30,12 @@ _COMPOSE_FILE = Path(__file__).resolve().parents[3] / "docker" / "searxng" / "co
 _STARTUP_TIMEOUT_S = 20   # max wait after docker start
 _POLL_INTERVAL_S   = 0.5  # between health probes
 _SEARCH_TIMEOUT_S  = 10   # per HTTP search request
-_MAX_RESULTS       = 8    # results returned to the LLM
+_MAX_RESULTS       = 10   # hard cap on results returned to the LLM
+_DEFAULT_RESULTS   = 8    # default when caller does not specify
+# Over-fetch from SearXNG so that after de-duplication we still have enough
+# distinct hits to honour the requested `results` count.
+_OVERFETCH_FACTOR  = 3
+_JACCARD_THRESHOLD = 0.7  # title similarity above which two hits collapse
 
 
 # ---------------------------------------------------------------------------
@@ -96,10 +101,70 @@ def _do_search(query: str, language: str, results: int) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# De-duplication
+# ---------------------------------------------------------------------------
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with",
+    "le", "la", "les", "un", "une", "des", "de", "du", "et", "ou", "à",
+    "au", "aux", "en", "sur", "pour", "par", "avec", "dans",
+})
+
+
+def _hostname(url: str) -> str:
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+    except Exception:  # noqa: BLE001
+        return ""
+    return host.lower().removeprefix("www.")
+
+
+def _title_tokens(title: str) -> set[str]:
+    """Normalise a title into a set of meaningful tokens for Jaccard."""
+    cleaned = "".join(c.lower() if c.isalnum() else " " for c in title)
+    raw_tokens = [tok for tok in cleaned.split() if tok]
+    meaningful = {tok for tok in raw_tokens if len(tok) > 2 and tok not in _STOPWORDS}
+    # Fallback: if filtering wiped everything out (very short titles), keep the
+    # raw tokens minus stopwords so we don't collapse unrelated short titles.
+    if not meaningful:
+        meaningful = {tok for tok in raw_tokens if tok not in _STOPWORDS}
+    return meaningful
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def _dedupe(raw: list[dict]) -> list[dict]:
+    """Drop near-duplicates: same hostname OR title Jaccard ≥ threshold."""
+    kept: list[dict] = []
+    kept_tokens: list[set[str]] = []
+    seen_hosts: set[str] = set()
+    for r in raw:
+        url = r.get("url", "")
+        host = _hostname(url)
+        if host and host in seen_hosts:
+            continue
+        title = r.get("title", "")
+        tokens = _title_tokens(title)
+        if any(_jaccard(tokens, kt) >= _JACCARD_THRESHOLD for kt in kept_tokens):
+            continue
+        kept.append(r)
+        kept_tokens.append(tokens)
+        if host:
+            seen_hosts.add(host)
+    return kept
+
+
+# ---------------------------------------------------------------------------
 # Handler
 # ---------------------------------------------------------------------------
 
-def _handler(query: str, language: str = "fr-FR", results: int = 5) -> str:
+def _handler(query: str, language: str = "fr-FR", results: int = _DEFAULT_RESULTS) -> str:
     results = max(1, min(int(results), _MAX_RESULTS))
 
     err = _ensure_running()
@@ -107,26 +172,30 @@ def _handler(query: str, language: str = "fr-FR", results: int = 5) -> str:
         return tool_error("searxng_unavailable", err)
 
     try:
-        raw = _do_search(query, language, results)
+        raw = _do_search(query, language, results * _OVERFETCH_FACTOR)
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:200]
         return tool_error("http_error", f"SearXNG HTTP {e.code}: {body}")
     except Exception as e:  # noqa: BLE001
         return tool_error("search_failed", f"Search failed: {e}")
 
+    deduped = _dedupe(raw)
+    dropped = len(raw) - len(deduped)
     hits = [
         {
             "title": r.get("title", ""),
             "url":   r.get("url", ""),
             "snippet": r.get("content", ""),
         }
-        for r in raw[:results]
+        for r in deduped[:results]
     ]
     titles = [_truncate_title(h["title"]) for h in hits[:3]]
-    summary = f"{len(hits)} hits for {query!r}"
+    summary = f"{len(hits)} distinct hits for {query!r}"
+    if dropped:
+        summary += f" ({dropped} duplicates dropped)"
     if titles:
         summary += ": " + " | ".join(titles)
-    return tool_ok(summary, query=query, results=hits)
+    return tool_ok(summary, query=query, results=hits, duplicates_dropped=dropped)
 
 
 def _truncate_title(t: str, n: int = 40) -> str:
@@ -161,7 +230,11 @@ SPEC = ToolSpec(
             },
             "results": {
                 "type": "integer",
-                "description": f"Number of results to return (1-{_MAX_RESULTS}). Default 5.",
+                "description": (
+                    f"Number of distinct results to return (1-{_MAX_RESULTS}). "
+                    f"Default {_DEFAULT_RESULTS}. Results are de-duplicated by "
+                    "hostname and title similarity before being returned."
+                ),
             },
         },
         "required": ["query"],
