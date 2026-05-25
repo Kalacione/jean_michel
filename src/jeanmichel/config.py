@@ -89,7 +89,8 @@ WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",
-    "qwen3:14b",
+    #"qwen3:14b",
+    "gemma4:26b",
 )
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
