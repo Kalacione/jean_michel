@@ -301,9 +301,11 @@ class TestWikipedia:
                 raise busy
             return _FAKE_SEARCH_RESULTS
 
-        with patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=_side_effect):
-            with patch("jeanmichel.tools.wikipedia.time.sleep") as mock_sleep:
-                result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
+        with (
+            patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=_side_effect),
+            patch("jeanmichel.tools.wikipedia.time.sleep") as mock_sleep,
+        ):
+            result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
 
         assert "results" in result
         assert "error" not in result
@@ -314,9 +316,11 @@ class TestWikipedia:
         """Busy error on all attempts → error JSON with a hint to use get_page."""
         busy = Exception('Search is currently too busy. Please try again later.')
 
-        with patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=busy):
-            with patch("jeanmichel.tools.wikipedia.time.sleep"):
-                result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
+        with (
+            patch("jeanmichel.tools.wikipedia._wiki_search", side_effect=busy),
+            patch("jeanmichel.tools.wikipedia.time.sleep"),
+        ):
+            result = json.loads(WIKI_SEARCH.handler(query="Nazism"))
 
         assert "error" in result
         assert "hint" in result
@@ -368,8 +372,8 @@ class TestWikipedia:
 # WebSearch
 # ---------------------------------------------------------------------------
 
+import jeanmichel.tools.web_search as _ws_mod  # noqa: E402
 from jeanmichel.tools.web_search import SPEC as WEB_SEARCH_SPEC  # noqa: E402
-import jeanmichel.tools.web_search as _ws_mod                     # noqa: E402
 
 _FAKE_SEARXNG_RESULTS = [
     {"title": "Résultat A", "url": "https://example.com/a", "content": "Snippet A"},
@@ -434,8 +438,9 @@ class TestWebSearch:
 # ---------------------------------------------------------------------------
 
 import sqlite3 as _sqlite3  # noqa: E402
-from jeanmichel.tools.conv_status import make_spec as conv_status_make_spec  # noqa: E402
+
 from jeanmichel.tools.conv_status import budget_snapshot  # noqa: E402
+from jeanmichel.tools.conv_status import make_spec as conv_status_make_spec  # noqa: E402
 
 
 def _seed_conv(db_path, conv_id, folder_path, agent_id=1):

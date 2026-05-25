@@ -81,9 +81,6 @@ class TestAdminHelpers:
     def test_bind_and_unbind_paradigm(self, tmp_env):
         with db.connect() as conn:
             sy = db.get_agent_by_code(conn, "synthesizer")
-            before = db.load_paradigms_for_agent(conn, sy.id, "analyse")
-            before_codes = {p.code for p in before}
-
             db.bind_paradigm(conn, "synthesizer", "audit_phase")
 
         with db.connect() as conn:

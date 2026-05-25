@@ -12,7 +12,6 @@ from jeanmichel.tools.workspace_list import make_spec as list_spec
 from jeanmichel.tools.workspace_str_replace import make_spec as replace_spec
 from jeanmichel.tools.workspace_view import make_spec as view_spec
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -148,12 +147,13 @@ class TestWorkspaceStrReplace:
         f = self._make_file(tmp_conv, "file.txt", original_content)
         spec = replace_spec(tmp_conv, has_write_grant=True)
         # Simulate crash: patch Path.replace to raise
+        import contextlib
         import unittest.mock as mock
-        with mock.patch("pathlib.Path.replace", side_effect=OSError("disk full")):
-            try:
-                spec.handler("file.txt", "world", "earth")
-            except OSError:
-                pass
+        with (
+            mock.patch("pathlib.Path.replace", side_effect=OSError("disk full")),
+            contextlib.suppress(OSError),
+        ):
+            spec.handler("file.txt", "world", "earth")
         # Original must be intact (the .tmp write may exist but original is unchanged)
         assert f.read_text() == original_content
 

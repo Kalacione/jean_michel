@@ -164,6 +164,7 @@ class TestGrantEnforcement:
 
     def test_refused_command_audit_row_exit_code_null(self, docker_available, sandbox_spec, tmp_env):
         import jeanmichel.config as cfg
+
         # Use a fresh spec that doesn't grant 'jq' to isolate this test.
         from jeanmichel.tools.bash_sandbox import make_spec
 
@@ -178,7 +179,7 @@ class TestGrantEnforcement:
         conn.commit()
         conn.close()
 
-        spec = make_spec(
+        spec = make_spec(  # noqa: F841 — kept for symmetry with other tests
             conv_folder=sandbox_spec.handler.__closure__[0].cell_contents
             if False else Path(str(cfg.CONVERSATIONS_DIR) + "/testconv0001"),
             conv_id="testconv0001",
@@ -187,7 +188,6 @@ class TestGrantEnforcement:
         )
         # Patch the conv_folder — easiest way is to build it directly.
         from jeanmichel.tools.bash_sandbox import make_spec as _make_spec
-        from jeanmichel.tools._workspace import workspace_root_for
         tmp_conv_path = cfg.CONVERSATIONS_DIR / "testconv0001"
         tmp_conv_path.mkdir(parents=True, exist_ok=True)
         (tmp_conv_path / "workspace").mkdir(exist_ok=True)
@@ -257,9 +257,9 @@ class TestNetworkIsolation:
 
 class TestCleanup:
     def test_cleanup_sandbox_removes_container(self, docker_available, sandbox_spec, tmp_env):
-        from jeanmichel.orchestrator import Orchestrator
-        from jeanmichel.llm import MockClient
         from jeanmichel.config import UserProfile
+        from jeanmichel.llm import MockClient
+        from jeanmichel.orchestrator import Orchestrator
 
         orch = Orchestrator(
             llm=MockClient(script=[]),

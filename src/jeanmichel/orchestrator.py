@@ -26,8 +26,8 @@ from .config import (
     MAX_STEPS_PER_REQUEST,
     REQUEST_WALL_CLOCK_SECONDS,
     TURN_WALL_CLOCK_SECONDS,
-    UserProfile,
     WRITE_STEP_BONUS,
+    UserProfile,
     ensure_dirs,
 )
 from .llm import LLMClient, LLMTimeoutError, _looks_corrupted
@@ -383,7 +383,7 @@ def _build_partial_report(conv_folder, req_id: str, agent_code: str,
 
     fr = lang == "fr"
     if fr:
-        T = {
+        labels = {
             "title": f"## Rapport interrompu de {agent_code}",
             "status": "**Statut :**",
             "reason": "**Raison :**",
@@ -408,7 +408,7 @@ def _build_partial_report(conv_folder, req_id: str, agent_code: str,
             ),
         }
     else:
-        T = {
+        labels = {
             "title": f"## Aborted report from {agent_code}",
             "status": "**Status:**",
             "reason": "**Reason:**",
@@ -435,30 +435,30 @@ def _build_partial_report(conv_folder, req_id: str, agent_code: str,
         }
 
     md_lines = [
-        T["title"],
+        labels["title"],
         "",
-        f"{T['status']} {status}",
-        f"{T['reason']} {error}",
+        f"{labels['status']} {status}",
+        f"{labels['reason']} {error}",
         "",
-        T["files_header"],
+        labels["files_header"],
     ]
     if workspace_files:
         md_lines += [f"- {f}" for f in workspace_files]
         md_lines.append("")
-        md_lines.append(T["files_hint"])
+        md_lines.append(labels["files_hint"])
     else:
-        md_lines.append(T["files_none"])
+        md_lines.append(labels["files_none"])
     md_lines.append("")
 
-    md_lines.append(f"{T['tools_header']} ({len(tool_snippets)})")
+    md_lines.append(f"{labels['tools_header']} ({len(tool_snippets)})")
     if tool_snippets:
         md_lines += [f"- {s}" for s in tool_snippets]
     else:
-        md_lines.append(T["tools_none"])
+        md_lines.append(labels["tools_none"])
     md_lines.append("")
 
-    md_lines.append(T["next_header"])
-    md_lines.append(T["next_body"])
+    md_lines.append(labels["next_header"])
+    md_lines.append(labels["next_body"])
 
     return "\n".join(md_lines), json.dumps(payload, ensure_ascii=False)
 
@@ -954,7 +954,6 @@ class Orchestrator:
                             }))
                             continue
                         briefing = call.arguments.get("briefing", "")
-                        expected = call.arguments.get("expected", "")
                         sup_files = call.arguments.get("support_files") or []
                         missing = [f for f in sup_files
                                    if not (self.conv_folder / f).exists()]
@@ -1361,7 +1360,7 @@ class Orchestrator:
             f"{user_input}"
         )
 
-    def _run_archivist(self, last_user: str, last_answer: str) -> Generator[object, None, None]:
+    def _run_archivist(self, last_user: str, last_answer: str) -> Generator[object]:
         assert self.conv_folder is not None
         summary_path = self.conv_folder / "summary.md"
         previous_summary = ""

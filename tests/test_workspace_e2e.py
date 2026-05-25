@@ -9,11 +9,8 @@ workspace tool calls in sequence.  After the run:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
-
-import pytest
 
 from jeanmichel.config import UserProfile
 from jeanmichel.llm import MockClient
@@ -98,7 +95,6 @@ class TestWorkspaceE2E:
 
     def test_str_replace_via_delegation(self, tmp_env):
         """document-builder creates a file then edits it with workspace_str_replace."""
-        import jeanmichel.config as cfg
 
         orch = _orch([
             LLMResponse(thinking="", content="", tool_calls=[
@@ -215,7 +211,6 @@ class TestWorkspaceE2E:
 
     def test_path_traversal_blocked_via_orchestrator(self, tmp_env):
         """A path traversal attempt via workspace_create_file is refused gracefully."""
-        import jeanmichel.config as cfg
 
         orch = _orch([
             LLMResponse(thinking="", content="", tool_calls=[
