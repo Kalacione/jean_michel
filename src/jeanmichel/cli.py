@@ -35,6 +35,7 @@ from .orchestrator import (
     RecursionLimitReached,
     ReportFindingsReceived,
     SignalConvergenceRedirected,
+    SoftDeadlineReached,
     SummaryUpdated,
     ThoughtCaptured,
     ToolCallEmitted,
@@ -195,6 +196,12 @@ def render_events(console: Console, events: Iterable[object],
             console.print(
                 f"[{C_WARN}]⏱ Wall-clock exceeded ({ev.scope}) — "
                 f"{ev.elapsed_seconds:.1f}s · {ev.agent_code}[/]"
+            )
+
+        elif isinstance(ev, SoftDeadlineReached):
+            console.print(
+                f"[{C_WARN}]⏱ Soft deadline reached ({ev.scope}) — "
+                f"{ev.elapsed_seconds:.0f}s · {ev.agent_code} forced to conclude with partial results[/]"
             )
 
         elif isinstance(ev, RecursionLimitReached):

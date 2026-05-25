@@ -47,9 +47,35 @@ def _int_env(name: str, default: int) -> int:
 MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)
 
 # Wall-clock timeouts (configurable via env vars).
+#
+# Three nested scopes, checked at every iteration of the orchestrator loop:
+#
+# - LLM_CALL_TIMEOUT_SECONDS  → one individual `llm.chat()` call. Raised as
+#   LLMTimeoutError; the orchestrator yields WallClockExceeded(scope="llm_call")
+#   and retries once with a "conclude with what you have" hint (soft recovery)
+#   if the turn budget still allows it.
+# - REQUEST_WALL_CLOCK_SECONDS → total time spent inside ONE agent request
+#   (one agent's step loop, from its first LLM call to return/report_findings).
+#   Each delegated child gets its own fresh request budget.
+# - TURN_WALL_CLOCK_SECONDS   → total time for the WHOLE user turn, shared by
+#   the router and every (recursively delegated) child. The upper safety net.
+#
+# Hitting any of these triggers a hard cut: the in-flight request is failed,
+# a partial report is synthesised from recorded tool calls, and
+# WallClockExceeded + OrchestrationFailed are yielded.
+#
+# To avoid that brutal cut, SOFT_DEADLINE_RATIO (below) fires earlier and
+# forces a graceful wrap-up by restricting the tool payload to the agent's
+# conclusion tool only.
 LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 120)
 REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 900)
 TURN_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_TURN_TIMEOUT", 1800)
+# Soft deadline ratio: once elapsed/budget crosses this fraction, the
+# orchestrator forces a graceful wrap-up (restrict tools to the agent's
+# conclusion tool and inject a "conclude now with partial results" message).
+# 0.75 means at 75 % of the wall-clock the agent must conclude with whatever
+# it has. Set to 1.0 to disable (hard cut only).
+SOFT_DEADLINE_RATIO = float(os.environ.get("JEANMICHEL_SOFT_DEADLINE_RATIO", "0.75"))
 
 # Workspace soft quota per conversation, in bytes.
 WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB

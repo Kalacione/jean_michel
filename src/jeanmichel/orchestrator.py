@@ -25,6 +25,7 @@ from .config import (
     MAX_STEP_BONUS,
     MAX_STEPS_PER_REQUEST,
     REQUEST_WALL_CLOCK_SECONDS,
+    SOFT_DEADLINE_RATIO,
     TURN_WALL_CLOCK_SECONDS,
     WRITE_STEP_BONUS,
     UserProfile,
@@ -132,6 +133,19 @@ class SummaryUpdated:
 @dataclass
 class WallClockExceeded:
     scope: str         # "llm_call" | "request" | "turn"
+    agent_code: str
+    elapsed_seconds: float
+
+
+@dataclass
+class SoftDeadlineReached:
+    """Emitted when the orchestrator forces a graceful wrap-up.
+
+    The agent is then restricted to its conclusion tool only
+    (report_findings for specialists, return_to_user for router/finalizer)
+    and asked to produce a partial result with what it already has.
+    """
+    scope: str         # "request" | "turn"
     agent_code: str
     elapsed_seconds: float
 
@@ -700,6 +714,15 @@ class Orchestrator:
         start_ts = time.monotonic()
         _timeout_scope: str | None = None
         _timeout_elapsed: float = 0.0
+        _soft_deadline_triggered = False
+        # Conclusion tool the agent is allowed to keep once the soft deadline
+        # fires. None for unknown roles (no restriction applied).
+        if agent.role == "specialist":
+            _conclusion_tool = "report_findings"
+        elif agent.role in ("router", "finalizer"):
+            _conclusion_tool = "return_to_user"
+        else:
+            _conclusion_tool = None
 
         try:
             llm_steps = 0
@@ -714,6 +737,43 @@ class Orchestrator:
                     _timeout_scope = "turn"
                     _timeout_elapsed = now - self._turn_started_at
                     break
+
+                # Soft deadline: force a graceful wrap-up. We restrict the
+                # tool payload to the agent's conclusion tool and inject an
+                # orchestrator message asking for a partial conclusion. Only
+                # fires once per request.
+                if (
+                    not _soft_deadline_triggered
+                    and _conclusion_tool is not None
+                    and SOFT_DEADLINE_RATIO < 1.0
+                ):
+                    elapsed_req = now - start_ts
+                    elapsed_turn = now - self._turn_started_at
+                    soft_req = REQUEST_WALL_CLOCK_SECONDS * SOFT_DEADLINE_RATIO
+                    soft_turn = TURN_WALL_CLOCK_SECONDS * SOFT_DEADLINE_RATIO
+                    if elapsed_req > soft_req or elapsed_turn > soft_turn:
+                        _soft_deadline_triggered = True
+                        _soft_scope = "request" if elapsed_req > soft_req else "turn"
+                        _soft_el = elapsed_req if _soft_scope == "request" else elapsed_turn
+                        tools_payload = [
+                            t for t in tools_payload
+                            if t.get("function", {}).get("name") == _conclusion_tool
+                        ]
+                        running_user_text = (
+                            f"[ORCHESTRATOR] Time budget almost exhausted "
+                            f"({_soft_el:.0f}s elapsed on {_soft_scope}). "
+                            f"STOP all further exploration or delegation. Call "
+                            f"{_conclusion_tool} NOW with the partial conclusion "
+                            "you can draw from the information already gathered "
+                            "(plan.md, workspace, prior tool results). State "
+                            "explicitly in your answer that the results are "
+                            "partial because the time budget was reached."
+                        )
+                        yield SoftDeadlineReached(
+                            scope=_soft_scope,
+                            agent_code=agent_code,
+                            elapsed_seconds=_soft_el,
+                        )
 
                 try:
                     response: LLMResponse = self.llm.chat(

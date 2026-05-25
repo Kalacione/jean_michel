@@ -13,6 +13,7 @@ from jeanmichel.orchestrator import (
     FinalAnswer,
     OrchestrationFailed,
     Orchestrator,
+    SoftDeadlineReached,
     WallClockExceeded,
 )
 
@@ -175,3 +176,65 @@ class TestTurnWallClock:
         wce = [e for e in events
                if isinstance(e, WallClockExceeded) and e.agent_code == "jean-michel"]
         assert len(wce) == 1
+
+
+class TestSoftDeadline:
+    def test_soft_deadline_emits_event_and_lets_agent_conclude(
+        self, tmp_env, monkeypatch
+    ):
+        """Soft deadline crossed → SoftDeadlineReached + FinalAnswer, no hard cut."""
+        # Call 1 (turn_started_at) → base
+        # Call 2 (start_ts)        → base
+        # Calls 3+ (loop)          → base + 600 (past soft=500, below hard=1000)
+        base = time.monotonic()
+        _calls = [0]
+
+        def fake_monotonic() -> float:
+            _calls[0] += 1
+            return base if _calls[0] <= 2 else base + 600.0
+
+        monkeypatch.setattr(orch_mod.time, "monotonic", fake_monotonic)
+        monkeypatch.setattr(orch_mod, "REQUEST_WALL_CLOCK_SECONDS", 1000)
+        monkeypatch.setattr(orch_mod, "TURN_WALL_CLOCK_SECONDS", 99_999)
+        monkeypatch.setattr(orch_mod, "SOFT_DEADLINE_RATIO", 0.5)
+
+        orch = _orch(MockClient(script=[
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "partial ok"}),
+            ]),
+        ]))
+        events = list(orch.run("test"))
+
+        soft = [e for e in events if isinstance(e, SoftDeadlineReached)]
+        assert len(soft) >= 1
+        assert soft[0].scope == "request"
+        assert soft[0].elapsed_seconds >= 500
+        # The agent should conclude, not be hard-cut.
+        assert any(isinstance(e, FinalAnswer) for e in events)
+        assert not any(isinstance(e, WallClockExceeded) for e in events)
+
+    def test_soft_deadline_disabled_when_ratio_is_one(self, tmp_env, monkeypatch):
+        """SOFT_DEADLINE_RATIO=1.0 disables the soft mechanism entirely."""
+        base = time.monotonic()
+        _calls = [0]
+
+        def fake_monotonic() -> float:
+            _calls[0] += 1
+            # Stay safely below all deadlines so nothing fires.
+            return base if _calls[0] <= 2 else base + 10.0
+
+        monkeypatch.setattr(orch_mod.time, "monotonic", fake_monotonic)
+        monkeypatch.setattr(orch_mod, "REQUEST_WALL_CLOCK_SECONDS", 1000)
+        monkeypatch.setattr(orch_mod, "TURN_WALL_CLOCK_SECONDS", 99_999)
+        monkeypatch.setattr(orch_mod, "SOFT_DEADLINE_RATIO", 1.0)
+
+        orch = _orch(MockClient(script=[
+            LLMResponse(thinking="", content="", tool_calls=[
+                ToolCall(name="return_to_user", arguments={"answer": "ok"}),
+            ]),
+        ]))
+        events = list(orch.run("test"))
+
+        assert not any(isinstance(e, SoftDeadlineReached) for e in events)
+        assert any(isinstance(e, FinalAnswer) for e in events)
+
