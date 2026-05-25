@@ -49,6 +49,17 @@ from .tools._errors import CRITICAL_ERROR_CODES, tool_error
 from .tools._workspace import quota_remaining, workspace_root_for
 from .tools.conv_status import budget_snapshot as _budget_snapshot
 
+# Tools the router LOSES once it has delegated at least once in this
+# conversation (i.e. plan.md exists). Router must orchestrate from that point
+# on, not execute data-gathering itself — otherwise the fetched data is
+# trapped in its private context, unreachable to delegated children.
+_ROUTER_DEEP_RESEARCH_FORBIDDEN_TOOLS: frozenset[str] = frozenset({
+    "web_search",
+    "wikipedia_search",
+    "wikipedia_fetch",
+    "wikipedia_summary",
+})
+
 # ---- Events emitted to the CLI -------------------------------------------
 
 @dataclass
@@ -775,11 +786,29 @@ class Orchestrator:
                             elapsed_seconds=_soft_el,
                         )
 
+                # Deep-research guard for the router. Once any delegation has
+                # happened in this conversation (signalled by plan.md existing),
+                # the router must orchestrate, not execute data-gathering
+                # itself. Stripping these tools forces it to delegate to
+                # specialists that persist their results to workspace, instead
+                # of trapping web_search results in its private context where
+                # children can never reach them.
+                effective_tools = tools_payload
+                if (
+                    agent.role == "router"
+                    and (self.conv_folder / "plan.md").exists()
+                ):
+                    effective_tools = [
+                        t for t in tools_payload
+                        if t.get("function", {}).get("name")
+                        not in _ROUTER_DEEP_RESEARCH_FORBIDDEN_TOOLS
+                    ]
+
                 try:
                     response: LLMResponse = self.llm.chat(
                         system=system,
                         user=running_user_text,
-                        tools=tools_payload,
+                        tools=effective_tools,
                         temperature=agent.temperature,
                         thinking=agent.thinking_mode,
                     )

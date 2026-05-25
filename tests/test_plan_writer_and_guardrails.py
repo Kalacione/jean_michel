@@ -244,3 +244,66 @@ class TestMaxDelegationsGuardrail:
         events2 = list(orch.run("Second question"))
         fa2 = next(e for e in events2 if isinstance(e, FinalAnswer))
         assert fa2.text == "turn2"
+
+
+# ---- Router deep-research guard --------------------------------------------
+
+class _SpyLLM:
+    """MockClient wrapper that records the `tools` payload at each chat call."""
+
+    def __init__(self, script: list[LLMResponse]) -> None:
+        self._inner = MockClient(script=script)
+        self.tools_per_call: list[list[str]] = []
+
+    def chat(self, *, system, user, tools, temperature, thinking):
+        self.tools_per_call.append(
+            [t.get("function", {}).get("name", "") for t in tools]
+        )
+        return self._inner.chat(
+            system=system, user=user, tools=tools,
+            temperature=temperature, thinking=thinking,
+        )
+
+
+class TestRouterDeepResearchGuard:
+    def test_web_search_dropped_once_plan_md_exists(self, tmp_env):
+        """After the router's first delegation (plan.md created), web_search
+        is filtered out of subsequent tools_payload calls — the router must
+        delegate, not gather data itself."""
+        spy = _SpyLLM([
+            # Call 1 (router, no plan.md yet) → delegate
+            _resp(_tc("delegate_to", agent_code="web-search-specialist",
+                      briefing="find X", expected="report_findings")),
+            # Call 2 (specialist) → report
+            _resp(_tc("report_findings", summary="found X", confidence="high")),
+            # Call 3 (router, plan.md now exists) → must not see web_search
+            _resp(_tc("return_to_user", answer="ok")),
+            # Call 4 (archivist)
+            _resp(_tc("return_to_user", answer="archived")),
+        ])
+        orch = Orchestrator(llm=spy, profile=PROFILE, mode="analyse")
+        list(orch.run("question"))
+
+        # First router call: plan.md does not exist yet → web_search present
+        assert "web_search" in spy.tools_per_call[0]
+        # Third call is the router resuming after the delegation → plan.md
+        # exists → web_search must have been stripped.
+        assert "web_search" not in spy.tools_per_call[2]
+        # delegate_to remains available so the router can still orchestrate.
+        assert "delegate_to" in spy.tools_per_call[2]
+
+    def test_trivial_request_keeps_web_search(self, tmp_env):
+        """A trivial request that does not trigger any delegation keeps the
+        full toolset (no plan.md created → no stripping)."""
+        spy = _SpyLLM([
+            # Router answers directly without delegating
+            _resp(_tc("return_to_user", answer="42")),
+            # Archivist
+            _resp(_tc("return_to_user", answer="archived")),
+        ])
+        orch = Orchestrator(llm=spy, profile=PROFILE, mode="analyse")
+        list(orch.run("trivial question"))
+
+        # Router's call (index 0) should still have web_search.
+        assert "web_search" in spy.tools_per_call[0]
+
