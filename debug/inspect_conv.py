@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -75,6 +76,60 @@ def parse_kind_agent(filename: str) -> tuple[str, str]:
     return agent, kind
 
 
+def _render_todo_list(todos: list[dict]) -> str:
+    _icons = {
+        "completed": "✅", "in_progress": "🔄", "pending": "⏸ ",
+        "skipped": "⏭ ", "blocked": "🚫",
+    }
+    n_done = sum(1 for t in todos if t.get("status") in ("completed", "skipped"))
+    lines = [f"  {n_done}/{len(todos)} done"]
+    for item in todos:
+        status = item.get("status", "pending")
+        icon = _icons.get(status, "⏸ ")
+        item_id = item.get("id", "?")
+        title = item.get("title", "")
+        extras = []
+        if item.get("depends_on") and status == "pending":
+            extras.append(f"depends_on: {', '.join(item['depends_on'])}")
+        if status not in ("completed", "skipped") and item.get("note"):
+            extras.append(f"— {item['note']}")
+        suffix = f"  ({', '.join(extras)})" if extras else ""
+        lines.append(f"  {icon} {item_id}  {title}{suffix}")
+    return "\n".join(lines)
+
+
+def _print_todo_snapshots(folder: Path) -> None:
+    conv_todo = folder / "todo.json"
+    request_todos = sorted(folder.glob("todo_*.json"))
+
+    if not conv_todo.exists() and not request_todos:
+        return
+
+    print(c("bold", "── TODO snapshots"))
+
+    if conv_todo.exists():
+        try:
+            data = json.loads(conv_todo.read_text(encoding="utf-8"))
+            todos = data.get("todos", []) if isinstance(data, dict) else []
+            updated = data.get("updated_at", "") if isinstance(data, dict) else ""
+            print(c("green", f"  [conv-level] todo.json  (updated: {updated})"))
+            print(c("dim", _render_todo_list(todos)))
+        except (json.JSONDecodeError, OSError) as e:
+            print(c("red", f"  [conv-level] todo.json — parse error: {e}"))
+        print()
+
+    for req_todo in request_todos:
+        try:
+            data = json.loads(req_todo.read_text(encoding="utf-8"))
+            todos = data.get("todos", []) if isinstance(data, dict) else []
+            updated = data.get("updated_at", "") if isinstance(data, dict) else ""
+            print(c("yellow", f"  [request-level] {req_todo.name}  (updated: {updated})"))
+            print(c("dim", _render_todo_list(todos)))
+        except (json.JSONDecodeError, OSError) as e:
+            print(c("red", f"  [request-level] {req_todo.name} — parse error: {e}"))
+        print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect conversation artifacts.")
     parser.add_argument("conv_id", help="Conversation ID or unique prefix.")
@@ -120,6 +175,9 @@ def main() -> None:
 
     if args.list:
         return
+
+    # Show TODO snapshots if present
+    _print_todo_snapshots(folder)
 
     # Show conversation journal last
     journal = folder / "conversation.md"
