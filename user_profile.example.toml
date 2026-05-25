@@ -1,5 +1,11 @@
-# Free-form description of the human, injected verbatim into the
-# `# CONTEXT > Human` block of every agent prompt.
-description = """
-L'humain auquel tu réponds est un mâle franco-canadien, la quarantaine, localisé à Montréal.
-"""
+# Structured user profile — fields are injected as key:value pairs into the
+# `# CONTEXT > ## Human` block of every agent prompt.
+# All fields are optional. Use `notes` for any free-form information.
+
+name        = "Alice"
+birthdate   = "1990-06-15"
+city        = "Paris"
+country     = "France"
+language    = "french"
+interests   = "literature, history, hiking"
+# notes     = "Any free-form context that doesn't fit the fields above."

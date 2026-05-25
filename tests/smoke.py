@@ -61,7 +61,7 @@ def main() -> int:
 
         _init_db(tmpdir)
 
-        profile = config.UserProfile(description="test user — Montréal, FR.")
+        profile = config.UserProfile(city="Montréal", language="french", notes="test user")
 
         # Scripted LLM responses.
         script = [

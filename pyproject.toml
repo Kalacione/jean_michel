@@ -16,6 +16,8 @@ dependencies = [
   "prompt_toolkit>=3.0.47",
   # Config files
   "tomli>=2.0.1; python_version < '3.11'",
+  # Wikipedia search and page retrieval
+  "wikipedia>=1.4.0",
   # Future: web frontend
   # "fastapi>=0.115.0",
   # "uvicorn>=0.30.0",
@@ -43,5 +45,11 @@ packages = ["src/jeanmichel"]
 line-length = 100
 target-version = "py314"
 
+[tool.pytest.ini_options]
+markers = [
+    "docker: tests that require a running Docker daemon",
+]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]

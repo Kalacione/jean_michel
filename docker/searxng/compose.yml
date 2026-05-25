@@ -1,0 +1,14 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: jean-michel-searxng
+    network_mode: host
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID

@@ -15,6 +15,7 @@ class Agent:
     mission: str
     thinking_mode: bool
     temperature: float
+    sandbox_image: str | None = None   # override Docker image for bash_sandbox
 
 
 @dataclass
@@ -33,6 +34,7 @@ class Conversation:
     folder_path: str
     user_language: str | None
     title: str | None = None
+    mode: str = "analyse"
 
 
 @dataclass
@@ -46,6 +48,7 @@ class Request:
     inbound_briefing: str | None
     expected_outcome: str | None
     status: str = "pending"
+    turn_index: int = 0
 
 
 @dataclass
@@ -60,3 +63,4 @@ class LLMResponse:
     thinking: str
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    corrupted: bool = False

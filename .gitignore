@@ -85,11 +85,21 @@ reports/
 *.log
 logs/
 
+# Backups
+*.bak
+*.backup
+*.old
+*.vieux
+backups/*
+
+
 # Local overrides
 config.local.yaml
 
 
 # Local datas
 jeanmichel.db
+jeanmichel.db-shm
+jeanmichel.db-wal
 user_profile.toml
 conversations/*
