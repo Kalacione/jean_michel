@@ -38,6 +38,7 @@ from .orchestrator import (
     SoftDeadlineReached,
     SummaryUpdated,
     ThoughtCaptured,
+    TodoListUpdated,
     ToolCallEmitted,
     ToolResponseRecorded,
     TurnStarted,
@@ -74,7 +75,7 @@ def render_splash(console: Console, model: str, mode: str = "analyse") -> None:
 # ---- Event renderer -------------------------------------------------------
 
 def render_events(console: Console, events: Iterable[object],
-                  show_thoughts: bool) -> None:
+                  show_thoughts: bool, mode: str = "") -> None:
     gen = iter(events)
     awaiting_human = False  # True right after HumanQuestionAsked — skip spinner
     while True:
@@ -204,6 +205,9 @@ def render_events(console: Console, events: Iterable[object],
                 f"{ev.elapsed_seconds:.0f}s · {ev.agent_code} forced to conclude with partial results[/]"
             )
 
+        elif isinstance(ev, TodoListUpdated):
+            _render_todo_panel(console, ev, mode)
+
         elif isinstance(ev, RecursionLimitReached):
             console.print(
                 f"[{C_WARN}]⚠ recursion limit reached at depth {ev.depth} "
@@ -221,6 +225,56 @@ def render_events(console: Console, events: Iterable[object],
                 border_style="green",
                 padding=(1, 2),
             ))
+
+
+def _render_todo_panel(console: Console, ev: TodoListUpdated, mode: str) -> None:
+    if mode == "vocal":
+        return
+    todos = list(ev.todos)
+    stats = ev.stats or {}
+    n_done = stats.get("completed", 0) + stats.get("skipped", 0)
+    n_total = stats.get("total", len(todos))
+
+    _icons = {
+        "completed": "✅",
+        "in_progress": "🔄",
+        "pending": "⏸ ",
+        "skipped": "⏭ ",
+        "blocked": "🚫",
+    }
+
+    lines = []
+    for item in todos:
+        status = item.get("status", "pending")
+        icon = _icons.get(status, "⏸ ")
+        item_id = item.get("id", "?")
+        title = item.get("title", "")
+        extras = []
+        if item.get("depends_on") and status == "pending":
+            extras.append(f"depends_on: {', '.join(item['depends_on'])}")
+        if status == "in_progress":
+            extras.append("in_progress")
+        if item.get("note"):
+            extras.append(f"— {item['note']}")
+        suffix = f"  ({', '.join(extras)})" if extras else ""
+        lines.append(f"{icon} {item_id}  {title}{suffix}")
+
+    body = Text("\n".join(lines))
+
+    if ev.scope == "conversation":
+        title = f"TODO · {ev.agent} · {n_done}/{n_total} done"
+        border_style = "cyan"
+        padding = (0, 1)
+        console.print(Panel(body, title=title, border_style=border_style, padding=padding))
+    else:
+        req_short = (ev.request_id or "")[:8]
+        title = f"sub-TODO · {ev.agent} · req={req_short}… · {n_done}/{n_total} done"
+        border_style = "dim"
+        padding = (0, 1)
+        # indent by prepending spaces to simulate nesting
+        console.print("  ", end="")
+        console.print(Panel(Text(str(body), style="dim"), title=title,
+                            border_style=border_style, padding=padding))
 
 
 def _truncate(value: object, max_len: int = 60) -> str:
@@ -365,7 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     # --once: non-interactive single-turn mode (used by jm.sh --meta-analysis etc.)
     if args.once:
         try:
-            render_events(console, orch.run(args.once), show_thoughts=args.show_thoughts)
+            render_events(console, orch.run(args.once), show_thoughts=args.show_thoughts, mode=args.mode)
         except Exception as e:  # noqa: BLE001
             console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
         finally:
@@ -391,7 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         try:
-            render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts)
+            render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts, mode=args.mode)
         except Exception as e:  # noqa: BLE001
             console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
             orch.cleanup_sandbox()
