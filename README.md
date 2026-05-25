@@ -12,18 +12,17 @@ Une requête humaine arrive à **Jean-Michel** (agent routeur). Il la formalise,
 Quand plusieurs spécialistes contribuent, l'agent **synthesizer** fusionne les sorties en une seule réponse cohérente pour l'humain, dans la langue détectée.
 
 Agents actifs :
-- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement. Ne planifie pas, n'analyse pas — orchestre.
-- **planner** (planner) — pour les tâches `deep_research`, analyse la problématique, identifie les inconnues, décompose en étapes séquencées et écrit `workspace/plan.md`. Jean-Michel suit ce plan sans reformuler la stratégie lui-même.
+- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement. Orchestre, ne synthétise pas.
 - **summarizer** (specialist) — résumé de texte
 - **weather-specialist** (specialist) — météo via open-meteo
-- **web-search-specialist** (specialist) — recherche web via SearXNG (méta-moteur local). Retourne un résumé compact vers jean-michel ; contenu complet dans le workspace.
+- **web-search-specialist** (specialist) — recherche web via SearXNG (méta-moteur local, conteneur Docker). Retourne un résumé compact vers jean-michel ; résultats dédoublonnés par hostname et similarité de titre, contenu complet persisté dans le workspace.
 - **wikipedia-specialist** (specialist) — recherche et extraction d'articles Wikipedia
-- **comparator-specialist** (specialist) — orchestre des recherches en plusieurs entités et produit un verdict comparatif structuré
-- **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une cartographie épistémique (claims supportés / affaiblis / étape suivante suggérée)
+- **comparator-specialist** (specialist) — orchestre des recherches multi-entités et produit un verdict comparatif structuré
+- **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une cartographie épistémique (claims supportés / affaiblis / étape suivante)
 - **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace. Reçoit uniquement du matériel final validé — toujours en dernière étape du pipeline.
 - **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
-- **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect` et produit des propositions d'amélioration dans le workspace
-- **code-runner** (specialist) — écrit des scripts dans le workspace de la conversation et les exécute dans le sandbox Docker : cycle complet écriture → exécution en un seul tour
+- **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect_*` et produit des propositions d'amélioration dans le workspace
+- **code-runner** (specialist) — écrit des scripts dans le workspace et les exécute dans le sandbox Docker : cycle complet écriture → exécution en un seul tour
 - **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
 - **archivist** (finalizer) — invoqué uniquement par l'orchestrateur en modes `chat`/`vocal`, met à jour le `summary.md` de la conversation après chaque tour
 
@@ -76,26 +75,31 @@ Détails et rationale dans `docs/PROMPT_SKELETON.md`.
 
 Les agents communiquent par **tool calls natifs Gemma 4**, jamais par texte libre :
 
-- `delegate_to(agent_code, briefing, support_files, expected)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur. Le retour est un objet structuré `{agent, artifact, answer, converged?}` — l'agent appelant utilise le champ `artifact` (filename relatif au dossier de conversation) pour le passer en `support_files` au prochain delegate, sans recopier le contenu. Si `converged: true`, l'enfant a signalé qu'il a atteint sa limite de profondeur utile — ne pas re-déléguer la même question.
-- `signal_convergence(synthesis, open_questions?)` — exit structuré pour un agent à `depth >= 2` quand l'analyse a atteint son plafond et que continuer serait redondant. Différent de `return_to_user` : signale explicitement au parent que la profondeur est épuisée. Uniquement disponible à `recursion_depth >= 2`.
+- `delegate_to(agent_code, briefing, support_files, expected_outcome)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur. Le retour est un objet structuré `{agent, artifact, answer, converged?, files_produced?}` — l'agent appelant utilise le champ `artifact` (filename relatif au dossier de conversation) pour le passer en `support_files` au prochain delegate, sans recopier le contenu. Si `converged: true`, l'enfant a signé sa convergence via `report_findings` — ne pas re-déléguer la même question.
+- `report_findings(summary, confidence, files_produced?, sub_questions?, blockers?)` — exit structuré pour un spécialiste signalant la convergence. Remplace l'ancien `signal_convergence` (déprécié, redirigé côté orchestrateur).
 - `ask_human(question, why)` — pause la requête, demande à l'humain. `why` obligatoire. Une seule question par requête.
 - `return_to_user(answer)` — réponse finale.
 
 Parsing structuré gratuit, zéro regex.
 
+**Contrat outil uniforme** : tous les outils retournent du JSON avec un champ obligatoire `summary` (via `tool_ok(summary, **fields)`) ou `error` (via `tool_error(code, message, **extra)`). L'orchestrateur lit ce `summary` pour journaliser dans `plan.md` sans cas particulier par outil.
+
 L'**archivist** est le seul agent non délégable : il est invoqué uniquement par l'orchestrateur, jamais par un autre agent.
 
 ## Récursion & garde-fous
 
-- **Profondeur max** : `MAX_RECURSION_DEPTH = 5`. Compteur incrémenté uniquement par `delegate_to`. `ask_human`, l'appel au `synthesizer`, et l'appel à l'`archivist` n'incrémentent pas.
-- Au-delà de 5, l'orchestrateur rejette les nouvelles délégations avec un `tool_response` d'erreur explicite et force l'agent à conclure.
-- **Step budget** : `MAX_STEPS_PER_REQUEST = 15` itérations tool-call/tool-response par requête. Filet anti-tool-loop. Configurables dans `config.py`.
+- **Profondeur max** : `MAX_RECURSION_DEPTH = 10`. Compteur incrémenté uniquement par `delegate_to`. `ask_human`, l'appel au `synthesizer`, et l'appel à l'`archivist` n'incrémentent pas.
+- Au-delà de la limite, l'orchestrateur rejette les nouvelles délégations avec un `tool_response` d'erreur explicite et force l'agent à conclure.
+- **Step budget** : `MAX_STEPS_PER_REQUEST = 20` itérations tool-call/tool-response par requête (filet anti-tool-loop), avec bonus de `+3` par écriture workspace réussie (capé à `+15`). Configurables dans [config.py](src/jeanmichel/config.py).
+- **Plafond global de délégations par tour** : `MAX_DELEGATIONS = 8` (env `JEANMICHEL_MAX_DELEGATIONS`). Évite l'aspiration combinatoire.
+- **Wall-clock** : `LLM_CALL_TIMEOUT = 120s`, `REQUEST_WALL_CLOCK = 900s`, `TURN_WALL_CLOCK = 1800s`.
+- **Détection de duplications** : avant exécution, chaque tool-call est réduit à un fingerprint normalisé (whitespace/casing/défauts égalisés ; pour les outils de lecture, seule l'identité du chemin compte — un `view_range` différent n'ouvre pas une nouvelle porte). Sur duplicate, le résultat caché est rejoué (1ère fois en payload complet, puis simple notice avec compteur). 3 duplicates consécutifs sur des outils non-idempotents → force-stop.
 - **`ask_human`** : une seule par requête. Toute tentative supplémentaire reçoit un `tool_response` d'erreur.
-- **Convergence gate** (`signal_convergence`) : à `depth >= 2`, `critical-thinker`, `meta-analyst` et `synthesizer` voient le tool `signal_convergence`. Paradigme `convergence_gate` (id=100) les instruit de l'utiliser quand l'analyse a atteint son plafond au lieu de continuer à déléguer. Évite les boucles d'analyse mutuelle sans nouvelles informations.
-- **Grounded analysis** : paradigme `grounded_analysis` (id=101) sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` (id=102) sur `jean-michel` — impose le pipeline complet : GATHER (web-search/wikipedia) → CRITIQUE (critical-thinker) → BUILD (document-builder). Le document-builder n'est jamais appelé avant les phases de recherche et de critique.
-- **Pipeline de recherche prescrit** : les agents de collecte (web-search-specialist, wikipedia-specialist) retournent un résumé compact structuré (Established / Not found / Suggested next step / Workspace file) — le contenu brut va dans le workspace, pas dans le briefing de retour. Le critical-thinker ajoute une section `Orchestrator summary` (claims supportés / affaiblis / étape suivante).
-- **Méthodes scientifiques** : paradigmes `evidence_hierarchy`, `burden_of_proof`, `occam_razor` sur jean-michel et critical-thinker. La charge de la preuve incombe à celui qui affirme ; les preuves sont pondérées par leur niveau (anecdote < observationnelle < RCT < méta-analyse).
-- **Métacognition orchestrateur** : paradigme `orchestrator_inquiry_loop` sur jean-michel — réévalue après chaque retour d'agent (ai-je dérivé ? puis-je synthétiser ?). Paradigme `task_plan_file` — pour les tâches multi-tours, jean-michel maintient `workspace/plan.md` (Goal / Done / Open / Blocked) mis à jour après chaque étape majeure.
+- **`report_findings`** : exit structuré pour les spécialistes ; signale la convergence et expose `files_produced` au parent.
+- **Grounded analysis** : paradigme `grounded_analysis` sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` sur `jean-michel` — impose le pipeline complet : GATHER (web-search/wikipedia) → CRITIQUE (critical-thinker) → BUILD (document-builder).
+- **Pipeline de recherche prescrit** : les agents de collecte (web-search-specialist, wikipedia-specialist) retournent un résumé compact structuré — le contenu brut va dans le workspace, pas dans le briefing de retour.
+- **Méthodes scientifiques** : paradigmes `evidence_hierarchy`, `burden_of_proof`, `occam_razor` sur jean-michel et critical-thinker.
+- **Métacognition orchestrateur** : paradigme `orchestrator_inquiry_loop` sur jean-michel — réévalue après chaque retour d'agent. `plan.md` est maintenu déterministiquement par l'orchestrateur (module `plan_writer`), pas par un LLM.
 
 ## Persistance
 
@@ -210,11 +214,11 @@ description = "L'humain auquel tu réponds est un mâle franco-canadien, la quar
 
 ## Migrations DB
 
-Les évolutions du schéma sont versionnées sous `db/migrate_NNN_*.sql`. Chaque migration est idempotente. Le `schema.sql` consolidé reflète l'état cible (toutes migrations appliquées) et peut être utilisé pour repartir à plat.
+Les évolutions du schéma sont versionnées sous `db/migrations/migrate_NNN_*.sql` (50+ migrations à ce jour). Chaque migration est idempotente. Le `db/schema.sql` consolidé reflète l'état cible (toutes migrations appliquées) et peut être utilisé pour repartir à plat.
 
 ```bash
 # Migration ciblée sur instance existante
-sqlite3 jeanmichel.db < db/migrate_004_consolidate_critical_thinking.sql
+sqlite3 jeanmichel.db < db/migrations/migrate_054_exact_tool_signatures.sql
 
 # Repartir à plat
 rm jeanmichel.db && sqlite3 jeanmichel.db < db/schema.sql
@@ -230,8 +234,7 @@ jeanmichel/
 ├── user_profile.toml         # description libre de l'humain (édité localement)
 ├── db/
 │   ├── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed consolidé)
-│   ├── migrate_005_alpine_and_introspection.sql  # sandbox_image col + meta-analyst agent
-│   └── migrate_006_code_runner.sql               # code-runner agent + routing fix (agents≠tools)
+│   └── migrations/           # migrate_NNN_*.sql (50+ migrations idempotentes)
 ├── debug/
 │   ├── inspect_conv.py       # inspection des artefacts d'une conversation
 │   ├── export_db.py          # dump SQL de la base de données
@@ -239,9 +242,10 @@ jeanmichel/
 │   ├── clean_convs.py        # purge des anciennes conversations
 │   └── paradigm_matrix.py    # visualisation matrice agents × paradigmes × modes
 ├── docker/
-│   └── sandbox/
-│       ├── Dockerfile        # Python 3.13 Alpine (défaut, tag py-alpine)
-│       └── Dockerfile.node   # Node 22 Alpine (tag node-alpine)
+│   ├── sandbox/
+│   │   ├── Dockerfile        # Python 3.13 Alpine (défaut, tag py-alpine)
+│   │   └── Dockerfile.node   # Node 22 Alpine (tag node-alpine)
+│   └── searxng/              # méta-moteur de recherche local (web_search)
 ├── docs/
 │   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
 │   ├── GEMMA4.md             # référence des tokens et comportements Gemma 4
@@ -252,15 +256,22 @@ jeanmichel/
 │   ├── llm.py                # client Ollama + MockClient
 │   ├── db.py                 # accès SQLite
 │   ├── prompts.py            # rendu du squelette système (output contract adapté au rôle)
+│   ├── plan_writer.py        # journalisation déterministe de workspace/plan.md
 │   ├── tools/                # sous-package outils natifs Python
 │   │   ├── __init__.py       # build_registry(conv_folder) → dict[str, ToolSpec]
 │   │   ├── _base.py          # dataclass ToolSpec
+│   │   ├── _errors.py        # tool_ok / tool_error — contrat JSON uniforme
 │   │   ├── _workspace.py     # primitives partagées (path validation, quota)
 │   │   ├── clock.py          # heure courante (stateless)
 │   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
-│   │   ├── self_inspect.py           # snapshot JSON de la config système (stateless)
+│   │   ├── conv_status.py    # état budget / step count (context-bound)
+│   │   ├── conv_history_scan.py  # scan d'historique conversationnel (context-bound)
+│   │   ├── self_inspect_architecture.py  # vue archi (agents, rôles, paradigmes)
+│   │   ├── self_inspect_config.py        # vue config (paths, timeouts, modèles)
+│   │   ├── self_inspect_activity.py      # vue activité (conversations, requêtes)
 │   │   ├── weather.py        # météo via open-meteo (stateless)
 │   │   ├── wikipedia.py      # recherche + lecture Wikipedia (stateless)
+│   │   ├── web_search.py     # recherche web via SearXNG local + dédoublonnage (stateless)
 │   │   ├── workspace_create_file.py  # création fichier dans workspace (context-bound)
 │   │   ├── workspace_str_replace.py  # édition atomique (context-bound)
 │   │   ├── workspace_view.py         # lecture fichier/dossier (context-bound)
@@ -269,7 +280,7 @@ jeanmichel/
 │   ├── persistence.py        # écriture artefacts disque + frontmatter
 │   ├── models.py             # dataclasses
 │   └── config.py             # paths, constantes, user_profile loading
-├── tests/
+├── tests/                    # 274 tests pytest + smoke + demo CLI
 │   ├── conftest.py
 │   ├── smoke.py              # smoke test du flow complet (MockClient)
 │   └── demo_cli.py           # démo visuelle du rendu CLI
@@ -278,4 +289,4 @@ jeanmichel/
 
 ## État
 
-12 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, code-runner, synthesizer, archivist. Outils natifs : clock, conv_read_file, self_inspect, weather, wikipedia (search + get_page), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
+13 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, web-search-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, code-runner, synthesizer, archivist. Outils natifs : clock, conv_read_file, conv_status, conv_history_scan, self_inspect_architecture, self_inspect_config, self_inspect_activity, weather, wikipedia (search + get_page), web_search (SearXNG + dédoublonnage), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). 274 tests pytest verts. CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
