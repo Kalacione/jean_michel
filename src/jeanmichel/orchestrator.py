@@ -206,6 +206,15 @@ class SignalConvergenceRedirected:
     agent_code: str
 
 
+@dataclass(frozen=True)
+class TodoListUpdated:
+    agent: str
+    scope: str           # "conversation" | "request"
+    request_id: str | None
+    todos: tuple         # snapshot complet (tuple pour frozen)
+    stats: dict
+
+
 # Roles that may NOT call return_to_user (must use report_findings instead).
 _SPECIALIST_ROLES = frozenset({"specialist"})
 
@@ -681,6 +690,7 @@ class Orchestrator:
             request_id_provider=_req_id_provider,
             sandbox_grants=sandbox_grants if sandbox_grants else None,
             sandbox_image=agent.sandbox_image,
+            agent_role=agent.role,
         )
 
         # Multi-step loop: tool_call -> tool_response -> ... until return_to_user.
@@ -1303,6 +1313,24 @@ class Orchestrator:
                     _call_results[fp] = result
                     yield ToolResponseRecorded(agent_code=agent_code,
                                                tool_name=call.name, response=result)
+                    # Emit TodoListUpdated after a successful manage_todo_list call.
+                    if call.name == "manage_todo_list":
+                        try:
+                            _tdata = json.loads(result)
+                            if "error_code" not in _tdata and isinstance(_tdata.get("todos"), list):
+                                _scope = "conversation" if agent.role == "router" else "request"
+                                _rid = req_id if agent.role != "router" else None
+                                yield TodoListUpdated(
+                                    agent=agent_code,
+                                    scope=_scope,
+                                    request_id=_rid,
+                                    todos=tuple(_tdata["todos"]),
+                                    stats=_tdata.get("stats", {}),
+                                )
+                                if _scope == "conversation":
+                                    _plan_writer.write(self.conv_folder, self._plan_steps)
+                        except (json.JSONDecodeError, TypeError, KeyError):
+                            pass
                     # For tools that return existing file content, write a stub
                     # artifact to avoid duplicating content already on disk.
                     # The LLM receives the full result regardless (via tool_responses).
