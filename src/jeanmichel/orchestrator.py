@@ -64,6 +64,34 @@ _ROUTER_DEEP_RESEARCH_FORBIDDEN_TOOLS: frozenset[str] = frozenset({
 # In vocal mode the interaction is conversational; gates would add friction.
 _PLANNING_MODES: frozenset[str] = frozenset({"analyse", "chat"})
 
+
+def _auto_update_todos(
+    conv_folder: Path, agent_code: str, from_status: str, to_status: str
+) -> None:
+    """Transition todo items assigned to agent_code from from_status → to_status.
+
+    Called by the orchestrator on delegation start/end so todo.json stays in sync
+    with plan.md without requiring the router LLM to call manage_todo_list manually.
+    Only operates on the conversation-level todo.json (depth-0 delegations).
+    """
+    todo_path = conv_folder / "todo.json"
+    if not todo_path.exists():
+        return
+    try:
+        data = json.loads(todo_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    todos = data.get("todos", []) if isinstance(data, dict) else []
+    changed = False
+    for item in todos:
+        if item.get("assignee_hint") == agent_code and item.get("status") == from_status:
+            item["status"] = to_status
+            changed = True
+    if not changed:
+        return
+    data["updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    todo_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
 # ---- Events emitted to the CLI -------------------------------------------
 
 @dataclass
@@ -705,6 +733,7 @@ class Orchestrator:
         _duplicate_counts: dict[str, int] = {}  # fp -> how many times we've blocked it
         _consecutive_duplicates: int = 0
         _critical_fs_errors: int = 0
+        _empty_turns: int = 0  # turns with no tool calls and no content
         _recent_tool_calls: list[dict] = []  # for partial report on crash
 
         # Task-class gate: router must call set_task_class before delegating
@@ -882,6 +911,19 @@ class Orchestrator:
 
                 # No tool calls: model produced free text. Treat as implicit return_to_user.
                 if not response.tool_calls:
+                    if not response.content.strip():
+                        # LLM produced thinking but neither a tool call nor any text.
+                        # Inject a single nudge; on the second empty turn, give up.
+                        _empty_turns += 1
+                        if _empty_turns < 2:
+                            _conclusion_hint = _conclusion_tool or "return_to_user"
+                            running_user_text = (
+                                "[ORCHESTRATOR] Your last turn produced no tool call and no "
+                                "text content. You must act: either call a tool or call "
+                                f"{_conclusion_hint}(...) to conclude. "
+                                "Do not produce another empty turn."
+                            )
+                            continue
                     final = response.content.strip() or "(empty response)"
                     artifact = self._write_artifact(req_id, agent_code, "response", final)
                     with db.connect() as conn:
@@ -1155,6 +1197,11 @@ class Orchestrator:
                             "files_produced": [],
                         })
                         _plan_writer.write(self.conv_folder, self._plan_steps)
+                        # Auto-update todo: mark this agent's pending task as in_progress.
+                        if depth == 0:
+                            _auto_update_todos(
+                                self.conv_folder, child_code, "pending", "in_progress"
+                            )
                         # Normalise expected: legacy string → structured dict.
                         expected_raw = call.arguments.get("expected", "")
                         if isinstance(expected_raw, str):
@@ -1239,6 +1286,14 @@ class Orchestrator:
                                     _s["files_produced"] = _step_files
                                     break
                             _plan_writer.write(self.conv_folder, self._plan_steps)
+                            # Auto-update todo: mark this agent's in_progress task as done/blocked.
+                            if depth == 0:
+                                _todo_done = (
+                                    "completed" if _step_status in ("done", "partial") else "blocked"
+                                )
+                                _auto_update_todos(
+                                    self.conv_folder, child_code, "in_progress", _todo_done
+                                )
                         except KeyError:
                             tool_responses.append(json.dumps({
                                 "tool": "delegate_to",
