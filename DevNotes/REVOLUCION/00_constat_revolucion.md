@@ -50,4 +50,6 @@ Tu peux faire toutes les recherches que tu souhaite et ecrire tous les documents
 
 On commence par une phase d'audit et d'analyse, on itere ensemble sur les pistes de solutions et ensuite on ecrira les documents necessaires a la mise en oeuvre de ces solutions.
 
-Sent toi a l'aise dans notre "bac de pieces de Lego" pour assembler notre vision.
+On a deja lance un audit et une reflexion il y a peu `DevNotes/REVOLUCION/01_audit_orchestrateur.md`, `DevNotes/REVOLUCION/02_architecture_cible.md` et `DevNotes/REVOLUCION/03_retour_sur_architecture_cible.md`. Ils peuvent servir de base a ta nouvelle analyse approfondie
+
+Sens toi a l'aise dans notre "bac de pieces de Lego" pour assembler notre vision.
