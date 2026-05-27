@@ -52,8 +52,11 @@ Chaque principe énonce un changement concret par rapport à l'existant.
 
 6. **Profondeur bornée, largeur dynamique.** Un hook refuse `delegate_to`
    au-delà de `MAX_DEPTH=5`. La largeur (nombre de `delegate_to` au même
-   niveau) n'est pas plafonnée numériquement — elle est régulée par le
-   budget tokens partagé entre frères.
+   niveau) n'est pas plafonnée numériquement — elle est régulée par les
+   garde-fous turn-wide (`MAX_SEARCH=10`, wall-clock 900 s) et par la
+   compaction de contexte de l'agent qui décide les délégations. Chaque
+   subagent reçoit sa propre fenêtre de contexte partitionnée, il n'y a
+   pas de budget hérité entre niveaux.
 
 7. **Budget de contexte partitionné, inspiré de Copilot CLI**. La fenêtre
    de contexte du modèle (typ. 128k pour gemma4) est découpée en trois
@@ -116,9 +119,10 @@ Chaque principe énonce un changement concret par rapport à l'existant.
                                       └─────────────────────────┘
 
 Hooks Python autour de chaque appel LLM et de chaque tool call :
-  PreToolUse  → valide les grants, déduplique avec contexte
-  PostToolUse → persist forcé après N research calls, log audit
-  PreLLMCall  → compaction si messages[] dépasse 75 % du budget tokens
+  PreLLMCall       → escalade de compaction à 4 niveaux sur le WORKING (§7)
+  PreToolUse       → valide les grants, déduplique avec contexte, gates depth/MAX_SEARCH
+  PostToolUse      → persist forcé après N research calls, audit sandbox
+  OnDelegateReturn → push du résultat structuré dans le messages[] du caller
 ```
 
 ## 3. Tier 0 — Dispatcher (§A)
@@ -187,10 +191,11 @@ de validation post-implémentation.
 ### Modèle et configuration
 
 - **Modèle** : `gemma4:latest` (9.6 GB) par défaut. Override possible via
-  `--model` ou env `JEANMICHEL_MODEL` pour passer à `gemma4:26b` ou à
-  `qwen3:14b` selon le besoin. Choix du défaut justifié : gemma4 dans sa
-  version courante a démontré le meilleur équilibre tool-use / thinking
-  sur ce projet d'après les commits historiques.
+  `--main-model` ou env `JEANMICHEL_MAIN_MODEL` pour passer à `gemma4:26b`
+  ou `qwen3:14b` selon la configuration matérielle (cf. §11 ter B). Choix
+  du défaut justifié : gemma4 dans sa version courante a démontré le
+  meilleur équilibre tool-use / thinking sur ce projet d'après les
+  commits historiques.
 - **Thinking** : activé (le système prompt expose la canalisation thought).
 - **Température** : 0.2.
 
@@ -264,16 +269,18 @@ Points techniques :
   (on retire celui qu'on avait, simplification).
 - **Format `tool` message** : `{role: "tool", tool_name: <name>, content: <stringified result>}`,
   conformément à l'API Ollama actuelle (vérifié 2026-05).
-- **Budget débité par delta** : la différence entre `estimate_tokens` après
-  et avant chaque mutation de `messages`. Sinon on débite plusieurs fois
-  le même contenu.
+- **Pression de contexte** : gérée exclusivement par `PreLLMCall` selon
+  l'escalade à 4 niveaux (§7). Pas de débit explicite à chaque iteration
+  dans la boucle elle-même — le hook regarde `estimate_tokens(messages)`
+  vs `state.working_budget` au moment où il s'exécute.
 - **Persistence après chaque itération** : `messages.json` + `state.json`
-  sont sauvés sur disque, ce qui rend la conversation reprenable après
-  crash ou redémarrage process.
-- **Budget épuisé** : on n'abort pas. On injecte un `role=user` avec une
-  notice "tu n'as plus de budget, conclus maintenant", et la prochaine
-  itération produit la réponse finale (ou un autre tool call que le hook
-  pourrait refuser — choix à valider en phase implémentation).
+  + `events.jsonl` sont sauvés sur disque, ce qui rend la conversation
+  reprenable après crash ou redémarrage process.
+- **Saturation extrême du `WORKING`** : si même l'autocompact (niveau 4)
+  ne libère pas assez d'espace, la garantie de §7 prend le relais : un
+  appel `chat()` minimal avec un `messages[]` réduit à
+  `[system + last 2 turns + notice]` produit toujours une réponse,
+  quitte à être dégradée.
 
 ### Tools exposés au main agent
 
@@ -319,8 +326,9 @@ non, selon son grant). Quand il est appelé, l'orchestrateur :
    ]
    ```
 4. Lance la même boucle (`run_main_loop`-équivalent) avec ce `messages[]`,
-   un budget alloué (par défaut 40 % du budget restant du caller, valeur
-   tunable), et l'`agent_code` du subagent.
+   l'`agent_code` du subagent, et **son propre budget partitionné**
+   calculé sur la fenêtre de contexte du modèle qu'il invoque
+   (cf. §1.7). Pas d'héritage du caller : le subagent démarre frais.
 5. Le subagent itère jusqu'à émettre un `tool_call` nommé `report_back`.
    Schéma :
    ```
@@ -470,7 +478,10 @@ Snapshot de compteurs lisibles pour l'orchestrateur :
 
 ```json
 {
-  "budget_remaining": 142500,
+  "system_reserve_tokens": 12400,
+  "output_reserve_tokens": 19200,
+  "working_budget": 96400,
+  "working_tokens_used": 28500,
   "depth_current": 0,
   "search_calls_total": 4,
   "search_calls_since_last_persist": 2,
@@ -480,7 +491,9 @@ Snapshot de compteurs lisibles pour l'orchestrateur :
 ```
 
 Pas un état au sens "machine à états". Juste un snapshot de scalaires que
-les hooks consultent et mutent.
+les hooks consultent et mutent. `working_tokens_used` est recalculé à
+partir de `estimate_tokens(messages) − system_reserve_tokens` à chaque
+itération, pas accumulé.
 
 ### Ce qui n'est PLUS source d'état runtime
 
@@ -559,18 +572,19 @@ L'orchestrateur émet un flux d'events typés que le CLI consomme pour le
 rendu (le pattern existe déjà via le générateur `run()` actuel ; on le
 formalise) :
 
-| Event                      | Émis quand                                                | Données utiles au rendu                                  |
-|----------------------------|-----------------------------------------------------------|----------------------------------------------------------|
-| `RequestStarted`           | début d'un tour humain ou d'une délégation                | `agent`, `depth`, `briefing_summary`                     |
-| `LLMCallStarted`           | avant chaque appel LLM                                    | `agent`, `model`, `messages_count`, `budget_remaining`   |
-| `LLMCallCompleted`         | après chaque appel LLM                                    | `tokens_used`, `tool_call_count`                         |
-| `ToolCallStarted`          | avant exécution d'un tool                                 | `agent`, `tool_name`, `args_summary`                     |
-| `ToolCallCompleted`        | après exécution d'un tool                                 | `tool_name`, `result_summary`, `duration_ms`             |
-| `DelegationStarted`        | quand un `delegate_to` est validé et le subagent spawne   | `parent_agent`, `child_agent`, `depth`, `budget_alloué`  |
-| `DelegationCompleted`      | quand le subagent fait `report_back`                      | `child_agent`, `summary`, `confidence`, `files_produced` |
-| `HookFired`                | quand un hook prend une action visible (refus, compaction)| `hook_name`, `action`, `reason`                          |
-| `BudgetUpdate`             | quand le budget passe sous un seuil (50 %, 25 %)          | `remaining`, `original`                                  |
-| `RequestCompleted`         | quand l'agent émet sa réponse finale                      | `agent`, `final_content_summary`                         |
+| Event                      | Émis quand                                                | Données utiles au rendu                                            |
+|----------------------------|-----------------------------------------------------------|--------------------------------------------------------------------|
+| `RequestStarted`           | début d'un tour humain ou d'une délégation                | `agent`, `depth`, `briefing_summary`                               |
+| `LLMCallStarted`           | avant chaque appel LLM                                    | `agent`, `model`, `messages_count`, `working_tokens_used`          |
+| `LLMCallCompleted`         | après chaque appel LLM                                    | `tokens_used`, `tool_call_count`                                   |
+| `ToolCallStarted`          | avant exécution d'un tool                                 | `agent`, `tool_name`, `args_summary`                               |
+| `ToolCallCompleted`        | après exécution d'un tool                                 | `tool_name`, `result_summary`, `duration_ms`                       |
+| `DelegationStarted`        | quand un `delegate_to` est validé et le subagent spawne   | `parent_agent`, `child_agent`, `depth`, `child_working_budget`     |
+| `DelegationCompleted`      | quand le subagent fait `report_back`                      | `child_agent`, `summary`, `confidence`, `files_produced`           |
+| `HookFired`                | quand un hook prend une action visible (refus, compaction)| `hook_name`, `action`, `reason`                                    |
+| `WorkingBudgetUpdate`      | quand `working_tokens_used / working_budget` franchit un seuil (70/80/90/95 %) | `ratio`, `compaction_level_triggered`           |
+| `MemoryNearCapacity`       | quand `user_memory` atteint 90 entrées (warning §10)      | `current_count`, `limit`                                           |
+| `RequestCompleted`         | quand l'agent émet sa réponse finale                      | `agent`, `final_content_summary`                                   |
 
 ### Persistance du flux : `events.jsonl` per-conversation
 
@@ -775,11 +789,12 @@ Vérifications :
 
 - **Grant** : si `call.name` n'est pas dans `agent_tools` pour l'agent
   courant, deny.
-- **Dédup contextualisée** : fingerprint = `(call.name, normalize(call.args), depth, parent_request_id)`.
-  Si déjà exécuté dans CE contexte d'exécution, deny avec rappel du résultat
-  caché en `reason`. (Pas la même règle que l'actuel dédup global qui
-  attrape les faux positifs entre turns ou entre sous-requêtes, cf.
-  [04 §3](DevNotes/REVOLUCION/04_audit_complementaire.md).)
+- **Dédup contextualisée** : fingerprint = `(call.name, normalize(call.args), caller_agent_code, depth)`.
+  Le scope du cache est **l'appel LLM courant** (le `messages[]` d'un
+  agent donné à un niveau donné) — un sibling ou un sub-subagent à un
+  autre niveau peut légitimement refaire le même call avec son propre
+  contexte. Cette dédup contextualisée corrige le faux positif global
+  actuel ([04 §3](DevNotes/REVOLUCION/04_audit_complementaire.md)).
 - **Profondeur (pour `delegate_to`)** : deny si `state.depth_current + 1 > MAX_DEPTH`.
 - **Budget recherche** : deny si `call.name in {"web_search", "wikipedia_*"}`
   et `state.search_calls_total >= MAX_SEARCH`. Le compteur est incrémenté
@@ -824,15 +839,19 @@ Ce hook n'est pas un "garde-fou" — c'est la mécanique propre du
 Le wall-clock est un filet de sécurité technique (Ollama hang, freeze
 réseau), pas un levier fonctionnel. Les 4 autres budgets actuels
 (`MAX_STEPS_PER_REQUEST`, `MAX_DELEGATIONS`, `MAX_SEARCH_CALLS_PER_REQUEST`,
-`SOFT_DEADLINE_RATIO`) sont supprimés ou fusionnés dans le budget tokens.
+`SOFT_DEADLINE_RATIO`) sont supprimés ou absorbés par le modèle de
+budget partitionné + l'escalade de compaction.
 
 ### Précision sur le sens de "budget"
 
-`BUDGET_TOKENS` est un budget de **contexte LLM** — le volume cumulé de
-tokens présents dans `messages[]` à un instant donné, et donc transmis à
-chaque appel `chat()`. C'est un proxy de "combien d'histoire on demande
-au modèle de prendre en compte". Quand on en consomme trop, on compacte
-(§7). Quand on en consomme vraiment trop, on conclut.
+Le budget de contexte est **partitionné** par appel LLM en trois zones
+fixes : `SYSTEM_RESERVE` (system prompt + tools, mesuré au démarrage) +
+`WORKING` (le `messages[]` accumulé) + `OUTPUT_RESERVE` (15 % du
+contexte total, garantit que la réponse finale ne soit jamais tronquée).
+Quand le `WORKING` se sature (paliers 70/80/90/95 %), le hook
+`PreLLMCall` déclenche l'escalade de compaction décrite en §7 jusqu'à
+ramener l'usage sous le seuil. Si même l'autocompact ne suffit pas, la
+garantie de réponse dégradée prend le relais.
 
 Ce n'est PAS un budget de VRAM. La VRAM disponible sur la machine
 détermine quels modèles peuvent être chargés en parallèle dans Ollama,
@@ -884,8 +903,9 @@ Par catégorie.
 - `running_user_text` reconstruit à chaque itération.
 - `render_plan_recap` injecté en user message.
 - Les 5 gates inlines (`soft deadline`, `search budget`, `deep-research
-  guard`, `classify_first`, `plan_first_required`) — remplacés par 3
-  garde-fous unifiés via hooks.
+  guard`, `classify_first`, `plan_first_required`) — remplacés par les
+  4 hooks Python uniformes et les 4 garde-fous (budget partitionné,
+  `MAX_DEPTH`, `MAX_SEARCH` turn-wide, wall-clock filet).
 
 **Budgets** :
 - `MAX_STEPS_PER_REQUEST` (+ bonus écriture workspace) — supprimé, fondu
@@ -1014,15 +1034,24 @@ de hook préemptif tant qu'on n'a pas observé le besoin.
 
 ### Réponse à la question du doc 03 sur les tables `requests` / `parent`
 
-Conservées. Elles restent peuplées append-only comme journal d'audit.
-L'orchestrateur ne les lit pas pour reconstituer un état runtime —
-l'état runtime vit dans `messages.json` + `state.json` per-conversation.
+**Supprimées** (cf. analyse §6 "Tables BDD — lesquelles garder, lesquelles
+supprimer"). L'arborescence parent/enfant qu'elles portaient est
+intégralement reconstituable depuis le filesystem per-conversation :
 
-Les tables BDD restent utiles pour :
-- `inspect_conv` (debug),
-- métriques cross-conversation (taux de délégation, distribution de
-  profondeur, etc.),
-- la nouvelle `user_memory` qui est durable cross-conversation.
+- `messages.json` (main agent) + `subagent_<request_id>.json` (un par
+  subagent spawné) portent l'historique complet de chaque appel LLM
+  dans l'arbre.
+- `events.jsonl` (§6 bis) porte la séquence d'events typés —
+  `DelegationStarted` / `DelegationCompleted` permettent de
+  reconstruire l'arbre en quelques lignes Python ou avec `jq`.
+- Les métriques cross-conversation (taux de délégation, distribution
+  de profondeur, durée par tool, etc.) s'obtiennent via scan de
+  `conversations/*/events.jsonl` — un script ad-hoc, pas une requête
+  SQL.
+
+Ce qui reste en BDD (cf. §11) : `conversations` (métadonnées + listing
+rapide), les seeds (paradigms / agents / grants), et la nouvelle
+`user_memory`. Tout le reste vit dans le filesystem.
 
 ## 11. Ce qui survit (§J)
 
@@ -1266,7 +1295,7 @@ fichier, et le mapping event → rendu.
 - `ToolCallStarted`, `ToolCallCompleted` (renomment l'actuel `ToolCallEmitted` + `ToolResponseRecorded`)
 - `DelegationCompleted` (le pendant de `DelegationStarted`)
 - `HookFired` (refus, compaction, force-persist)
-- `BudgetUpdate` (passage sous 50 % / 25 % du `WORKING`)
+- `WorkingBudgetUpdate` (franchissement d'un seuil de compaction 70/80/90/95 % du `WORKING`)
 - `MemoryNearCapacity` (warning `user_memory` à 90 entrées, cf. §10)
 
 **Refonte du `_render_todo_panel`** : la mécanique de Panel rich est
@@ -1343,15 +1372,17 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
   natif Ollama. Le LLM voit son histoire complète.
 - **Modèles** :
   - `granite4.1:8b` pour le dispatch d'entrée (Tier 0).
-  - `gemma4:latest` pour le main agent (Tier 1) et pour la compaction
-    (la fidélité du résumé prime sur la latence).
-  - `gemma4:latest` par défaut aussi pour les subagents, override
-    possible par agent via colonne `sandbox_image` adaptée.
+  - `gemma4:latest` pour le main agent (Tier 1) et pour le compactor
+    aux niveaux 3/4 (la fidélité du résumé prime sur la latence).
+  - `gemma4:latest` par défaut aussi pour les subagents. Un override
+    par agent peut être ajouté ultérieurement via une nouvelle colonne
+    `model_override` sur la table `agents` (out-of-scope v2 minimale).
 - **4 hooks Python** : `PreLLMCall`, `PreToolUse`, `PostToolUse`,
   `OnDelegateReturn`. Aucun MUST en cascade dans les prompts.
-- **Garde-fous unifiés** : un seul budget tokens + `MAX_DEPTH=5` +
-  `MAX_SEARCH=10` + wall-clock filet 900s. Les 7 budgets actuels sont
-  remplacés.
+- **Garde-fous unifiés** : budget de contexte partitionné par appel
+  (SYSTEM/WORKING/OUTPUT, escalade compaction sur WORKING) + `MAX_DEPTH=5`
+  + `MAX_SEARCH=10` turn-wide + wall-clock filet 900 s. Les 7 budgets
+  actuels sont remplacés.
 - **État canonique runtime** : `messages.json` + `state.json`
   per-conversation. La BDD ne porte plus d'état runtime.
 - **Tables BDD virées** : `requests`, `artifacts`, `conversation_phases`,
@@ -1362,7 +1393,9 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
 - **Délégation imbriquée** : un subagent peut appeler `delegate_to` lui-même
   (un sub-subagent est spawné depuis le subagent, pas depuis le main).
   L'orchestrateur Python centralise les spawns donc reste informé de tout
-  l'arbre. `MAX_DEPTH` et budget décroissant cadrent l'explosion.
+  l'arbre (via `spawn_subagent()` + events). `MAX_DEPTH=5`, `MAX_SEARCH=10`
+  turn-wide et wall-clock cadrent l'explosion ; pas de budget hérité entre
+  niveaux.
 - **`report_back` du subagent** : 4 champs, `low_confidence_reason`
   obligatoire si `confidence == "low"` (une phrase synthétique). Le parent
   est informé du pourquoi du faible indice de confiance, pas du
