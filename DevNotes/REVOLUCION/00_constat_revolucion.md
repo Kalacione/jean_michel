@@ -46,4 +46,8 @@ Ce que l'on attend:
 Nous sommes sur une branche a part, tu as carte blanche pour analyser et proposer une solution viable et durable pour notre ambition. Nous sommes conscient que notre systeme est plein de bonne intentions, mais peche dans sa conception; on a herite de ca et on pense qu'il y a un potentiel a liberer pas tres loin.
 N'hesite pas a remettre en question ceratins choix de logique ou d'architecture si ils sont debiles et si il existe de meilleures solutions. On a beaucoup fait d'aller/retours et de mise au point pour arriver au constat actuel: c'est pas mal presente, ca a l'air de marcher, on a de bons composants, mais ca tient pas ensemble, ca tombe dans des boucles sans fin et ca ne tient pas ses promesses.
 
-Tu peux faire toutes les recherches que tu souhaite et ecrire tous les documents supports necessaires dans le dossier `DevNotes/REVOLUCION`; On commence par une phase d'audit et d'analyse, on itere ensemble sur les pistes de solutions et ensuite on ecrira les documents necessaires a la mise en oeuvre de ces solutions.
+Tu peux faire toutes les recherches que tu souhaite et ecrire tous les documents supports necessaires dans le dossier `DevNotes/REVOLUCION`; Tu es un expert harness, tu sait jongler avec les tools, les skills et les agents. N'hesite pas a analyser ta propre memoire pour nous faire des recommandations.
+
+On commence par une phase d'audit et d'analyse, on itere ensemble sur les pistes de solutions et ensuite on ecrira les documents necessaires a la mise en oeuvre de ces solutions.
+
+Sent toi a l'aise dans notre "bac de pieces de Lego" pour assembler notre vision.
