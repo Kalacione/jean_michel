@@ -693,9 +693,16 @@ Critères de microcompaction :
 
 - Le tool est dans la liste `_MICROCOMPACTABLE = {"web_search",
   "wikipedia_get_page", "workspace_view"}`.
-- Le `content` du tool message dépasse un seuil (par exemple 1500 tokens).
+- Le `content` du tool message dépasse un seuil de **~1500 tokens**
+  (≈ 6000 caractères, ≈ 1000 mots — l'équivalent grossier d'une page
+  pleine). Concrètement, ce seuil attrape :
+  - une réponse `web_search` qui ramène 5+ résultats avec snippets
+  - un `wikipedia_get_page` sur une section de plus de ~600 mots
+  - un `workspace_view` sur un fichier de plus de ~120 lignes de code
+    ou ~80 lignes de prose
 - Le résultat existe sur disque (workspace ou cache de tool) et est
-  identifiable par fingerprint.
+  identifiable par fingerprint — sinon on ne peut pas remplacer le
+  contenu par un stub sans perdre l'information.
 
 Le LLM voit que le tool a été appelé, voit la trace, mais ne traîne plus
 le contenu plein. S'il en a besoin, il peut `workspace_view` ou réémettre
@@ -1404,17 +1411,25 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
   progressive des outputs longs vers le workspace via le paradigme
   `workspace_progressive_write` — la réponse finale est toujours un
   résumé court avec pointeurs vers les fichiers produits.
+- **Seuil de microcompaction = 1500 tokens** (≈ 6000 chars, ≈ une page
+  pleine). Tool result au-dessus de ce seuil = remplacé par stub si
+  recomputable depuis disque.
+- **Tous les seuils numériques sont exposés dans `config.py`**. Aucun
+  thresholds hardcoded ailleurs dans le code. Liste minimale :
+  `COMPACTION_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)`, `OUTPUT_RESERVE_RATIO = 0.15`,
+  `MICROCOMPACT_TOKEN_THRESHOLD = 1500`, `MAX_DEPTH = 5`,
+  `MAX_SEARCH_CALLS_PER_TURN = 10`, `WALL_CLOCK_TURN_SECONDS = 900`,
+  `USER_MEMORY_INDEX_LIMIT = 100`, `USER_MEMORY_WARN_AT = 90`.
+  Tunables sans redéploiement ni recompile.
 
 ### Reste à trancher en phase d'implémentation
 
-Toutes les questions architecturales identifiées dans les itérations
-précédentes ont été tranchées dans le doc. Les seuls points qui
-appelleront un ajustement empirique à la mise en œuvre sont :
+Toutes les questions architecturales sont tranchées. Toutes les valeurs
+numériques sont également posées avec leurs valeurs de démarrage —
+chacune exposée dans `config.py` pour tuning a posteriori sans
+recompilation (cf. liste Tranché ci-dessus).
 
-- **Seuil de microcompaction** (1500 tokens pour qu'un tool result soit
-  microcompactable) : valeur initiale arbitraire. À ajuster.
-
-Aucun de ces points ne bloque le passage au plan d'implémentation 07.
+L'architecture est figée pour le passage au plan d'implémentation 07.
 
 
 ## 13. Critères de validation de l'architecture
