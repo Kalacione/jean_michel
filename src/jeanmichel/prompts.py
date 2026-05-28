@@ -49,7 +49,10 @@ intent="alexa" when ONE tool from the list can satisfy the request directly:
               (e.g. "Paris", "Tokyo, Japan"). Omit args for the user's
               own local time — the orchestrator fills it from the profile.
   - weather            : current weather or forecast at a location
-        args: {"location": "<city>"}
+        args: {"location": "<city>"} when the user names a place
+              (e.g. "Paris", "Tokyo, Japan"). Omit args for weather
+              at the user's own location — the orchestrator fills it
+              from the profile.
   - wikipedia_search   : single factual lookup (definition, dates, identity)
         args: {"query": "<entity name>"}
 

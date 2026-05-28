@@ -310,22 +310,40 @@ def _enrich_args_from_profile(
     args: dict[str, Any],
     user_profile: Any,
 ) -> dict[str, Any]:
-    """Pre-fill missing args from the user profile (currently only `clock`).
+    """Pre-fill missing args from the user profile.
 
     Returns a NEW dict — does not mutate the original. When the dispatcher
-    emits ``clock`` without `timezone` or `location`, the user's own city /
-    country is injected as `location` so the local time is returned.
+    emits ``clock`` or ``weather`` without an explicit ``location`` (and,
+    for clock, without ``timezone``), the user's own city / country is
+    injected so the result is local to them by default. Without this, the
+    LLM tends to hallucinate a location based on the request language (a
+    French user asking for "la météo" would get Paris).
     """
     enriched = dict(args or {})
+
     if tool == "clock":
         has_loc = bool(enriched.get("location") or enriched.get("timezone"))
         if not has_loc and user_profile is not None:
-            city = (getattr(user_profile, "city", "") or "").strip()
-            country = (getattr(user_profile, "country", "") or "").strip()
-            parts = [p for p in (city, country) if p]
-            if parts:
-                enriched["location"] = ", ".join(parts)
+            location = _profile_location(user_profile)
+            if location:
+                enriched["location"] = location
+
+    elif tool == "weather":
+        has_loc = bool(enriched.get("location"))
+        if not has_loc and user_profile is not None:
+            location = _profile_location(user_profile)
+            if location:
+                enriched["location"] = location
+
     return enriched
+
+
+def _profile_location(user_profile: Any) -> str:
+    """Format the user's city + country as a single 'City, Country' string."""
+    city = (getattr(user_profile, "city", "") or "").strip()
+    country = (getattr(user_profile, "country", "") or "").strip()
+    parts = [p for p in (city, country) if p]
+    return ", ".join(parts)
 
 
 def _invoke_tool(tool: str, args: dict[str, Any]) -> str:

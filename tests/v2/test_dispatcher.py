@@ -497,3 +497,80 @@ def test_execute_alexa_clock_partial_profile_uses_what_it_has(monkeypatch):
     execute_alexa(decision, MockClient(script=[]), user_lang="en", user_profile=profile)
 
     assert captured.get("location") == "Tokyo"
+
+
+# ---- profile-driven default location for weather (mirror of clock cases) ----
+
+
+def test_execute_alexa_weather_injects_profile_location_when_no_args(monkeypatch):
+    """Bare 'quelle est la météo ?' → weather with no args → uses profile city/country."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+
+    def fake_weather_handler(**kwargs):
+        captured.update(kwargs)
+        return json.dumps({"summary": "Montréal: 12°C", "current": {}, "wmo_descriptions": {}})
+
+    monkeypatch.setattr("jeanmichel.dispatcher._weather_handler", fake_weather_handler)
+
+    profile = UserProfile(name="Jeremy", city="Montréal", country="Canada")
+    decision = DispatchDecision(intent="alexa", tool="weather", args={})
+    mock = MockClient(script=[])
+
+    execute_alexa(decision, mock, user_lang="fr", user_profile=profile)
+
+    assert captured.get("location") == "Montréal, Canada"
+
+
+def test_execute_alexa_weather_does_not_override_explicit_location(monkeypatch):
+    """If the LLM gave a location, profile-injection must NOT overwrite it."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._weather_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    profile = UserProfile(city="Montréal", country="Canada")
+    decision = DispatchDecision(
+        intent="alexa", tool="weather", args={"location": "Tokyo, Japan"}
+    )
+
+    execute_alexa(decision, MockClient(script=[]), user_lang="en", user_profile=profile)
+
+    assert captured.get("location") == "Tokyo, Japan"
+
+
+def test_execute_alexa_weather_no_profile_no_args_no_injection(monkeypatch):
+    """Without a profile and no args, weather receives no location (handler will error)."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._weather_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    decision = DispatchDecision(intent="alexa", tool="weather", args={})
+
+    execute_alexa(decision, MockClient(script=[]), user_lang="en", user_profile=None)
+
+    assert captured.get("location") is None
+
+
+def test_execute_alexa_weather_partial_profile_uses_what_it_has(monkeypatch):
+    """Profile with only `city` (no country) still injects the city."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._weather_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    profile = UserProfile(city="Reykjavík")
+    decision = DispatchDecision(intent="alexa", tool="weather", args={})
+
+    execute_alexa(decision, MockClient(script=[]), user_lang="en", user_profile=profile)
+
+    assert captured.get("location") == "Reykjavík"
