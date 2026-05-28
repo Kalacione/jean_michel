@@ -91,7 +91,7 @@ def render_splash(console: Console, main_model: str, dispatch_model: str, mode: 
     console.print(Text(_SPLASH, style="bold cyan"))
     console.print(
         f"[dim]main={main_model} · dispatch={dispatch_model} · mode={mode} • "
-        "Enter=newline  Alt+Enter=send  Ctrl-D=quit[/]\n"
+        "Enter=newline  Ctrl+Enter=send  Ctrl-D=quit[/]\n"
     )
 
 
@@ -502,7 +502,10 @@ def _build_prompt_session() -> PromptSession[str]:
     def _newline(event):
         event.current_buffer.insert_text("\n")
 
-    @kb.add("escape", "enter")  # Meta+Enter / Alt+Enter
+    # Ctrl+Enter submits. Most terminals (Linux/Mac terminals, Windows
+    # Terminal, PowerShell) deliver Ctrl+Enter as Ctrl+J — Alt+Enter is
+    # unreliable under Windows so we switched to Ctrl+J / c-j.
+    @kb.add("c-j")
     def _submit(event):
         event.current_buffer.validate_and_handle()
 
