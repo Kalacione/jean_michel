@@ -357,6 +357,11 @@ def _run_agent_loop(
     """
     tools_payload = _build_tools_payload(agent, tools_registry)
     model = agent.model or SUBAGENT_DEFAULT_MODEL
+    # Counter for empty assistant turns (no tool_calls AND no content).
+    # The LLM sometimes finishes everything in its `thinking` channel and
+    # emits an empty content turn — we nudge it once or twice before
+    # giving up.
+    empty_main_turns = 0
 
     for iteration in range(max_iterations):
         # PreLLMCall : compaction escalation (may mutate messages).
@@ -406,6 +411,49 @@ def _run_agent_loop(
         # Termination — main agent : empty tool_calls is the final answer.
         if not resp.tool_calls:
             if is_main_agent:
+                # Guard against empty content : the LLM sometimes finishes
+                # in its `thinking` channel and emits an assistant turn
+                # with content="". Nudge once or twice before accepting
+                # the empty turn as a final answer.
+                if not (resp.content or "").strip():
+                    empty_main_turns += 1
+                    if empty_main_turns <= 2:
+                        _log.warning(
+                            "%s emitted empty assistant turn (#%d), nudging.",
+                            agent.code, empty_main_turns,
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[ORCHESTRATOR] Your last assistant turn was "
+                                "empty. The user is waiting for an answer. "
+                                "Produce the user-facing response NOW, in "
+                                "plain text, based on the tool results above. "
+                                "Do not return another empty turn."
+                            ),
+                        })
+                        save_messages(conv_folder, messages)
+                        save_state(conv_folder, state)
+                        continue
+                    # 3 empty turns in a row : give up cleanly with an
+                    # honest fallback instead of returning silence to the user.
+                    fallback = (
+                        "(Désolé, je n'ai pas réussi à formuler une réponse "
+                        "à partir des informations collectées. Les détails "
+                        "sont dans la conversation et le workspace.)"
+                    )
+                    _emit(
+                        event_emitter,
+                        conv_folder,
+                        RequestCompleted(
+                            agent=agent.code,
+                            final_content_summary=fallback[:200],
+                        ),
+                    )
+                    save_messages(conv_folder, messages)
+                    save_state(conv_folder, state)
+                    return _LoopOutcome(kind="final_answer", content=fallback)
+
                 _emit(
                     event_emitter,
                     conv_folder,
