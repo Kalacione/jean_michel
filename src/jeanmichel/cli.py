@@ -333,7 +333,10 @@ def run_one_turn(
         )
         with console.status("[dim]thinking…[/]", spinner="dots"):
             answer = dispatcher.execute_alexa(
-                decision, dispatch_llm, user_lang=user_lang
+                decision,
+                dispatch_llm,
+                user_lang=user_lang,
+                user_profile=profile,
             )
     else:
         console.print(

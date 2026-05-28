@@ -416,3 +416,84 @@ def test_e2e_french_time_question_routes_to_clock_and_formats_french():
 def test_alexa_tools_set_matches_doc_spec():
     """The ALEXA tool set is exactly what §3 doc 06 declares — no drift."""
     assert _ALEXA_TOOLS == {"clock", "weather", "wikipedia_search"}
+
+
+# ---- profile-driven default location for clock --------------------------
+
+
+def test_execute_alexa_clock_injects_profile_location_when_no_args(monkeypatch):
+    """Bare 'quelle heure est-il ?' → clock with no args → uses profile city/country."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+
+    def fake_clock_handler(**kwargs):
+        captured.update(kwargs)
+        return json.dumps({"summary": "ok", "utc": "x", "local": "y", "timezone": "Europe/Paris"})
+
+    monkeypatch.setattr("jeanmichel.dispatcher._clock_handler", fake_clock_handler)
+
+    profile = UserProfile(name="Jeremy", city="Montréal", country="Canada")
+    decision = DispatchDecision(intent="alexa", tool="clock", args={})
+    mock = MockClient(script=[])
+
+    execute_alexa(decision, mock, user_lang="en", user_profile=profile)
+
+    assert captured.get("location") == "Montréal, Canada"
+
+
+def test_execute_alexa_clock_does_not_override_explicit_location(monkeypatch):
+    """If the LLM gave a location, profile-injection must NOT overwrite it."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._clock_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    profile = UserProfile(city="Montréal", country="Canada")
+    decision = DispatchDecision(
+        intent="alexa", tool="clock", args={"location": "Tokyo, Japan"}
+    )
+    mock = MockClient(script=[])
+
+    execute_alexa(decision, mock, user_lang="en", user_profile=profile)
+
+    assert captured.get("location") == "Tokyo, Japan"
+
+
+def test_execute_alexa_clock_no_profile_no_args_falls_through_to_utc(monkeypatch):
+    """Without a profile and no args, clock falls through to UTC."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._clock_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    decision = DispatchDecision(intent="alexa", tool="clock", args={})
+    mock = MockClient(script=[])
+
+    execute_alexa(decision, mock, user_lang="en", user_profile=None)
+
+    # No location injected — clock will use UTC by default.
+    assert captured.get("location") is None
+    assert captured.get("timezone") is None
+
+
+def test_execute_alexa_clock_partial_profile_uses_what_it_has(monkeypatch):
+    """Profile with only `city` (no country) still injects the city."""
+    from jeanmichel.config import UserProfile
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        "jeanmichel.dispatcher._clock_handler",
+        lambda **k: (captured.update(k), '{"summary":"ok"}')[1],
+    )
+
+    profile = UserProfile(city="Tokyo")
+    decision = DispatchDecision(intent="alexa", tool="clock", args={})
+
+    execute_alexa(decision, MockClient(script=[]), user_lang="en", user_profile=profile)
+
+    assert captured.get("location") == "Tokyo"

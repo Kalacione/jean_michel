@@ -45,8 +45,13 @@ DISPATCH_SYSTEM_PROMPT = """You classify a user request. Reply with strict JSON 
 
 intent="alexa" when ONE tool from the list can satisfy the request directly:
   - clock              : current time / date
+        args: {"location": "<city>"} when the user names a place
+              (e.g. "Paris", "Tokyo, Japan"). Omit args for the user's
+              own local time — the orchestrator fills it from the profile.
   - weather            : current weather or forecast at a location
+        args: {"location": "<city>"}
   - wikipedia_search   : single factual lookup (definition, dates, identity)
+        args: {"query": "<entity name>"}
 
 intent="deep" for everything else (comparison, multi-step research,
 codebase analysis, document production, debugging, advice).

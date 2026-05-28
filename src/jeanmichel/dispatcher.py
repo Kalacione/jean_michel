@@ -240,8 +240,15 @@ def execute_alexa(
     llm: Any,
     user_lang: str = "en",
     model: str | None = None,
+    user_profile: Any = None,
 ) -> str:
     """Execute an ALEXA decision and return a formatted user-facing string.
+
+    When the LLM emits ``clock`` with no args, the user's location is
+    injected from ``user_profile`` (city + country) so the bare "what
+    time is it ?" returns the user's local time rather than UTC. Pass
+    ``user_profile`` = the loaded ``UserProfile`` instance ; ``None``
+    disables the injection (used for tests).
 
     Side-effect-free apart from the (single) granite call for non-English
     formatting or wikipedia. Returns a string — never raises on tool errors
@@ -255,9 +262,13 @@ def execute_alexa(
     if not decision.tool or decision.tool not in _ALEXA_TOOLS:
         raise ValueError(f"Unknown ALEXA tool: {decision.tool!r}")
 
+    # Inject profile-derived location for `clock` when the LLM emitted
+    # empty args ("quelle heure est-il ?" with no place mentioned).
+    args = _enrich_args_from_profile(decision.tool, decision.args, user_profile)
+
     # --- Step 1 : invoke the native tool -----------------------------------
     try:
-        result_json = _invoke_tool(decision.tool, decision.args)
+        result_json = _invoke_tool(decision.tool, args)
     except Exception as exc:  # noqa: BLE001
         _log.warning("ALEXA tool %r raised: %s", decision.tool, exc)
         return _localize_error(str(exc), user_lang)
@@ -292,6 +303,29 @@ def execute_alexa(
     # Wikipedia (any language) OR clock/weather in a non-English user_lang :
     # call granite to format.
     return _format_via_llm(data, user_lang, llm, model)
+
+
+def _enrich_args_from_profile(
+    tool: str,
+    args: dict[str, Any],
+    user_profile: Any,
+) -> dict[str, Any]:
+    """Pre-fill missing args from the user profile (currently only `clock`).
+
+    Returns a NEW dict — does not mutate the original. When the dispatcher
+    emits ``clock`` without `timezone` or `location`, the user's own city /
+    country is injected as `location` so the local time is returned.
+    """
+    enriched = dict(args or {})
+    if tool == "clock":
+        has_loc = bool(enriched.get("location") or enriched.get("timezone"))
+        if not has_loc and user_profile is not None:
+            city = (getattr(user_profile, "city", "") or "").strip()
+            country = (getattr(user_profile, "country", "") or "").strip()
+            parts = [p for p in (city, country) if p]
+            if parts:
+                enriched["location"] = ", ".join(parts)
+    return enriched
 
 
 def _invoke_tool(tool: str, args: dict[str, Any]) -> str:
