@@ -45,6 +45,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_106_news_specialist.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_107_news_routing_and_web_fetch.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_108_code_fetcher_agent.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_109_code_runner_routing_and_sandbox.sql")
     yield conn
     conn.close()
 
@@ -165,7 +166,7 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 
 
 def test_total_active_paradigms_count(v2_migrated_db):
-    """Sanity : the migration chain produces 114 active paradigms.
+    """Sanity : the migration chain produces 116 active paradigms.
 
     104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
     + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
@@ -175,12 +176,14 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_107_news_routing_and_web_fetch (news_first_for_news_briefs)
     + 3 from migrate_108_code_fetcher_agent (code_fetcher_multi_source,
                                               delegate_to_code_fetcher_on_doubt,
-                                              cite_sources_in_user_facing_output).
+                                              cite_sources_in_user_facing_output)
+    + 2 from migrate_109_code_runner_routing_and_sandbox
+        (code_runner_for_code_production_briefs, test_in_sandbox_when_runnable).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 114
+    assert row["c"] == 116
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -274,7 +277,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 114
+    assert n == 116
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):

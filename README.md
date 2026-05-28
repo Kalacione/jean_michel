@@ -257,6 +257,12 @@ paradigmes actifs** au total. Trajectoire :
   `delegate_to_code_fetcher_on_doubt` côté code-runner,
   `cite_sources_in_user_facing_output` côté jean-michel — bonus pour
   surfacer les sources dans la réponse user-facing).
+- Migration 109 (code-runner routing + sandbox testing) : +2
+  paradigmes (`code_runner_for_code_production_briefs` côté
+  jean-michel, `test_in_sandbox_when_runnable` côté code-runner),
+  mission de code-runner réécrite pour mettre "writes to workspace
+  AND tests in sandbox" en tête des 160 premiers chars vus par le
+  router.
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -377,11 +383,18 @@ Migrations v2 sous `db/migrations/` :
   code-runner. Bonus : paradigme `cite_sources_in_user_facing_output`
   côté jean-michel pour que la réponse au user inclue les sources
   consultées (URLs + dates).
+- `migrate_109_code_runner_routing_and_sandbox.sql` — fix routing
+  code-runner : paradigme `code_runner_for_code_production_briefs`
+  côté jean-michel ("pour écrire/débugger du code → code-runner, pas
+  de code inline"), mission de code-runner réécrite pour exposer
+  "writes to workspace AND tests in sandbox" dès les 160 premiers
+  chars, paradigme `test_in_sandbox_when_runnable` qui force
+  l'exécution dans bash_sandbox avant report_back (3 itérations max).
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108; do
+for m in 100 101 102 103 104 105 106 107 108 109; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```

@@ -656,45 +656,53 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # ----- Interactive loop -----
-    while True:
-        try:
-            user_input = session.prompt(
-                HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
-                multiline=True,
-                prompt_continuation=lambda width, line_number, wrap_count: " " * width,
-            )
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]bye.[/]")
-            _close_conv()
-            return 0
-        if user_input.strip().lower() in {"exit", "quit"}:
-            console.print("[dim]bye.[/]")
-            _close_conv()
-            return 0
-        if not user_input.strip():
-            continue
+    # try/finally wrapping ensures the conversation row is closed on every
+    # exit path — including KeyboardInterrupt during a long LLM call, which
+    # is NOT caught by `except Exception` and used to leak active rows in DB.
+    try:
+        while True:
+            try:
+                user_input = session.prompt(
+                    HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
+                    multiline=True,
+                    prompt_continuation=lambda width, line_number, wrap_count: " " * width,
+                )
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]bye.[/]")
+                return 0
+            if user_input.strip().lower() in {"exit", "quit"}:
+                console.print("[dim]bye.[/]")
+                return 0
+            if not user_input.strip():
+                continue
 
-        try:
-            run_one_turn(
-                user_text=user_input,
-                conv_folder=conv_folder,
-                conv_id=conv_id,
-                dispatch_llm=dispatch_llm,
-                main_llm=main_llm,
-                profile=profile,
-                mode=args.mode,
-                console=console,
-                ask_human_cb=ask_human_cb,
-                initial_messages=initial_messages,
-            )
-        except Exception as exc:  # noqa: BLE001
-            console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
-            _close_conv()
-            return 1
+            try:
+                run_one_turn(
+                    user_text=user_input,
+                    conv_folder=conv_folder,
+                    conv_id=conv_id,
+                    dispatch_llm=dispatch_llm,
+                    main_llm=main_llm,
+                    profile=profile,
+                    mode=args.mode,
+                    console=console,
+                    ask_human_cb=ask_human_cb,
+                    initial_messages=initial_messages,
+                )
+            except KeyboardInterrupt:
+                # User aborted mid-turn (Ctrl-C). Close cleanly via the
+                # outer finally, no error message.
+                console.print("\n[dim]interrupted — bye.[/]")
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
+                return 1
 
-        # Reload the persisted messages for the next turn.
-        initial_messages = persistence.load_messages(conv_folder)
-        console.print()
+            # Reload the persisted messages for the next turn.
+            initial_messages = persistence.load_messages(conv_folder)
+            console.print()
+    finally:
+        _close_conv()
 
 
 if __name__ == "__main__":
