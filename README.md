@@ -263,6 +263,12 @@ paradigmes actifs** au total. Trajectoire :
   mission de code-runner réécrite pour mettre "writes to workspace
   AND tests in sandbox" en tête des 160 premiers chars vus par le
   router.
+- Migration 110 (syntax check before run) : raffine
+  `test_in_sandbox_when_runnable` pour ajouter une étape de syntax
+  check rapide AVANT l'exécution complète (`python -m py_compile`,
+  `bash -n`, `node --check`, `python -m json.tool`, parser YAML).
+  Le budget de 3 itérations couvre désormais syntax + runtime
+  combinés.
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -390,11 +396,16 @@ Migrations v2 sous `db/migrations/` :
   "writes to workspace AND tests in sandbox" dès les 160 premiers
   chars, paradigme `test_in_sandbox_when_runnable` qui force
   l'exécution dans bash_sandbox avant report_back (3 itérations max).
+- `migrate_110_syntax_check_before_run.sql` — raffine
+  `test_in_sandbox_when_runnable` pour ajouter une étape syntax check
+  rapide AVANT l'exécution complète (recipes par langage : Python /
+  Bash / Node / JSON / YAML). Évite de consommer un run sandbox pour
+  des erreurs triviales (typos, brackets, indentation).
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108 109; do
+for m in 100 101 102 103 104 105 106 107 108 109 110; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```

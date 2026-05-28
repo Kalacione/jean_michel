@@ -46,6 +46,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_107_news_routing_and_web_fetch.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_108_code_fetcher_agent.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_109_code_runner_routing_and_sandbox.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_110_syntax_check_before_run.sql")
     yield conn
     conn.close()
 
