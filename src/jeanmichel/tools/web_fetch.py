@@ -91,11 +91,19 @@ def _handler(url: str) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310
-            ctype = (resp.headers.get("content-type") or "").lower()
-            if "text/html" not in ctype and "application/xhtml" not in ctype:
+            ctype_full = (resp.headers.get("content-type") or "").lower()
+            ctype = ctype_full.split(";", 1)[0].strip()
+            # Branch on content-type :
+            #   text/html, application/xhtml+xml → readability extraction
+            #   text/* and application/json      → return as-is (source code,
+            #                                       markdown, plain text, json)
+            #   anything else                    → refuse (binary, PDF, video…)
+            is_html = ctype in ("text/html", "application/xhtml+xml")
+            is_plain = ctype.startswith("text/") or ctype == "application/json"
+            if not is_html and not is_plain:
                 return tool_error(
-                    "not_html",
-                    f"Content-Type {ctype!r} is not HTML — refusing to extract.",
+                    "not_text",
+                    f"Content-Type {ctype_full!r} is not text — refusing to extract.",
                 )
             raw_bytes = resp.read(_MAX_BYTES)
             final_url = resp.geturl()
@@ -104,17 +112,22 @@ def _handler(url: str) -> str:
     except Exception as exc:  # noqa: BLE001
         return tool_error("fetch_failed", f"fetch failed for {url}: {exc}")
 
-    # Robust decoding : let chardet guess if we can't parse explicit charset.
-    raw_html = raw_bytes.decode("utf-8", errors="replace")
+    raw_text = raw_bytes.decode("utf-8", errors="replace")
+    title = ""
 
-    try:
-        doc = Document(raw_html)
-        title = (doc.short_title() or doc.title() or "").strip()
-        summary_html = doc.summary()
-    except Exception as exc:  # noqa: BLE001
-        return tool_error("extraction_failed", f"readability failed: {exc}")
+    if is_html:
+        try:
+            doc = Document(raw_text)
+            title = (doc.short_title() or doc.title() or "").strip()
+            summary_html = doc.summary()
+        except Exception as exc:  # noqa: BLE001
+            return tool_error("extraction_failed", f"readability failed: {exc}")
+        text = _html_to_text(summary_html)
+    else:
+        # Plain text / source code / markdown / json — no extraction, just
+        # return the body as-is (with the standard size cap below).
+        text = raw_text
 
-    text = _html_to_text(summary_html)
     truncated = False
     if len(text) > _MAX_OUTPUT_CHARS:
         text = text[:_MAX_OUTPUT_CHARS].rstrip() + "\n\n[… truncated …]"
@@ -131,6 +144,7 @@ def _handler(url: str) -> str:
         title=title,
         content=text,
         source_url=final_url,
+        content_type=ctype,
         truncated=truncated,
     )
 
@@ -138,15 +152,19 @@ def _handler(url: str) -> str:
 SPEC = ToolSpec(
     name="web_fetch",
     description=(
-        "Download an http/https URL and return the cleaned article text. "
+        "Download an http/https URL and return its textual content. "
         "Designed for following up on URLs surfaced by news_latest, "
-        "news_archive, or web_search — instead of re-querying with new "
-        "keywords (which costs an API credit on news endpoints), you fetch "
-        "the specific articles that look most relevant. "
-        "Strips navigation, ads, footers via the readability algorithm. "
-        "Output is plain text (no HTML), capped at ~80 000 characters. "
-        "Only works on text/html pages (PDFs, videos, login walls return "
-        "an error)."
+        "news_archive, web_search, or github_search_code — instead of "
+        "re-querying with new keywords (which costs an API credit on news "
+        "endpoints), you fetch the specific articles or files that look "
+        "most relevant. "
+        "Behaviour by Content-Type : "
+        "(a) `text/html` / `application/xhtml+xml` → readability extraction "
+        "(strips navigation, ads, footers ; returns plain text body) ; "
+        "(b) `text/*` and `application/json` → returned as-is (raw source "
+        "code from raw.githubusercontent.com, markdown, plain text, JSON) ; "
+        "(c) binary types (PDF, images, video) → error. "
+        "Output is capped at ~80 000 characters (truncation marker added)."
     ),
     parameters={
         "type": "object",

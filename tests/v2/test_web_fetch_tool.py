@@ -126,13 +126,13 @@ def test_rejects_url_without_host():
 # ---- content-type filtering ---------------------------------------------
 
 
-def test_rejects_non_html_content_type():
+def test_rejects_binary_content_type():
     with patch.object(
         web_fetch.urllib.request, "urlopen",
         _fake_urlopen(b"%PDF-1.7", content_type="application/pdf"),
     ):
         out = json.loads(web_fetch._handler(url="https://example.com/x.pdf"))
-    assert out["error_code"] == "not_html"
+    assert out["error_code"] == "not_text"
 
 
 def test_accepts_xhtml():
@@ -142,6 +142,55 @@ def test_accepts_xhtml():
     ):
         out = json.loads(web_fetch._handler(url="https://example.com/x"))
     assert "error" not in out
+
+
+def test_accepts_text_plain_returns_raw():
+    """raw.githubusercontent.com returns text/plain for source files —
+    bypass readability and return body as-is."""
+    body = b"def hello():\n    print('hi')\n\n# end\n"
+    with patch.object(
+        web_fetch.urllib.request, "urlopen",
+        _fake_urlopen(body, content_type="text/plain; charset=utf-8"),
+    ):
+        out = json.loads(web_fetch._handler(
+            url="https://raw.githubusercontent.com/foo/bar/main/x.py"
+        ))
+    assert "error" not in out
+    assert out["content"] == "def hello():\n    print('hi')\n\n# end\n"
+    assert out["content_type"] == "text/plain"
+    assert out["title"] == ""  # no extraction → no title
+    assert out["truncated"] is False
+
+
+def test_accepts_text_markdown():
+    body = b"# Heading\n\nSome **bold** content.\n"
+    with patch.object(
+        web_fetch.urllib.request, "urlopen",
+        _fake_urlopen(body, content_type="text/markdown"),
+    ):
+        out = json.loads(web_fetch._handler(url="https://example.com/README.md"))
+    assert "error" not in out
+    assert "# Heading" in out["content"]
+
+
+def test_accepts_json():
+    body = b'{"name": "fastapi", "version": "0.115.0"}'
+    with patch.object(
+        web_fetch.urllib.request, "urlopen",
+        _fake_urlopen(body, content_type="application/json"),
+    ):
+        out = json.loads(web_fetch._handler(url="https://example.com/api/x"))
+    assert "error" not in out
+    assert "fastapi" in out["content"]
+
+
+def test_rejects_image_content_type():
+    with patch.object(
+        web_fetch.urllib.request, "urlopen",
+        _fake_urlopen(b"\x89PNG\r\n", content_type="image/png"),
+    ):
+        out = json.loads(web_fetch._handler(url="https://example.com/x.png"))
+    assert out["error_code"] == "not_text"
 
 
 # ---- network errors -----------------------------------------------------
