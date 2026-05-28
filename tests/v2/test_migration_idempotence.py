@@ -25,14 +25,31 @@ def _apply_sql(conn: sqlite3.Connection, sql_path: Path) -> None:
 
 @pytest.fixture()
 def v2_migrated_db(tmp_path: Path):
-    """Fresh DB with schema.sql + all v2 migrations applied in order."""
+    """Fresh DB obtained by applying the migration chain on the v1 baseline.
+
+    `db/schema_v1_baseline.sql` is the pre-v2 schema (preserved for migration
+    regression testing) ; the three migration files turn it into v2. This
+    end-state should be equivalent to loading `db/schema.sql` (v2 final)
+    directly.
+    """
     db_path = tmp_path / "v2.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _apply_sql(conn, _ROOT / "db" / "schema.sql")
+    _apply_sql(conn, _ROOT / "db" / "schema_v1_baseline.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_100_paradigm_realignment.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_101_user_memory.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_102_drop_runtime_tables.sql")
+    yield conn
+    conn.close()
+
+
+@pytest.fixture()
+def v2_consolidated_db(tmp_path: Path):
+    """Fresh DB loaded directly from the consolidated `db/schema.sql` (v2 final)."""
+    db_path = tmp_path / "v2_consolidated.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_sql(conn, _ROOT / "db" / "schema.sql")
     yield conn
     conn.close()
 
@@ -158,7 +175,7 @@ def test_migrate_100_idempotent(tmp_path):
     db_path = tmp_path / "idem100.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _apply_sql(conn, _ROOT / "db" / "schema.sql")
+    _apply_sql(conn, _ROOT / "db" / "schema_v1_baseline.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_100_paradigm_realignment.sql")
     n_after_first = conn.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
@@ -177,7 +194,7 @@ def test_migrate_101_idempotent(tmp_path):
     db_path = tmp_path / "idem101.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _apply_sql(conn, _ROOT / "db" / "schema.sql")
+    _apply_sql(conn, _ROOT / "db" / "schema_v1_baseline.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_101_user_memory.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_101_user_memory.sql")
     # Table still exists and is empty.
@@ -196,7 +213,7 @@ def test_migrate_102_drops_are_idempotent(tmp_path):
     db_path = tmp_path / "idem102_drops.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _apply_sql(conn, _ROOT / "db" / "schema.sql")
+    _apply_sql(conn, _ROOT / "db" / "schema_v1_baseline.sql")
 
     # Re-applying drop statements alone is safe.
     drops = """
@@ -216,25 +233,53 @@ def test_migrate_102_drops_are_idempotent(tmp_path):
     conn.close()
 
 
-# ---- jm.sh --install simulation (fresh DB from schema.sql alone) ---------
+# ---- jm.sh --install simulation : schema.sql alone == v2 final -----------
 
 
-def test_schema_alone_is_v1_no_user_memory(tmp_path):
-    """schema.sql alone (without migrations) is still v1 → user_memory absent.
+def test_schema_alone_is_v2_final(v2_consolidated_db):
+    """Phase 8 consolidation : `db/schema.sql` IS the v2 final state.
 
-    This documents the deferred decision to keep schema.sql at v1 until
-    Phase 8. Fresh installs need to apply migrations 100/101/102 on top.
+    Fresh `./jm.sh --install` loads schema.sql directly — no migrations
+    needed on top. Verified by comparing the consolidated schema's shape
+    to the migrated schema's shape.
     """
-    db_path = tmp_path / "v1only.db"
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    _apply_sql(conn, _ROOT / "db" / "schema.sql")
     tables = {
         r["name"]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        for r in v2_consolidated_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
     }
-    # user_memory is added by migrate_101.
-    assert "user_memory" not in tables
-    # Legacy tables are still here in raw schema.sql — to be cleaned by Phase 8.
-    assert "requests" in tables
-    conn.close()
+    # v2 tables present.
+    assert "user_memory" in tables
+    # Legacy tables absent.
+    assert "requests" not in tables
+    assert "artifacts" not in tables
+    # Same paradigm count as via the migration chain.
+    n = v2_consolidated_db.execute(
+        "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
+    ).fetchone()["c"]
+    assert n == 104
+
+
+def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
+    """The schema.sql consolidated state must equal the v1 + migrations state."""
+    def _shape(conn):
+        return {
+            "tables": sorted(
+                r["name"] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            ),
+            "active_paradigms": conn.execute(
+                "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
+            ).fetchone()["c"],
+            "active_agents": conn.execute(
+                "SELECT COUNT(*) AS c FROM agents WHERE active = 1"
+            ).fetchone()["c"],
+            "agents_columns": sorted(
+                r["name"] for r in conn.execute("PRAGMA table_info(agents)").fetchall()
+            ),
+        }
+
+    assert _shape(v2_migrated_db) == _shape(v2_consolidated_db)

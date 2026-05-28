@@ -1,155 +1,174 @@
-# Jean-Michel — Prompt Skeleton
+# Jean-Michel — Prompt Skeleton (v2)
 
-The orchestrator (Python, not an agent) renders this skeleton for every agent
-turn. Order, sections and tokens are fixed; only the values inside `{...}` and
-the rendered paradigm bullets vary.
+The v2 main loop renders this skeleton once per turn for the main agent
+and once per delegation for each subagent. The renderer is
+`jeanmichel.prompts.render_system_prompt_v2`.
 
-All inter-agent text is in **English**. Only the user-facing reply is rendered
-in the human's detected language.
+All inter-agent text is in **English**. Only the user-facing reply is
+rendered in the human's detected language (langdetect on the user_text,
+fallback `en`).
 
-## Conventions
+## Conventions (v2)
 
-- Ollama handles all Gemma 4 token rendering internally (`<|turn>system`,
-  `<|think|>`, `<|tool>declaration...`, etc.). We never inject those tokens
-  manually in the prompt text — Ollama does it from the `role: system` message
-  and the `tools` / `think` API parameters.
+- Ollama handles all Gemma 4 token rendering internally
+  (`<|turn>system`, `<|think|>`, etc.). We never inject those tokens in
+  prompt text.
 - Thinking is enabled by passing `think: true` in the API call when
-  `agents.thinking_mode = 1`. Trivial agents pass `think: false`.
-- Tools are declared by passing a JSON-schema `tools` array in the API call,
-  **not** by injecting `<|tool>declaration...` tokens in the system text.
-  Double-declaring would break tool calling.
-- Briefings between agents flow through the `delegate_to` tool — never through
-  free-form text.
-- `ask_human` interrupts the flow; the orchestrator pauses the request,
-  collects the answer, then resumes with the human answer injected into
-  `running_user_text` for the next LLM turn.
-- The `OUTPUT CONTRACT` block is **role-adapted**: routers and specialists
-  receive the full set of control tools (`ask_human`, `delegate_to`,
-  `return_to_user`); finalizers receive only `return_to_user`. The contract
-  text rendered in the system prompt mirrors the tools the agent actually has.
+  `agents.thinking_mode = 1`. Trivial agents (Tier 0 dispatcher) pass
+  `think: false`.
+- Tools are declared via the `tools` array in the API call. Per role :
+  - **router** : `ask_human`, `delegate_to`, plus the registry tools
+    granted in `agent_tools`.
+  - **specialist** : `delegate_to`, `report_back`, plus granted registry
+    tools. **No `ask_human`** — if clarification is missing, conclude
+    with `report_back(confidence='low', low_confidence_reason='...')`.
+  - **finalizer** : no control verbs. Terminates by emitting an
+    assistant turn without tool_calls.
+- The conversation history is the **native Ollama `messages[]` array**.
+  No reconstructed recap. The LLM sees its own prior tool_calls and
+  outputs directly.
 
 ## Skeleton
 
-This is what `render_system_prompt()` produces and passes as `role: system`
-to the Ollama API. Ollama wraps it in the appropriate Gemma 4 tokens before
-sending to the model.
-
 ```
 # IDENTITY
-You are {agent.name} ({agent.code}).
-Role: {agent.role}.
-Mission: {agent.mission}.
+You are {agent_name} ({agent_code}).
+Role: {agent_role}.
+Mission: {agent_mission}
 
 # CONTEXT
 ## Human
-{user_profile}
-Detected language for user-facing reply: {detected_language}
+{user_profile_text or "No user profile provided."}
+
+## Known facts about the user (long-term memory)
+- [user]     {code1} : {description1}
+- [feedback] {code2} : {description2}
+- [project]  {code3} : {description3}
+...
+
+Use `manage_user_memory(action='recall', code='<code>')` to load the
+full body of an entry, `action='save'` to add a new fact,
+`action='update'` to refine one.
+
+Detected language — use for human-facing output: {user_language}
+Working language for everything else (internal reasoning, tool queries,
+briefings to other agents): English only.
 
 ## Conversation
-- conversation_id: {conv.id}
-- request_id: {req.id}
-- parent_request_id: {req.parent_id_or_none}
-- recursion_depth: {req.depth}/{MAX_RECURSION_DEPTH}
-- mode: {conv.mode}
-- turn_index: {req.turn_index}
-- conversation_folder: {conv.folder_path}
-
-## Machine
-- os: {os}
-- cwd: {cwd}
-- utc_now: {utc_iso8601}
-
-## Inbound briefing
-from: {sender_agent_code_or_human}
-expected: {expected_outcome}
-support_files:
-{relative_paths_list}
-{inbound_text}
-
-## Available specialists
-{list of active agents with code and mission, excluding self and excluding archivist}
+- mode: {analyse | chat | vocal}
 
 # DIRECTIVES
-{paradigms rendered as `## {category.title}` blocks containing the `content`
- of each paradigm, in deterministic order:
- sections.order_priority -> categories.order_priority -> paradigms.order_priority}
+## {Category 1 title}
+{paradigm content}
 
-# OUTPUT CONTRACT  (router / specialist variant)
-- Reflect first in your thought channel; surface assumptions, traps, biases.
-- If you must clarify with the user: call ask_human(question, why). One question only. `why` is mandatory.
-- If task belongs to another specialist: call delegate_to(...). Multiple parallel delegate_to calls allowed in the same turn for independent subtasks.
-- A delegate_to result is a structured object `{agent, artifact, answer}`. When forwarding to a finalizer, pass the `artifact` filename in support_files. Do NOT copy specialist `answer` content inline into the next briefing.
-- If task is yours and complete: call return_to_user(answer).
-- Inter-agent briefings: English. Human-facing output: see ## Human detected language.
+## {Category 2 title}
+{paradigm content}
+...
 
-# OUTPUT CONTRACT  (finalizer variant)
-- Reflect first in your thought channel; surface assumptions, traps, biases.
-- Produce the deliverable and return it via return_to_user(answer).
-- You do not delegate, you do not call ask_human. Work with the inputs provided.
-- Inter-agent text: English. Human-facing output: see ## Human detected language.
+# OUTPUT CONTRACT
+{role-specific termination rules}
 ```
 
-### API call shape (what the orchestrator sends to Ollama)
+## Composition order
 
-```python
-client.chat(
-    model   = "gemma4:latest",
-    messages = [
-        {"role": "system", "content": <rendered skeleton above>},
-        {"role": "user",   "content": <inbound_text or tool results>},
-    ],
-    tools   = [...],   # JSON-schema array — Ollama renders as <|tool>declaration...
-                       # filtered by role: finalizers get only return_to_user
-    think   = True,    # Ollama injects <|think|> in the system block
-    options = {"temperature": agent.temperature},
-    stream  = False,
-)
+1. **`# IDENTITY`** — name, code, role, mission of the agent (from `agents` row).
+2. **`# CONTEXT`** :
+   - `## Human` — `user_profile.toml` rendered + `user_memory` index
+     prepended automatically by `render_user_memory_index` (limit 100,
+     warning at 90).
+   - Detected language line + working language line.
+   - `## Conversation` — mode only (no other runtime state in the prompt).
+3. **`# DIRECTIVES`** — paradigms grouped by category. Selection :
+   `is_global=1 OR explicitly bound in agent_paradigms`, AND mode
+   compatible (`paradigm_modes`). Rendered by `render_directives`.
+4. **`# OUTPUT CONTRACT`** — role-specific termination rules. Three
+   variants : router / specialist / finalizer. Set by
+   `_render_output_contract_v2`.
+
+## Per-role output contract
+
+### Router (jean-michel)
+
+```
+- Reflect first in your thought channel.
+- Delegate via delegate_to(agent_code, briefing, expected?, support_files?).
+  Multiple parallel delegate_to calls in the same turn are processed sequentially.
+- Ask the human via ask_human(question, why) only when a clarification blocks progress.
+- Conclude by emitting an assistant turn WITHOUT any tool_calls.
+  The `content` field of that turn IS the final answer to the user.
+- Inter-agent briefings: English. Human-facing output: in the detected language.
 ```
 
-Ollama wraps the system content with `<|turn>system … <turn|>` and the user
-content with `<|turn>user … <turn|>` internally. We never write those tokens.
+### Specialist
 
-## Multi-turn rules (Gemma 4 spec)
+```
+- Reflect first in your thought channel ; surface assumptions and traps.
+- You may use delegate_to(agent_code, briefing, expected?, support_files?) to
+  descend the task tree if a sub-task exceeds your scope.
+- You do NOT have ask_human. If a clarification is missing, conclude with
+  report_back(confidence='low', low_confidence_reason='...').
+- Conclude with report_back(summary, files_produced, confidence,
+  low_confidence_reason?). This is the ONLY way to exit.
+  low_confidence_reason is mandatory when confidence='low'.
+- Inter-agent briefings: English. Workspace files: English unless requested.
+```
 
-- **Standard turns**: strip the model's previous thoughts before re-prompting.
-- **Within a single tool-call turn**: thoughts must NOT be stripped between
-  the `tool_call` and the `tool_response`. The `ask_human` cycle falls under
-  this rule — the orchestrator preserves the thinking block when it resumes.
-- **Long agent chains** (depth ≥ 3): inject a `## Prior reasoning summary`
-  block produced by the `synthesizer` instead of raw thoughts, to avoid
-  cyclical reasoning. *(Planned — not yet implemented; the orchestrator
-  currently relies on the per-turn briefing to carry context. This remains
-  an active design goal as agent chains grow longer.)*
+### Finalizer
 
-## Why this shape
+```
+- Reflect first ; produce the deliverable.
+- Conclude by emitting an assistant turn WITHOUT any tool_calls.
+  The `content` field of that turn IS the final answer.
+- You do NOT delegate, you do NOT ask the human.
+```
 
-- **`think` via API parameter**: Ollama's `think: true/false` (added in v0.9)
-  injects `<|think|>` in the system block server-side. We pass it as an API
-  parameter, not as raw text.
-- **Tools via `tools` API parameter**: Ollama renders `<|tool>declaration...`
-  tokens from the JSON-schema array we pass. Injecting them manually in the
-  system text would duplicate declarations and break tool calling.
-- **Tools filtered by role**: a finalizer only receives `return_to_user`. This
-  is enforced both in the JSON tool list passed to Ollama AND in the OUTPUT
-  CONTRACT text — keeping the two consistent prevents the model from being
-  told it can call a tool it doesn't have.
-- **`mode` in CONTEXT**: the agent sees the conversation mode (`analyse`,
-  `chat`, `vocal`) but does not branch on it itself — mode-specific paradigms
-  filtered by `paradigm_modes` do that work. The `mode` field is informational.
-- **`turn_index` in CONTEXT**: lets agents know whether they are at the
-  opening turn of a conversation or further along. Combined with the
-  re-injected `summary.md` (chat/vocal modes), this is how continuity is
-  carried.
-- **`Available specialists` excludes archivist**: the archivist is invoked
-  exclusively by the orchestrator after each user turn in chat/vocal modes;
-  it is not a delegate target. Hiding it from the list prevents the router
-  from attempting `delegate_to(archivist)` (also rejected at the orchestrator
-  level as a defense-in-depth).
-- `IDENTITY → CONTEXT → DIRECTIVES → OUTPUT CONTRACT` order: identity before
-  context, context before rules, contract last. Anchors what the model "is"
-  before what it "can do".
-- Paradigms grouped by category, never inlined as a flat list: keeps the
-  prompt readable and lets the model retrieve a directive by topic.
-- `inbound_text` in the system block (not only in the user message): the
-  mission is immutable for the lifetime of a request — the user message
-  changes each tool-call iteration, the system prompt does not.
+## Multi-turn (chat mode)
+
+Between human turns within the same conversation :
+
+1. `messages.json` is reloaded from disk (full Ollama-shape array).
+2. `messages[0]` (the system prompt) is re-rendered with a fresh
+   `user_memory` index — entries saved during the previous turn become
+   visible.
+3. The new user input is appended as `{role: "user", content: ...}`.
+4. The main loop resumes.
+
+This means the system prompt is effectively re-rendered at the start of
+every human turn — the `user_memory` block is always current. Within a
+single turn, the system prompt stays stable.
+
+## Tier 0 dispatcher prompt
+
+The Tier 0 dispatcher uses a **separate, static** system prompt (no
+identity / paradigms / memory). See `DISPATCH_SYSTEM_PROMPT` in
+`prompts.py`. It is JSON-forced via Ollama's `format="json"` parameter,
+which guarantees parseable output.
+
+## Subagent briefing
+
+When `delegate_to` spawns a subagent, the orchestrator builds the
+subagent's `messages[]` from scratch :
+
+```
+[
+  {role: "system",  content: <render_system_prompt_v2(sub_agent, ...)>},
+  {role: "user",    content: <_format_subagent_briefing(briefing, support_files, expected)>}
+]
+```
+
+The subagent never sees the caller's history. Files referenced via
+`support_files` must physically exist (the caller is responsible for
+writing them via workspace tools before delegating).
+
+## What changed vs v1
+
+| Concept                       | v1                                                | v2                                                  |
+|-------------------------------|---------------------------------------------------|-----------------------------------------------------|
+| Conversation history          | Reconstructed `running_user_text` per iteration   | Native Ollama `messages[]` array                    |
+| Plan                          | `plan.md` written by orchestrator                 | Disappears as source of truth (regenerable view)    |
+| Subagent termination          | `report_findings` or implicit                     | Explicit `report_back` with `confidence`+`low_confidence_reason`|
+| Router termination            | `return_to_user` tool                             | Implicit (assistant without tool_calls)             |
+| Subagent ask_human            | Available                                         | Removed (use `report_back(confidence='low')`)       |
+| Context budget                | 7 orthogonal counters (steps, delegations, etc.)  | Partitioned `SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE` |
+| Compaction                    | Truncation hacks                                  | 4-level escalade (Snip / Microcompact / Collapse / Autocompact) |
+| Cross-conv user memory        | `user_profile.toml` only (static)                 | `user_memory` table + index auto-injected           |

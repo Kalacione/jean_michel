@@ -15,8 +15,13 @@ _ROOT = Path(__file__).parent.parent.parent
 
 
 def _apply_full_v2_chain(conn: sqlite3.Connection) -> None:
+    """Apply the v1 baseline + the three v2 migrations to obtain v2 final state.
+
+    This validates the migration chain. To test the consolidated v2 schema
+    directly, load `db/schema.sql` instead (see test_migration_idempotence).
+    """
     for rel in (
-        "db/schema.sql",
+        "db/schema_v1_baseline.sql",
         "db/migrations/migrate_100_paradigm_realignment.sql",
         "db/migrations/migrate_101_user_memory.sql",
         "db/migrations/migrate_102_drop_runtime_tables.sql",

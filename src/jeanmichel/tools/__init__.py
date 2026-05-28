@@ -1,11 +1,12 @@
-"""Native Python tools available to agents.
+"""Native Python tools available to v2 agents.
 
-Agentic control tools (delegate_to, ask_human, return_to_user) are NOT here —
-they are intercepted directly by the orchestrator.
+Control verbs (delegate_to, ask_human, report_back) are NOT here — they are
+intercepted directly by the v2 orchestrator (see ``orchestrator_v2`` and
+the schemas in ``tools/delegate_to.py`` / ``tools/report_back.py``).
 
-Public API:
+Public API :
     ToolSpec         — frozen dataclass describing one tool
-    build_registry   — build the per-request tool registry (dict[str, ToolSpec])
+    build_registry   — build the per-conversation tool registry
 """
 
 from __future__ import annotations
@@ -15,12 +16,10 @@ from pathlib import Path
 
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
-from . import manage_todo_list as _manage_todo_list_mod
-from . import set_task_class as _set_task_class_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_read_file as _conv_read_file_mod
 from . import conv_status as _conv_status_mod
-from . import self_inspect as _self_inspect_mod
+from . import manage_user_memory as _manage_user_memory_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
@@ -36,8 +35,6 @@ from ._base import ToolSpec
 
 # Workspace write tools — exposing any of these without an
 # agent_workspace_grants row will always fail at runtime with no_write_grant.
-# Centralised here so tools_payload_for_agent and the DB-consistency test
-# stay in sync.
 WORKSPACE_WRITE_TOOLS: frozenset[str] = frozenset({
     "workspace_create_file",
     "workspace_str_replace",
@@ -54,7 +51,13 @@ def build_registry(
     sandbox_image: str | None = None,
     agent_role: str = "",
 ) -> dict[str, ToolSpec]:
-    """Build the tool registry for a given conversation context."""
+    """Build the tool registry for a given conversation context.
+
+    The registry is permissive — it contains every tool the agent might
+    plausibly use. The orchestrator's ``PreToolUse`` hook filters by the
+    agent's ``tool_grants`` (loaded from ``agent_tools``) at call time, so
+    even tools present here are denied to agents that lack the grant.
+    """
     conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
     conv_status_spec = _conv_status_mod.make_spec(conv_id) if conv_id else None
     ws_create_spec = _ws_create_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
@@ -62,14 +65,14 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
-    registry = {
+
+    registry: dict[str, ToolSpec] = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         conv_read_file_spec.name: conv_read_file_spec,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
         _web_search_mod.SPEC.name: _web_search_mod.SPEC,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
-        _self_inspect_mod.SPEC.name: _self_inspect_mod.SPEC,
         _si_config_mod.SPEC.name: _si_config_mod.SPEC,
         _si_activity_mod.SPEC.name: _si_activity_mod.SPEC,
         _si_architecture_mod.SPEC.name: _si_architecture_mod.SPEC,
@@ -79,17 +82,10 @@ def build_registry(
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
+        _manage_user_memory_mod.SPEC.name: _manage_user_memory_mod.SPEC,
     }
     if conv_status_spec is not None:
         registry[conv_status_spec.name] = conv_status_spec
-    if agent_role in {"router", "specialist"} and request_id_provider is not None:
-        todo_spec = _manage_todo_list_mod.make_spec(
-            conv_folder, agent_role, request_id_provider
-        )
-        registry[todo_spec.name] = todo_spec
-    if agent_role == "router" and conv_id:
-        stc_spec = _set_task_class_mod.make_spec(conv_id)
-        registry[stc_spec.name] = stc_spec
     if conv_id and request_id_provider is not None and sandbox_grants is not None:
         sandbox_spec = _bash_sandbox_mod.make_spec(
             conv_folder, conv_id, request_id_provider, sandbox_grants,

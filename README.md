@@ -1,228 +1,270 @@
 # Jean-Michel
 
-Assistant IA local à agents spécialisés, prompts dynamiques et orchestration Python.
+Assistant IA local à agents spécialisés, orchestration Python déterministe avec
+hooks, et boucle multi-turn native Ollama. **Version 2** (branche `revolucion`).
 
 ## Concept
 
-Une requête humaine arrive à **Jean-Michel** (agent routeur). Il la formalise, la classe, puis :
+Une requête humaine entre par le **Tier 0 — Dispatcher** (un petit LLM rapide,
+`granite4.1:8b` par défaut, sans thinking, JSON forcé). Il classifie en
+**ALEXA** (un seul tool suffit, exécution directe) ou **DEEP** (engagement du
+Tier 1).
 
-- répond directement si la tâche est triviale (ex : heure courante via un outil),
-- délègue à un ou plusieurs **agents spécialistes**.
+- **ALEXA** : un tool natif (clock / weather / wikipedia_search) est invoqué,
+  le résultat est formaté en français/anglais selon la langue détectée, fin.
+- **DEEP** : le **Tier 1 — Main agent** (`gemma4:latest` par défaut, multi-turn
+  natif, thinking ON) prend la main avec son propre `messages[]` accumulé. Il
+  peut appeler des tools natifs, ou déléguer à un spécialiste via
+  `delegate_to` — qui spawne un **Tier 2 — Subagent** avec son propre
+  `messages[]` frais, jusqu'à `MAX_DEPTH=5` niveaux de délégation imbriquée.
 
-Quand plusieurs spécialistes contribuent, l'agent **synthesizer** fusionne les sorties en une seule réponse cohérente pour l'humain, dans la langue détectée.
+Quand un subagent conclut, il appelle `report_back(summary, files_produced,
+confidence, low_confidence_reason?)`. Le main agent termine en émettant un
+turn assistant **sans tool_calls** : le `content` EST la réponse.
 
-Agents actifs :
-- **jean-michel** (router) — reçoit la requête, classe, route ou répond directement. Orchestre, ne synthétise pas.
-- **summarizer** (specialist) — résumé de texte
-- **weather-specialist** (specialist) — météo via open-meteo
-- **web-search-specialist** (specialist) — recherche web via SearXNG (méta-moteur local, conteneur Docker). Retourne un résumé compact vers jean-michel ; résultats dédoublonnés par hostname et similarité de titre, contenu complet persisté dans le workspace.
-- **wikipedia-specialist** (specialist) — recherche et extraction d'articles Wikipedia
-- **comparator-specialist** (specialist) — orchestre des recherches multi-entités et produit un verdict comparatif structuré
-- **critical-thinker** (specialist) — examine la solidité d'un raisonnement, surface assumptions et biais, produit une cartographie épistémique (claims supportés / affaiblis / étape suivante)
-- **document-builder** (specialist) — produit des documents structurés (rapports, synthèses, specs) écrits dans le workspace. Reçoit uniquement du matériel final validé — toujours en dernière étape du pipeline.
-- **workspace-manager** (specialist) — inspecte et gère le workspace : liste, usage disque, lecture/écriture de fichiers
-- **meta-analyst** (specialist) — inspecte la configuration interne de Jean-Michel via `self_inspect_*` et produit des propositions d'amélioration dans le workspace
-- **code-runner** (specialist) — écrit des scripts dans le workspace et les exécute dans le sandbox Docker : cycle complet écriture → exécution en un seul tour
-- **synthesizer** (finalizer) — fusionne plusieurs réponses de spécialistes en une seule réponse cohérente
-- **archivist** (finalizer) — invoqué uniquement par l'orchestrateur en modes `chat`/`vocal`, met à jour le `summary.md` de la conversation après chaque tour
+## Architecture en 3 lignes
 
-L'**orchestrateur** (code Python pur, pas un LLM) construit les prompts à la volée, dépile les requêtes, gère les statuts et persiste tout sur disque.
+1. **L'orchestrateur Python est sans état interne pour la décision.** Une
+   boucle minimale + 4 hooks (`PreLLMCall`, `PreToolUse`, `PostToolUse`,
+   `OnDelegateReturn`). L'état conversationnel vit dans `messages[]`
+   (côté LLM) + `state.json` (compteurs côté Python).
+2. **Le LLM voit son histoire complète** via le format `messages[]` natif
+   Ollama (system / user / assistant / tool). Pas de récap reconstruit.
+3. **Toute exigence déterministe est un hook Python**, pas une consigne
+   prompt. Les paradigmes en BDD restent pour le style et la métacognition,
+   pas pour piloter le flux.
+
+Voir `DevNotes/REVOLUCION/06_proposition_v2.md` pour le détail
+architectural complet.
+
+## Agents v2
+
+12 agents actifs (l'archivist legacy a disparu — la persistance native
+`messages.json` couvre son rôle) :
+
+- **jean-michel** (router) — main agent du Tier 1.
+- **summarizer**, **weather-specialist**, **wikipedia-specialist**,
+  **web-search-specialist**, **comparator-specialist**, **critical-thinker**,
+  **document-builder**, **workspace-manager**, **meta-analyst**, **code-runner**
+  (specialists).
+- **synthesizer** (finalizer).
 
 ## Modes
 
-Le mode est choisi au démarrage via `--mode {analyse,chat,vocal}` (default `analyse`). Il est fixé pour toute la durée de la conversation.
+Choisi au démarrage via `--mode {analyse,chat,vocal}` (défaut `analyse`).
 
-- **`analyse`** — la CLI reste ouverte entre les questions (même dossier, summary maintenu entre tours, pas d'archivist narratif ni de follow-ups). Mode par défaut.
-- **`chat`** — conversation continue. Après chaque réponse, la CLI redonne la main à l'humain. L'archivist met à jour `summary.md` après chaque tour, qui est ré-injecté en préfixe du tour suivant. Jean-Michel propose 2-3 axes de creusage en fin de réponse.
-- **`vocal`** — dérivé de `chat` mais avec réponses concises (< 4 phrases courtes), prêt pour synthèse vocale future. Certains paradigmes incompatibles avec la concision (steelman, hold_tension, depth_over_speed, etc.) sont automatiquement filtrés.
+- **`analyse`** — CLI persistante entre questions, pas de follow-ups.
+- **`chat`** — conversation continue, follow-ups proposés par jean-michel.
+- **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
+  `concise_output` activé pour brancher une synthèse vocale en sortie.
 
-Le mode est porté par la conversation et apparaît dans le bloc `# CONTEXT` du prompt système. Les paradigmes peuvent être restreints à un ou plusieurs modes via la table `paradigm_modes` (absence de ligne = applicable à tous les modes).
+Le mode est porté par la conversation et apparaît dans le bloc
+`## Conversation` du prompt système. Les paradigmes peuvent être restreints
+à un mode via la table `paradigm_modes`.
 
-## Principes
+## Modèles configurables
 
-- Modèles **100 % locaux** via Ollama.
-- **Gemma 4** (mono-modèle au démarrage), tokens et thinking mode natifs.
-- **DB = source de vérité** (SQLite). Les fichiers sur disque sont des artefacts dérivés, lisibles à l'humain.
-- **Prompts générés dynamiquement** à partir d'un squelette commun et de paradigmes catégorisés en BDD.
-- **Tous les prompts et briefings inter-agents sont en anglais.** La réponse à l'humain est rendue dans sa langue (détectée via `langdetect`).
-- **Aucune invention** : si une info n'est pas vérifiable, elle est étiquetée comme telle.
+4 slots dans `config.py`, chacun overridable par env var et CLI flag :
 
-## Paradigmes
+| Slot                     | Défaut             | Env var                           | CLI flag           |
+|--------------------------|--------------------|-----------------------------------|--------------------|
+| `DISPATCH_MODEL`         | `granite4.1:8b`    | `JEANMICHEL_DISPATCH_MODEL`       | `--dispatch-model` |
+| `MAIN_MODEL`             | `gemma4:latest`    | `JEANMICHEL_MAIN_MODEL`           | `--main-model`     |
+| `COMPACTOR_MODEL`        | `gemma4:latest`    | `JEANMICHEL_COMPACTOR_MODEL`      | —                  |
+| `SUBAGENT_DEFAULT_MODEL` | `gemma4:latest`    | `JEANMICHEL_SUBAGENT_MODEL`       | —                  |
 
-Un paradigme est un fragment de prompt réutilisable, classé sous une section (`#`) et une catégorie (`##`). L'orchestrateur sélectionne ceux à injecter pour chaque agent et les rend dans le bloc `# DIRECTIVES` du prompt.
+Per-agent override : la colonne `agents.model_override` permet d'assigner
+un modèle spécifique à un subagent (ex. `critical-thinker → gemma4:26b`)
+sans toucher au code.
 
-Sélection effective d'un paradigme pour un agent dans un mode donné :
-1. Le paradigme est `is_global=1`, **ou** explicitement bound à l'agent via `agent_paradigms`.
-2. **Et** soit aucune restriction de mode dans `paradigm_modes`, soit le mode courant figure dans la restriction.
+## Hooks Python
 
-Sections actuelles : `communication`, `reasoning`, `critical_thinking`, `process`, `code`, `safety`.
+Les 4 hooks remplacent les anciens MUST en cascade dans les prompts :
 
-Voir `db/schema.sql` pour les seeds.
+- **`PreLLMCall(messages, state)`** — escalade de compaction sur le `WORKING`
+  budget à 4 niveaux (Snip / Microcompact / Context Collapse / Autocompact),
+  cf. §7 doc 06. Seuils 70/80/90/95 %.
+- **`PreToolUse(ctx, state, dedup_cache)`** — grant check + dédup contextualisée
+  + `MAX_DEPTH` pour delegate_to + `MAX_SEARCH=10` turn-wide pour les
+  research tools. Retourne `Decision(deny, reason)`.
+- **`PostToolUse(call, result, messages, state, dedup_cache, agent_code)`** —
+  incrémente compteurs, reset persist counter sur workspace_write, alimente
+  le cache de dédup, injecte un nudge si > 3 research calls sans persist.
+- **`OnDelegateReturn(parent_messages, sub_result, state)`** — pousse le
+  retour structuré du subagent comme `role=tool` dans le caller. Rejette
+  un `report_back(confidence=low)` sans `low_confidence_reason`.
 
-**Nota** : en plus des paradigmes en BDD, une partie des règles de comportement est hardcodée directement dans `prompts.py` :
-- La description des outils de contrôle (`delegate_to`, `ask_human`, `return_to_user`) — notamment l'usage de `support_files` et le format JSON structuré du retour de `delegate_to`.
-- Le bloc `# OUTPUT CONTRACT` injecté en fin de prompt système, **adapté au rôle** : un `finalizer` (synthesizer, archivist) ne voit que `return_to_user` ; un `router` ou `specialist` voit le set complet.
+## Budget de contexte partitionné
 
-Ces zones sont intentionnellement hors BDD car elles définissent le protocole structurel du système, pas le comportement métier ou le style. Toute modification de ce protocole nécessite une intervention dans `prompts.py`.
+Chaque appel LLM (main ou subagent) a sa propre fenêtre de contexte
+partitionnée en trois zones :
 
-## Squelette de prompt
+- `SYSTEM_RESERVE` = system prompt + tools payload (fixé au démarrage).
+- `OUTPUT_RESERVE` = 15 % du contexte total (réservé pour la réponse finale).
+- `WORKING` = le reste, où le `messages[]` accumule.
 
-Bloc unique `system` consolidé, contenant identité, contexte, directives, déclarations d'outils et contrat de sortie. Le mode pensée (`<|think|>`) est activé par défaut, désactivé pour les agents triviaux.
+Quand le `WORKING` se sature (paliers 70/80/90/95 %), `PreLLMCall` déclenche
+l'escalade de compaction :
+1. **Snip** (déterministe) — drop des nudges orchestrateur honorés + turns
+   assistant vides.
+2. **Microcompact** (déterministe) — remplace les tool results > 1500 tokens
+   par un stub si recomputable depuis disque.
+3. **Context Collapse** (appel LLM) — résume la fenêtre du milieu, préserve
+   les `report_back` returns.
+4. **Autocompact** (appel LLM, dernier recours) — résume tout sauf les 2
+   derniers turns.
 
-Détails et rationale dans `docs/PROMPT_SKELETON.md`.
+Garantie : même si l'autocompact échoue, un message synthétique de
+fallback permet au système de toujours produire une réponse.
 
-## Échanges entre agents — le `briefing`
+## Mémoire long-terme utilisateur
 
-Les agents communiquent par **tool calls natifs Gemma 4**, jamais par texte libre :
+Table `user_memory` (cf. §10 doc 06). Quatre types : `user`, `feedback`,
+`project`, `reference`. Tool unique `manage_user_memory(action, …)` avec
+5 actions : `save`, `recall`, `list`, `update`, `delete`. Granté
+uniquement à `jean-michel`.
 
-- `delegate_to(agent_code, briefing, support_files, expected_outcome)` — passation à un autre spécialiste. Plusieurs `delegate_to` dans un même tour modèle sont traités séquentiellement par l'orchestrateur. Le retour est un objet structuré `{agent, artifact, answer, converged?, files_produced?}` — l'agent appelant utilise le champ `artifact` (filename relatif au dossier de conversation) pour le passer en `support_files` au prochain delegate, sans recopier le contenu. Si `converged: true`, l'enfant a signé sa convergence via `report_findings` — ne pas re-déléguer la même question.
-- `report_findings(summary, confidence, files_produced?, sub_questions?, blockers?)` — exit structuré pour un spécialiste signalant la convergence. Remplace l'ancien `signal_convergence` (déprécié, redirigé côté orchestrateur).
-- `ask_human(question, why)` — pause la requête, demande à l'humain. `why` obligatoire. Une seule question par requête.
-- `return_to_user(answer)` — réponse finale.
+L'index (type + code + description) est injecté automatiquement dans le
+bloc `## Human` du system prompt — le LLM voit ce dont il se souvient
+sans charger les contenus complets. Limite 100 entrées affichées,
+warning à 90.
 
-Parsing structuré gratuit, zéro regex.
+Bootstrap depuis `user_profile.toml` au premier démarrage : crée une
+entrée `user/personal-profile` si la table est vide.
 
-**Contrat outil uniforme** : tous les outils retournent du JSON avec un champ obligatoire `summary` (via `tool_ok(summary, **fields)`) ou `error` (via `tool_error(code, message, **extra)`). L'orchestrateur lit ce `summary` pour journaliser dans `plan.md` sans cas particulier par outil.
-
-L'**archivist** est le seul agent non délégable : il est invoqué uniquement par l'orchestrateur, jamais par un autre agent.
-
-## Récursion & garde-fous
-
-- **Profondeur max** : `MAX_RECURSION_DEPTH = 10`. Compteur incrémenté uniquement par `delegate_to`. `ask_human`, l'appel au `synthesizer`, et l'appel à l'`archivist` n'incrémentent pas.
-- Au-delà de la limite, l'orchestrateur rejette les nouvelles délégations avec un `tool_response` d'erreur explicite et force l'agent à conclure.
-- **Step budget** : `MAX_STEPS_PER_REQUEST = 20` itérations tool-call/tool-response par requête (filet anti-tool-loop), avec bonus de `+3` par écriture workspace réussie (capé à `+15`). Configurables dans [config.py](src/jeanmichel/config.py).
-- **Plafond global de délégations par tour** : `MAX_DELEGATIONS = 8` (env `JEANMICHEL_MAX_DELEGATIONS`). Évite l'aspiration combinatoire.
-- **Wall-clock** : `LLM_CALL_TIMEOUT = 120s`, `REQUEST_WALL_CLOCK = 900s`, `TURN_WALL_CLOCK = 1800s`.
-- **Détection de duplications** : avant exécution, chaque tool-call est réduit à un fingerprint normalisé (whitespace/casing/défauts égalisés ; pour les outils de lecture, seule l'identité du chemin compte — un `view_range` différent n'ouvre pas une nouvelle porte). Sur duplicate, le résultat caché est rejoué (1ère fois en payload complet, puis simple notice avec compteur). 3 duplicates consécutifs sur des outils non-idempotents → force-stop.
-- **`ask_human`** : une seule par requête. Toute tentative supplémentaire reçoit un `tool_response` d'erreur.
-- **`report_findings`** : exit structuré pour les spécialistes ; signale la convergence et expose `files_produced` au parent.
-- **Grounded analysis** : paradigme `grounded_analysis` sur `critical-thinker` et `meta-analyst` — interdit l'analyse sur connaissance interne seule pour les sujets factuels ; exige une collecte de sources préalable via un research specialist. Paradigme `research_phase_routing` sur `jean-michel` — impose le pipeline complet : GATHER (web-search/wikipedia) → CRITIQUE (critical-thinker) → BUILD (document-builder).
-- **Pipeline de recherche prescrit** : les agents de collecte (web-search-specialist, wikipedia-specialist) retournent un résumé compact structuré — le contenu brut va dans le workspace, pas dans le briefing de retour.
-- **Méthodes scientifiques** : paradigmes `evidence_hierarchy`, `burden_of_proof`, `occam_razor` sur jean-michel et critical-thinker.
-- **Métacognition orchestrateur** : paradigme `orchestrator_inquiry_loop` sur jean-michel — réévalue après chaque retour d'agent. `plan.md` est maintenu déterministiquement par l'orchestrateur (module `plan_writer`), pas par un LLM.
-- **Planification explicite** : paradigme `planning_with_todos` sur jean-michel et les spécialistes capables de décomposer (comparator, critical-thinker, meta-analyst, document-builder, code-runner) — pour les requêtes ≥ 3 sous-questions, l'agent pose d'abord sa TODO list via `manage_todo_list` avant toute délégation. Les todos conv-level (`todo.json`) sont prepended à `plan.md` ; les todos request-level (`todo_<req_id>.json`) restent scopées au spécialiste. Actif en modes `analyse` et `chat` uniquement.
-
-## Persistance
+## Persistance v2
 
 Une conversation = un dossier plat horodaté :
 
 ```
-conversations/2026-04-27_14-32_{conv_uuid}/
-├── conversation.md                     # journal append-only humain-lisible
-├── summary.md                          # mis à jour par l'archivist (modes chat/vocal uniquement)
-├── HHMMSS_{agent_code}_prompt.md       # prompt système rendu
-├── HHMMSS_{agent_code}_thought.md      # canal pensée capturé
-├── HHMMSS_{agent_code}_briefing.md     # briefing émis vers un autre agent
-├── HHMMSS_{agent_code}_tool_call.md
-├── HHMMSS_{agent_code}_tool_response.md
-├── HHMMSS_{agent_code}_ask_human.md
-├── HHMMSS_{agent_code}_human_answer.md
-└── HHMMSS_{agent_code}_response.md
+conversations/2026-05-28_03-12_{conv_uuid}/
+├── messages.json                    # main agent's full messages[]
+├── state.json                       # ConversationState scalars
+├── events.jsonl                     # typed event log (append-only)
+└── subagent_<request_id>.json       # one per subagent execution
 ```
 
-Chaque fichier porte un frontmatter YAML minimal (`conversation_id`, `request_id`, `agent`, `kind`, `utc`).
+Audit cross-conversation : `~/.jean-michel/sandbox_audit.jsonl` (toutes
+les exécutions `bash_sandbox`, toutes conversations confondues).
 
-Tri lexicographique = tri chronologique.
+**Reprise** : `--resume` recharge `messages.json` ; le system prompt est
+re-rendu pour intégrer l'index user_memory à jour.
 
-## Workspace agents
+## Événements typés
 
-Les agents `document-builder`, `workspace-manager` et `code-runner` peuvent manipuler des fichiers dans un sous-dossier `workspace/` de leur conversation. Ce dossier est sandboxé : impossible d'écrire dans les artefacts root ni d'en sortir par path traversal.
+L'orchestrateur émet 11 types d'events (catalogue dans
+`src/jeanmichel/events.py`) consommés par le CLI live et persistés dans
+`events.jsonl`. L'arbre des délégations se reconstruit en filtrant les
+`DelegationStarted` / `DelegationCompleted`.
 
-Outils disponibles : `workspace_create_file`, `workspace_str_replace`, `workspace_view`, `workspace_list`.
+| Event                  | Émis quand                                          |
+|------------------------|-----------------------------------------------------|
+| `RequestStarted`       | début d'un tour humain ou d'une délégation          |
+| `LLMCallStarted/Completed` | autour de chaque appel LLM                     |
+| `ToolCallStarted/Completed` | autour de chaque tool natif                    |
+| `DelegationStarted/Completed` | autour de chaque subagent spawn              |
+| `HookFired`            | hook prend une action visible (deny, compaction)    |
+| `WorkingBudgetUpdate`  | franchissement d'un seuil de compaction             |
+| `MemoryNearCapacity`   | user_memory atteint 90 entrées                      |
+| `RequestCompleted`     | agent produit sa réponse finale                     |
 
-L'accès est opt-in par agent via deux grants BDD :
-- `agent_tools` — liste les outils accordés
-- `agent_workspace_grants` — active l'écriture (sans cette ligne, l'agent est read-only)
+## Workspace per-conversation
 
-Quota : 256 Mo par workspace. Les fichiers workspace ne sont **pas** tracés dans la table `artifacts` — le filesystem est l'inventaire.
+Inchangé sur le principe (sandboxing, quota 256 Mo). En v2, un hook
+`PostToolUse` force l'écriture progressive après plus de 3 research calls
+consécutifs sans persist.
 
-### Cycle écriture + exécution
+Tools : `workspace_create_file`, `workspace_append`, `workspace_str_replace`,
+`workspace_view`, `workspace_list`.
 
-`code-runner` est le seul agent qui combine workspace write et `bash_sandbox`. Il gère le cycle complet sans délégation intermédiaire :
+## Sandbox Docker
 
-1. `workspace_create_file` — écrit le script dans `workspace/`
-2. `bash_sandbox` — l'exécute dans le container Docker monté sur ce même dossier
-3. Les fichiers produits (ex. `.md`, `.csv`) sont accessibles dans le workspace
+Inchangé : `bash_sandbox` exécute des commandes dans un container isolé
+(`--network=none`, `--cap-drop=ALL`, non-root, limites mémoire 512 Mo /
+CPU 1 vCPU). Audit dans `~/.jean-michel/sandbox_audit.jsonl`.
 
-Jean-Michel route automatiquement vers `code-runner` quand la demande implique à la fois écriture et exécution de code.
+Grants en BDD : `agent_sandbox_grants` (une ligne par binaire autorisé).
+Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpine`.
 
-## Sandbox
+## Paradigmes en BDD
 
-L'outil `bash_sandbox` exécute des commandes shell dans un container Docker isolé, monté sur le workspace de la conversation.
+Le système de paradigmes survit en v2, mais purgé : 104 paradigmes actifs
+post-Phase 6 (vs 119 en v1) — les anti-loop incantatoires et les paradigmes
+référençant des outils morts ont été supprimés ou réécrits, 5 nouveaux
+paradigmes introduits (`user_memory_discipline`,
+`nested_delegation_discipline`, `report_back_format`,
+`workspace_progressive_write`, `output_contract_no_inline_dump`).
 
-Prérequis : `./jm.sh --build-docker` (une seule fois, ou après modification du Dockerfile).
-
-**Images disponibles :**
-
-| Tag | Contenu | Usage |
-|---|---|---|
-| `jeanmichel-sandbox:py-alpine` | Python 3.13 Alpine + jq + requests/numpy/tabulate | défaut |
-| `jeanmichel-sandbox:node-alpine` | Node 22 Alpine + TypeScript/ts-node | agents JS/TS |
-
-Chaque agent peut utiliser une image différente via la colonne `sandbox_image` de la table `agents` (NULL = image par défaut `py-alpine`).
-
-Grants requis en BDD par agent :
-- `agent_tools` — ligne avec `tool_code='bash_sandbox'`
-- `agent_sandbox_grants` — une ligne par binaire autorisé (ex. `python3`, `jq`, `cat`)
-
-Garanties matérielles :
-- `--network=none` — pas d'accès internet
-- `--cap-drop=ALL` — aucune capability Linux
-- Utilisateur non-root
-- Limites mémoire (512 Mo) et CPU (1 vCPU)
-
-Audit : chaque tentative d'exécution (y compris les refus) est enregistrée dans la table `sandbox_executions` (queryable a posteriori). Le `tool_response` artifact dans le flux conversationnel capture les mêmes données en contexte.
+Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail.
 
 ## Stack
 
 - Python 3.14 dans un venv local.
-- SQLite (source de vérité, `jeanmichel.db`).
-- Ollama 0.21+ (thinking natif depuis 0.9).
-- CLI dynamique (`rich`, `prompt_toolkit`).
-- Docker (optionnel, pour la sandbox d'exécution de code).
-- API web prévue ultérieurement (FastAPI).
+- SQLite (configuration + user_memory cross-conv ; **plus de tables runtime**).
+- Ollama 0.21+ (thinking + multi-turn natif).
+- CLI : `rich`, `prompt_toolkit`.
+- Docker (optionnel, sandbox).
+- `langdetect` pour la détection de langue côté dispatcher.
 
 ## Installation
 
 ```bash
-./jm.sh --install       # crée le venv + initialise la BDD
+./jm.sh --install       # crée le venv + charge le schéma v2 (db/schema.sql)
 ./jm.sh                 # lance le CLI (mode analyse, nouvelle conversation)
-./jm.sh --mode chat     # conversation continue avec mémoire narrative
-./jm.sh --mode vocal    # réponses concises
+./jm.sh --mode chat     # conversation continue
+./jm.sh --mode vocal    # pipeline TTS friendly (concision)
 ./jm.sh --resume        # reprend la dernière conversation active
 ./jm.sh --resume <id>   # reprend une conversation spécifique (id ou préfixe)
 ./jm.sh --list-conv     # liste les conversations actives et exit
-./jm.sh --build-docker              # (optionnel) builde l'image Python Alpine
-./jm.sh --build-docker node-alpine  # (optionnel) builde l'image Node Alpine
-./jm.sh --build-docker all          # (optionnel) builde toutes les images sandbox
+./jm.sh --build-docker              # builde l'image Python Alpine
+./jm.sh --build-docker node-alpine  # builde l'image Node Alpine
+./jm.sh --build-docker all          # builde toutes les images sandbox
 ```
 
-En mode `analyse`, le summary est maintenu (archivist actif) mais les follow-ups narratifs et la concision vocale ne s'appliquent pas.
+Override modèles :
 
-À l'EOF (Ctrl-D) ou `exit`/`quit`, la conversation passe `status='closed'` en BDD. `--resume` ne reprend que les conversations `active` ou `awaiting_human`.
+```bash
+./jm.sh --main-model gemma4:26b           # un main agent plus capable
+./jm.sh --dispatch-model qwen3:14b        # un dispatcher différent
+```
 
-Override du Python : `PYTHON_BIN=/path/to/python3.14 ./jm.sh --install`.
+## Migrations BDD
 
-Override du modèle Ollama : `JEANMICHEL_MODEL=gemma4:4b ./jm.sh` ou `./jm.sh --model gemma4:4b`.
+`db/schema.sql` est l'état v2 consolidé (fresh installs partent de là).
+
+`db/schema_v1_baseline.sql` est conservé pour valider les migrations
+v1 → v2 dans les tests.
+
+Migrations v2 sous `db/migrations/` :
+
+- `migrate_100_paradigm_realignment.sql` — purge des paradigmes obsolètes
+  + 5 nouveaux paradigmes + grant `manage_user_memory` à `jean-michel`
+  + désactivation `archivist`.
+- `migrate_101_user_memory.sql` — création de la table `user_memory`.
+- `migrate_102_drop_runtime_tables.sql` — drop `requests`/`artifacts`/
+  `conversation_phases`/`sandbox_executions` + colonne `agents.model_override`
+  + suppression définitive `archivist`.
+
+Pour migrer une instance v1 existante :
+
+```bash
+sqlite3 jeanmichel.db < db/migrations/migrate_100_paradigm_realignment.sql
+sqlite3 jeanmichel.db < db/migrations/migrate_101_user_memory.sql
+sqlite3 jeanmichel.db < db/migrations/migrate_102_drop_runtime_tables.sql
+```
 
 ## Profil utilisateur
 
-Édite `user_profile.toml` à la racine. Description libre injectée dans le bloc `# CONTEXT > Human` de chaque prompt. Exemple :
+Édite `user_profile.toml` à la racine. Description libre injectée dans
+le bloc `## Human` du prompt + ingérée dans `user_memory` au premier
+démarrage. Exemple :
 
 ```toml
-description = "L'humain auquel tu réponds est un mâle franco-canadien, la quarantaine, localisé à Montréal."
-```
-
-## Migrations DB
-
-Les évolutions du schéma sont versionnées sous `db/migrations/migrate_NNN_*.sql` (50+ migrations à ce jour). Chaque migration est idempotente. Le `db/schema.sql` consolidé reflète l'état cible (toutes migrations appliquées) et peut être utilisé pour repartir à plat.
-
-```bash
-# Migration ciblée sur instance existante
-sqlite3 jeanmichel.db < db/migrations/migrate_054_exact_tool_signatures.sql
-
-# Repartir à plat
-rm jeanmichel.db && sqlite3 jeanmichel.db < db/schema.sql
+name = "Jeremy"
+city = "Montréal"
+country = "Canada"
+language = "fr"
+notes = "Dev senior, préfère les réponses directes sans préambule."
 ```
 
 ## Arborescence du repo
@@ -230,65 +272,80 @@ rm jeanmichel.db && sqlite3 jeanmichel.db < db/schema.sql
 ```
 jeanmichel/
 ├── README.md
-├── jm.sh                     # point d'entrée unifié (CLI, --install, --export-db, --clean, --inspect-conv, --paradigm-matrix, --admin)
+├── jm.sh                     # point d'entrée unifié
 ├── pyproject.toml
-├── user_profile.toml         # description libre de l'humain (édité localement)
+├── user_profile.toml
 ├── db/
-│   ├── schema.sql            # schéma SQLite + paradigmes, agents, tool grants (seed consolidé)
-│   └── migrations/           # migrate_NNN_*.sql (50+ migrations idempotentes)
+│   ├── schema.sql            # schéma v2 consolidé
+│   ├── schema_v1_baseline.sql # baseline v1 (tests migration)
+│   └── migrations/           # migrate_NNN_*.sql
 ├── debug/
-│   ├── inspect_conv.py       # inspection des artefacts d'une conversation
-│   ├── export_db.py          # dump SQL de la base de données
-│   ├── admin.py              # administration DB
-│   ├── clean_convs.py        # purge des anciennes conversations
-│   └── paradigm_matrix.py    # visualisation matrice agents × paradigmes × modes
-├── docker/
-│   ├── sandbox/
-│   │   ├── Dockerfile        # Python 3.13 Alpine (défaut, tag py-alpine)
-│   │   └── Dockerfile.node   # Node 22 Alpine (tag node-alpine)
-│   └── searxng/              # méta-moteur de recherche local (web_search)
+│   ├── inspect_conv.py       # v2 (lit messages.json + events.jsonl + state.json)
+│   ├── export_db.py
+│   ├── admin.py
+│   ├── clean_convs.py
+│   └── paradigm_matrix.py
+├── docker/sandbox/           # Dockerfiles bash_sandbox
 ├── docs/
-│   ├── PROMPT_SKELETON.md    # squelette de prompt commenté
-│   ├── GEMMA4.md             # référence des tokens et comportements Gemma 4
-│   └── HOWTO_ADD_SPECIALIST_OR_TOOL.md  # notice d'implémentation pour agents IA
+│   ├── PROMPT_SKELETON.md
+│   ├── GEMMA4.md
+│   └── HOWTO_ADD_SPECIALIST_OR_TOOL.md
+├── DevNotes/REVOLUCION/      # plans, audits, propositions v2
+│   ├── 01_audit_orchestrateur.md
+│   ├── 02_architecture_cible.md
+│   ├── 03_retour_sur_architecture_cible.md
+│   ├── 04_audit_complementaire.md
+│   ├── 05_inspiration_claude_copilot.md
+│   ├── 06_proposition_v2.md         # référence architecturale v2
+│   ├── 07_plan_implementation.md
+│   ├── 08_paradigm_audit_table.md
+│   └── 09_phase8_completion.md
 ├── src/jeanmichel/
-│   ├── cli.py                # interface rich (multi-ligne Alt+Enter, --mode)
-│   ├── orchestrator.py       # boucle principale (générateur d'events, archivist post-loop)
-│   ├── llm.py                # client Ollama + MockClient
-│   ├── db.py                 # accès SQLite
-│   ├── prompts.py            # rendu du squelette système (output contract adapté au rôle)
-│   ├── plan_writer.py        # journalisation déterministe de workspace/plan.md
-│   ├── tools/                # sous-package outils natifs Python
-│   │   ├── __init__.py       # build_registry(conv_folder) → dict[str, ToolSpec]
-│   │   ├── _base.py          # dataclass ToolSpec
-│   │   ├── _errors.py        # tool_ok / tool_error — contrat JSON uniforme
-│   │   ├── _workspace.py     # primitives partagées (path validation, quota)
-│   │   ├── clock.py          # heure courante (stateless)
-│   │   ├── conv_read_file.py # lecture fichier sandboxée (context-bound)
-│   │   ├── conv_status.py    # état budget / step count (context-bound)
-│   │   ├── conv_history_scan.py  # scan d'historique conversationnel (context-bound)
-│   │   ├── manage_todo_list.py   # TODO list conv+request scopée (context-bound)
-│   │   ├── self_inspect_architecture.py  # vue archi (agents, rôles, paradigmes)
-│   │   ├── self_inspect_config.py        # vue config (paths, timeouts, modèles)
-│   │   ├── self_inspect_activity.py      # vue activité (conversations, requêtes)
-│   │   ├── weather.py        # météo via open-meteo (stateless)
-│   │   ├── wikipedia.py      # recherche + lecture Wikipedia (stateless)
-│   │   ├── web_search.py     # recherche web via SearXNG local + dédoublonnage (stateless)
-│   │   ├── workspace_create_file.py  # création fichier dans workspace (context-bound)
-│   │   ├── workspace_str_replace.py  # édition atomique (context-bound)
-│   │   ├── workspace_view.py         # lecture fichier/dossier (context-bound)
-│   │   ├── workspace_list.py         # arbre workspace 2 niveaux (context-bound)
-│   │   └── bash_sandbox.py           # exécution Docker sandboxée (context-bound)
-│   ├── persistence.py        # écriture artefacts disque + frontmatter
-│   ├── models.py             # dataclasses
-│   └── config.py             # paths, constantes, user_profile loading
-├── tests/                    # 274 tests pytest + smoke + demo CLI
-│   ├── conftest.py
-│   ├── smoke.py              # smoke test du flow complet (MockClient)
-│   └── demo_cli.py           # démo visuelle du rendu CLI
-└── conversations/            # créé au runtime, un sous-dossier par conversation
+│   ├── cli.py                # v2 CLI (Tier 0 + Tier 1)
+│   ├── orchestrator_v2.py    # main loop + spawn_subagent
+│   ├── dispatcher.py         # Tier 0
+│   ├── hooks.py              # 4 hooks Python
+│   ├── compaction.py         # 4-level escalade
+│   ├── events.py             # 11 dataclasses typées
+│   ├── tokens.py             # estimation contexte
+│   ├── llm.py                # OllamaClient + MockClient (chat_messages)
+│   ├── persistence.py        # messages.json + state.json + events.jsonl
+│   ├── bootstrap.py          # toml → user_memory
+│   ├── prompts.py            # render_system_prompt_v2 + index user_memory
+│   ├── config.py             # paramètres v2 (configurables)
+│   ├── db.py                 # accès SQLite (helpers v1+v2)
+│   ├── models.py             # dataclasses + ConversationState
+│   └── tools/
+│       ├── delegate_to.py    # schema (control verb)
+│       ├── report_back.py    # schema + validation
+│       ├── manage_user_memory.py
+│       ├── clock.py, weather.py, wikipedia.py, web_search.py
+│       ├── workspace_*.py, conv_*.py, self_inspect_*.py
+│       └── bash_sandbox.py
+└── tests/v2/                 # ~300 tests pytest contre la v2
+    ├── conftest.py
+    ├── test_orchestrator_v2.py
+    ├── test_dispatcher.py
+    ├── test_hooks.py
+    ├── test_compaction.py
+    ├── test_events.py
+    ├── test_persistence.py
+    ├── test_llm_client.py
+    ├── test_tokens.py
+    ├── test_user_memory.py
+    ├── test_cli_rendering.py
+    ├── test_migration_idempotence.py
+    ├── test_no_orphan_paradigms.py
+    ├── test_schema_v2.py
+    └── test_smoke_e2e.py     # skipped sans Ollama (JEANMICHEL_SMOKE_E2E=1)
 ```
 
 ## État
 
-13 agents actifs : jean-michel, summarizer, weather-specialist, wikipedia-specialist, web-search-specialist, comparator-specialist, critical-thinker, document-builder, workspace-manager, meta-analyst, code-runner, synthesizer, archivist. Outils natifs : clock, conv_read_file, conv_status, conv_history_scan, self_inspect_architecture, self_inspect_config, self_inspect_activity, weather, wikipedia (search + get_page), web_search (SearXNG + dédoublonnage), workspace (create_file, str_replace, view, list), bash_sandbox (Docker). 274 tests pytest verts. CLI : multi-tour en tous modes, --resume, --list-conv. API web : non démarrée.
+Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
+12 agents actifs. ~300 tests v2 verts. CLI multi-tour en tous modes,
+`--resume`, `--list-conv`. Dispatcher Tier 0 opérationnel via granite.
+Main loop Tier 1 multi-turn natif. Subagents Tier 2 avec délégation
+imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme utilisateur active.
+Compaction 4 niveaux. Configuration tunable sans recompile via `config.py`
++ env vars + CLI flags.
