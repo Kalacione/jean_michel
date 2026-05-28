@@ -31,17 +31,81 @@ the list above."""
 import logging
 import os
 import platform
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from . import plan_writer
-from .config import MAX_RECURSION_DEPTH, UserProfile
+from .config import (
+    MAX_RECURSION_DEPTH,
+    USER_MEMORY_INDEX_LIMIT,
+    USER_MEMORY_WARN_AT,
+    UserProfile,
+)
 from .models import Agent, Paradigm
 from .tools import WORKSPACE_WRITE_TOOLS, ToolSpec
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# v2 — user_memory index injection (cf. §10 doc 06).
+# =============================================================================
+
+
+def render_user_memory_index(
+    conn: sqlite3.Connection,
+    limit: int = USER_MEMORY_INDEX_LIMIT,
+    warn_at: int = USER_MEMORY_WARN_AT,
+) -> tuple[str, int]:
+    """Render the user_memory index block + return the total entry count.
+
+    Used by the v2 prompt builder to prepend the index to every agent's
+    ``## Human`` section. The block lists the ``[type] code : description``
+    of the most-recently-modified entries (capped at ``limit``).
+
+    Returns ``("", 0)`` when the table is empty — the caller decides whether
+    to inject the block. ``warn_at`` is unused by this function ; the caller
+    is responsible for emitting ``MemoryNearCapacity`` based on the returned
+    count.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT type, code, description, modified_at "
+            "FROM user_memory "
+            "ORDER BY modified_at DESC "
+            "LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Table missing (migration 101 not applied yet) — gracefully skip.
+        return "", 0
+
+    if not rows:
+        return "", 0
+
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM user_memory"
+    ).fetchone()
+    total_count = int(count_row["c"]) if count_row is not None else len(rows)
+
+    lines: list[str] = ["## Known facts about the user (long-term memory)"]
+    for r in rows:
+        lines.append(f"- [{r['type']}] {r['code']} : {r['description']}")
+    lines.append("")
+    lines.append(
+        "Use `manage_user_memory(action='recall', code='<code>')` to load the "
+        "full body of an entry, `action='save'` to add a new fact, "
+        "`action='update'` to refine one. "
+    )
+    if total_count >= warn_at:
+        lines.append(
+            f"⚠ Memory near capacity ({total_count} / {limit} entries shown). "
+            "Purge obsolete entries via `action='delete'`."
+        )
+    return "\n".join(lines) + "\n", total_count
 
 # Maximum characters of plan.md injected into the router's system prompt.
 # Truncates from the end (most recent steps matter most).
