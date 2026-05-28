@@ -1,9 +1,27 @@
-"""Disk persistence: writes artifacts (prompts, thoughts, briefings, …) with frontmatter."""
+"""Disk persistence: writes artifacts (prompts, thoughts, briefings, …) with frontmatter.
+
+Also exposes the v2 persistence layer for the new orchestrator
+(cf. DevNotes/REVOLUCION/06_proposition_v2.md §6 et §6 bis) :
+
+- `messages.json` — Ollama-shape array, source of the main agent's runtime state.
+- `state.json` — scalar counters snapshot (budget, depth, search calls).
+- `events.jsonl` — append-only event log.
+- `subagent_<request_id>.json` — per-subagent messages array.
+
+All writes are atomic (write-to-temp + rename) so a crash mid-write leaves
+the previous valid version on disk.
+"""
 
 from __future__ import annotations
 
+import dataclasses
+import fcntl
+import json
+import os
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 
 def _frontmatter(conversation_id: str, request_id: str, agent: str, kind: str) -> str:
@@ -44,3 +62,149 @@ def append_to_journal(conv_folder: Path, line: str) -> None:
 
 def conversation_folder_name(conv_id: str, started_at_utc: datetime) -> str:
     return started_at_utc.strftime("%Y-%m-%d_%H-%M") + f"_{conv_id}"
+
+
+# =============================================================================
+# v2 — persistence layer
+# =============================================================================
+#
+# Three files per conversation folder + per-subagent files :
+#   messages.json                — main agent's full messages[] array
+#   state.json                   — ConversationState scalars
+#   events.jsonl                 — append-only journal of typed events
+#   subagent_<request_id>.json   — one per subagent execution
+#
+# All writes are atomic. `events.jsonl` uses fcntl.flock for append safety.
+
+
+_MESSAGES_FILE = "messages.json"
+_STATE_FILE = "state.json"
+_EVENTS_FILE = "events.jsonl"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Atomic file write : tempfile in same dir + os.replace.
+
+    POSIX `rename` is atomic — either the new content is fully on disk under
+    the target path, or the previous content (if any) is still there. No
+    half-written state. Tempfile lives in the same directory to keep the
+    rename within a single filesystem (cross-fs rename is not atomic).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # NamedTemporaryFile in the same dir as the target.
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        # Best effort cleanup if rename failed.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def save_messages(conv_folder: Path, messages: list[dict[str, Any]]) -> None:
+    """Atomic write of `messages.json` (main agent messages[])."""
+    path = conv_folder / _MESSAGES_FILE
+    _atomic_write_text(path, json.dumps(messages, ensure_ascii=False, indent=2))
+
+
+def load_messages(conv_folder: Path) -> list[dict[str, Any]]:
+    """Load `messages.json`. Returns [] if absent."""
+    path = conv_folder / _MESSAGES_FILE
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_sub_messages(
+    conv_folder: Path, request_id: str, sub_messages: list[dict[str, Any]]
+) -> None:
+    """Atomic write of `subagent_<request_id>.json`."""
+    path = conv_folder / f"subagent_{request_id}.json"
+    _atomic_write_text(path, json.dumps(sub_messages, ensure_ascii=False, indent=2))
+
+
+def load_sub_messages(conv_folder: Path, request_id: str) -> list[dict[str, Any]]:
+    """Load a subagent's messages[]. Returns [] if absent."""
+    path = conv_folder / f"subagent_{request_id}.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_state(conv_folder: Path, state: Any) -> None:
+    """Atomic write of `state.json`. `state` is a ConversationState dataclass."""
+    path = conv_folder / _STATE_FILE
+    data = dataclasses.asdict(state) if dataclasses.is_dataclass(state) else dict(state)
+    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def load_state(conv_folder: Path) -> dict[str, Any]:
+    """Load `state.json`. Returns {} if absent (caller reconstructs default state)."""
+    path = conv_folder / _STATE_FILE
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def append_event(conv_folder: Path, event: Any) -> None:
+    """Append a single event to `events.jsonl`.
+
+    `event` is either a dataclass with `to_dict()` (the canonical case for the
+    11 event types defined in `events.py`) or a raw dict. Uses fcntl.flock
+    to serialise concurrent appends from multiple processes — overkill for
+    the mono-thread orchestrator but a cheap safety net.
+    """
+    conv_folder.mkdir(parents=True, exist_ok=True)
+    path = conv_folder / _EVENTS_FILE
+
+    if hasattr(event, "to_dict") and callable(event.to_dict):
+        payload = event.to_dict()
+    elif dataclasses.is_dataclass(event):
+        payload = dataclasses.asdict(event)
+    elif isinstance(event, dict):
+        payload = event
+    else:
+        raise TypeError(f"Unsupported event type for append_event: {type(event)!r}")
+
+    line = json.dumps(payload, ensure_ascii=False) + "\n"
+
+    # Open in append-binary mode for atomic write of the encoded line.
+    # fcntl.LOCK_EX serialises across processes (no-op within one process,
+    # but matters if a debugger or sister script reads/writes the file).
+    encoded = line.encode("utf-8")
+    with open(path, "ab") as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(encoded)
+            f.flush()
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def load_events(conv_folder: Path) -> list[dict[str, Any]]:
+    """Load and parse all events from `events.jsonl`. Returns [] if absent.
+
+    Each line is a JSON object including a `type` field. The caller can
+    reconstruct dataclasses via `events.event_from_dict(d)` if needed.
+    """
+    path = conv_folder / _EVENTS_FILE
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        out.append(json.loads(line))
+    return out

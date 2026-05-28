@@ -95,6 +95,73 @@ DEFAULT_OLLAMA_MODEL = os.environ.get(
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
+# =============================================================================
+# v2 — paramètres de la nouvelle architecture (cf. DevNotes/REVOLUCION/06)
+# =============================================================================
+# Les noms évitent les collisions avec les constantes v1 (MAX_RECURSION_DEPTH,
+# MAX_SEARCH_CALLS_PER_REQUEST, TURN_WALL_CLOCK_SECONDS) qui restent en place
+# pour la rétrocompat tant que le code legacy n'est pas retiré (Phase 6).
+# Tous ces paramètres sont overridables par env var pour tuning sans recompile.
+
+# Modèles — 4 slots (cf. §1.3 doc 06). Chaîne d'override : CLI > env > default.
+DISPATCH_MODEL = os.environ.get("JEANMICHEL_DISPATCH_MODEL", "granite4.1:8b")
+MAIN_MODEL = os.environ.get("JEANMICHEL_MAIN_MODEL", "gemma4:latest")
+COMPACTOR_MODEL = os.environ.get("JEANMICHEL_COMPACTOR_MODEL", "gemma4:latest")
+SUBAGENT_DEFAULT_MODEL = os.environ.get("JEANMICHEL_SUBAGENT_MODEL", "gemma4:latest")
+
+# Budget de contexte partitionné (cf. §1.7 et §7 doc 06).
+# 4 seuils d'escalade pour la compaction sur le WORKING : snip / microcompact /
+# context_collapse / autocompact.
+COMPACTION_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)
+# Ratio du contexte total réservé pour la réponse finale (cf. §1.7 et §12 doc 06).
+# 15 % parce que les outputs longs sont persistés au workspace, la réponse
+# finale est toujours un résumé court.
+OUTPUT_RESERVE_RATIO = float(os.environ.get("JEANMICHEL_OUTPUT_RESERVE_RATIO", "0.15"))
+# Seuil au-dessus duquel un tool result devient candidat à la microcompaction
+# (cf. §7 doc 06). ~1500 tokens ≈ 6000 chars ≈ une page de prose.
+MICROCOMPACT_TOKEN_THRESHOLD = _int_env("JEANMICHEL_MICROCOMPACT_THRESHOLD", 1500)
+
+# Garde-fous structurels v2 (cf. §8 doc 06).
+MAX_DEPTH = _int_env("JEANMICHEL_MAX_DEPTH", 5)
+MAX_SEARCH_CALLS_PER_TURN = _int_env("JEANMICHEL_MAX_SEARCH_TURN", 10)
+WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
+
+# Mémoire long-terme utilisateur (cf. §10 doc 06). Limite et seuil d'alerte
+# sur l'index injecté dans le system prompt.
+USER_MEMORY_INDEX_LIMIT = _int_env("JEANMICHEL_USER_MEMORY_LIMIT", 100)
+USER_MEMORY_WARN_AT = _int_env("JEANMICHEL_USER_MEMORY_WARN_AT", 90)
+
+# Ratio du budget WORKING du parent alloué à un subagent par défaut.
+# 40 % par défaut, à tuner empiriquement (§12 doc 06).
+SUBAGENT_BUDGET_RATIO = float(os.environ.get("JEANMICHEL_SUBAGENT_BUDGET_RATIO", "0.40"))
+
+# Fenêtre de contexte par modèle (en tokens). Utilisée pour calculer
+# SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE. Override par modèle via env :
+# `JEANMICHEL_CTX_WINDOW_<model_slug>` où model_slug est le nom du modèle
+# avec ':' et '-' remplacés par '_'.
+DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 128_000)
+
+
+def model_context_window(model: str) -> int:
+    """Return the context window size (in tokens) for a given Ollama model.
+
+    Lookup order : env var `JEANMICHEL_CTX_WINDOW_<slug>` → default 128k.
+    The slug is the model name with non-alphanumeric chars replaced by '_'
+    (e.g. 'gemma4:latest' → 'gemma4_latest').
+    """
+    slug = "".join(c if c.isalnum() else "_" for c in model)
+    return _int_env(f"JEANMICHEL_CTX_WINDOW_{slug}", DEFAULT_MODEL_CONTEXT_WINDOW)
+
+
+# Audit sandbox cross-conversation : fichier JSONL global (cf. §6 bis doc 06).
+SANDBOX_AUDIT_LOG = Path(
+    os.environ.get(
+        "JEANMICHEL_SANDBOX_AUDIT_LOG",
+        str(Path.home() / ".jean-michel" / "sandbox_audit.jsonl"),
+    )
+)
+
+
 # ---- User profile ---------------------------------------------------------
 
 @dataclass(frozen=True)
