@@ -20,6 +20,8 @@ dependencies = [
   "wikipedia>=1.4.0",
   # Article-text extraction for the web_fetch tool (Pocket/Instapaper-style)
   "readability-lxml>=0.8.1",
+  # Neural text-to-speech for the vocal mode (Piper ONNX models)
+  "piper-tts>=1.4.0",
   # Future: web frontend
   # "fastapi>=0.115.0",
   # "uvicorn>=0.30.0",

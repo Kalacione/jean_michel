@@ -85,7 +85,21 @@ Choisi au démarrage via `--mode {analyse,chat,vocal}` (défaut `analyse`).
 - **`analyse`** — CLI persistante entre questions, pas de follow-ups.
 - **`chat`** — conversation continue, follow-ups proposés par jean-michel.
 - **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
-  `concise_output` activé pour brancher une synthèse vocale en sortie.
+  `concise_output` activé. Le texte est aussi synthétisé via **Piper TTS**
+  (modèle ONNX local) puis joué via `paplay` / `aplay` / `ffplay`. Voir
+  [voice_models/README.md](voice_models/README.md) pour les modèles et
+  `JEANMICHEL_VOICE_MODEL` dans `.env.example` pour la config.
+  Pendant que le LLM travaille, des **annonces vocales asynchrones**
+  ("Je cherche sur internet", "Je consulte Wikipédia"…) sont émises à
+  chaque délégation et à chaque appel d'outil de recherche par le
+  router — sans bloquer l'orchestrateur (`subprocess.Popen`,
+  skip-if-busy).
+
+Les modes `chat` et `vocal` sont **continus** : le dispatcher Tier 0 voit
+les 4 derniers tours user/assistant pour résoudre les follow-ups
+("et pour demain ?" → toujours météo, location précédente conservée).
+Le mode `analyse` reste standalone par défaut (chaque question est
+traitée isolée par le dispatcher).
 
 Le mode est porté par la conversation et apparaît dans le bloc
 `## Conversation` du prompt système. Les paradigmes peuvent être restreints
@@ -291,7 +305,7 @@ de la purge initiale.
 ./jm.sh --install       # crée le venv + charge le schéma v2 (db/schema.sql)
 ./jm.sh                 # lance le CLI (mode analyse, nouvelle conversation)
 ./jm.sh --mode chat     # conversation continue
-./jm.sh --mode vocal    # pipeline TTS friendly (concision)
+./jm.sh --mode vocal    # réponses courtes + Piper TTS (voir voice_models/README.md)
 ./jm.sh --resume        # reprend la dernière conversation active
 ./jm.sh --resume <id>   # reprend une conversation spécifique (id ou préfixe)
 ./jm.sh --list-conv     # liste les conversations actives et exit
@@ -322,11 +336,13 @@ Quand une clé est manquante, le tool concerné renvoie un
 `tool_error("api_key_missing", …)` clair — pas de dégradation silencieuse,
 le LLM voit l'erreur et bascule sur un autre outil.
 
-| Env var              | Tool(s)                                          | Notes                              |
-|----------------------|--------------------------------------------------|------------------------------------|
-| `NEWSDATA_API_KEY`   | `news_latest`, `news_archive`                    | newsdata.io, free 200 req/jour     |
-| `GITHUB_TOKEN`       | `github_search_code` (requis), `github_search_repos` (5000 req/h) | fine-grained PAT read-only public  |
-| `STACKEXCHANGE_KEY`  | `stackoverflow_search` (optionnel)               | 300 req/j sans, 10 000 avec        |
+| Env var                    | Tool(s) / Mode                                                    | Notes                              |
+|----------------------------|-------------------------------------------------------------------|------------------------------------|
+| `NEWSDATA_API_KEY`         | `news_latest`, `news_archive`                                     | newsdata.io, free 200 req/jour     |
+| `GITHUB_TOKEN`             | `github_search_code` (requis), `github_search_repos` (5000 req/h) | fine-grained PAT read-only public  |
+| `STACKEXCHANGE_KEY`        | `stackoverflow_search` (optionnel)                                | 300 req/j sans, 10 000 avec        |
+| `JEANMICHEL_VOICE_MODEL`   | mode `--mode vocal` (Piper TTS)                                   | path vers un `.onnx`, cf. [voice_models/README.md](voice_models/README.md) |
+| `JEANMICHEL_AUDIO_PLAYER`  | mode `--mode vocal` (optionnel)                                   | force `paplay`/`aplay`/`ffplay`    |
 
 Les tools `clock`, `weather` (open-meteo), `wikipedia_*`, `web_search`
 (SearXNG local), `web_fetch` (readability-lxml), `pypi_lookup` ne

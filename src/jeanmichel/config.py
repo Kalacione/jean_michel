@@ -211,6 +211,20 @@ SANDBOX_AUDIT_LOG = Path(
     )
 )
 
+# Vocal mode — Piper TTS model. The matching .onnx.json config is auto-
+# discovered by Piper. Falls back to `voice_models/default.onnx` at the
+# repo root if unset ; vocal mode degrades gracefully (text-only) when
+# neither resolves.
+VOICE_MODEL_PATH = Path(
+    os.environ.get(
+        "JEANMICHEL_VOICE_MODEL",
+        str(REPO_ROOT / "voice_models" / "default.onnx"),
+    )
+)
+# Audio player command to feed the synthesised WAV. Empty = auto-detect
+# in this order : paplay → aplay → ffplay.
+VOICE_AUDIO_PLAYER = os.environ.get("JEANMICHEL_AUDIO_PLAYER", "").strip()
+
 
 # ---- User profile ---------------------------------------------------------
 

@@ -121,8 +121,16 @@ def classify(
     user_text: str,
     llm: Any,
     model: str | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> DispatchDecision:
     """Classify a user request via the dispatcher LLM.
+
+    ``history`` (optional) is the prior turns of the conversation
+    (system / user / assistant messages). When passed, the dispatcher sees
+    the last 4 exchanges before the current ``user_text`` — that's enough
+    for follow-ups like "et pour demain ?" to resolve to a clock/weather
+    call with the previously-mentioned topic, instead of falling through
+    to a low-confidence DEEP path.
 
     Tries up to twice on parse failure. On final failure, returns a `deep`
     fallback with `confidence="low"`. Never raises — the dispatcher is a
@@ -130,14 +138,12 @@ def classify(
     """
     chosen_model = model or DISPATCH_MODEL
     last_raw = ""
+    messages = _build_dispatcher_messages(user_text, history)
 
     for attempt in (1, 2):
         try:
             resp = llm.chat_messages(
-                messages=[
-                    {"role": "system", "content": DISPATCH_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_text},
-                ],
+                messages=messages,
                 tools=[],
                 temperature=0.0,
                 thinking=False,
@@ -175,6 +181,40 @@ def classify(
         confidence="low",
         raw_response=last_raw,
     )
+
+
+_HISTORY_TURNS_FOR_DISPATCHER = 4  # last ~2 exchanges = enough for follow-ups
+
+
+def _build_dispatcher_messages(
+    user_text: str, history: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """Prepend a small slice of conversation history to the dispatcher prompt.
+
+    Strategy : keep the system prompt first, then the last N user/assistant
+    pairs (skipping tool messages and system messages from history), then
+    the current user_text. Tool noise would confuse the small 8b
+    classifier ; we want it to focus on the conversation thread.
+    """
+    out: list[dict[str, Any]] = [
+        {"role": "system", "content": DISPATCH_SYSTEM_PROMPT},
+    ]
+    if history:
+        # Keep only user + assistant turns (drop system, tool messages with
+        # tool_calls or role=tool). Then take the tail.
+        clean = [
+            m for m in history
+            if m.get("role") in ("user", "assistant")
+            and m.get("content")
+            and not m.get("tool_calls")
+        ]
+        for m in clean[-_HISTORY_TURNS_FOR_DISPATCHER:]:
+            out.append({
+                "role": m["role"],
+                "content": str(m["content"])[:500],
+            })
+    out.append({"role": "user", "content": user_text})
+    return out
 
 
 def _parse_response(raw: str) -> DispatchDecision | None:

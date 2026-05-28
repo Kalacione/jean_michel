@@ -106,3 +106,9 @@ jeanmichel.db-wal
 *.db-wal
 user_profile.toml
 conversations/*
+
+# Piper voice models (30-150 MB each) — keep only the README tracked
+voice_models/*.onnx
+voice_models/*.onnx.json
+voice_models/*.zip
+!voice_models/README.md

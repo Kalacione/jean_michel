@@ -132,6 +132,27 @@ print('  Database created at ${DB_PATH}')
 "
   fi
 
+  # ---- post-install : vocal-mode prerequisites (warn only) ----------------
+  # Vocal mode needs the user to be in the `audio` group so PipeWire /
+  # ALSA expose real sinks. We don't run sudo from here — just flag the
+  # missing config so it's not forgotten on first --mode vocal use.
+  if id -nG | tr ' ' '\n' | grep -qx audio; then
+    : # OK, nothing to say
+  else
+    echo
+    echo "⚠  Vocal mode prerequisite missing : your user is not in the 'audio' group."
+    echo "   Without this, PipeWire falls back to a 'null' sink and no sound plays."
+    echo "   Fix once and for all :"
+    echo
+    echo "       sudo usermod -aG audio \$USER"
+    echo
+    echo "   Then close your session completely and log back in (or reboot)."
+    echo "   Verify : 'groups' should list 'audio', 'aplay -l' should list cards,"
+    echo "   'pactl get-default-sink' should NOT return 'auto_null'."
+    echo
+    echo "   You can keep using non-vocal modes without this — it's vocal-mode only."
+  fi
+
   echo
   echo "Done."
 }

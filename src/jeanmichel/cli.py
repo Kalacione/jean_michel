@@ -323,8 +323,15 @@ def run_one_turn(
             _log.debug("update_conversation_language failed: %s", exc)
 
     # --- Tier 0 : dispatch (under spinner) ---
+    # In chat / vocal modes we pass the conversation history so the small
+    # dispatcher LLM can resolve follow-ups ("et pour demain ?" → still
+    # weather, with the previous location). In analyse mode each question
+    # is treated standalone — that's the documented contract.
+    dispatcher_history = initial_messages if mode in ("chat", "vocal") else None
     with console.status("[dim]thinking…[/]", spinner="dots"):
-        decision = dispatcher.classify(user_text, dispatch_llm)
+        decision = dispatcher.classify(
+            user_text, dispatch_llm, history=dispatcher_history
+        )
 
     if decision.intent == "alexa":
         console.print(
@@ -365,6 +372,23 @@ def run_one_turn(
             padding=(1, 2),
         )
     )
+
+    # Vocal mode : play the answer through the TTS pipeline. Failure is
+    # non-fatal — the text panel already shows the response.
+    if mode == "vocal":
+        from . import voice
+        # Wait for any async announcement still playing before starting the
+        # final answer playback (otherwise they overlap).
+        voice.wait_for_announcements(timeout=10.0)
+        with console.status("[dim]🔊 speaking…[/]", spinner="dots"):
+            ok = voice.speak(answer)
+        if not ok:
+            console.print(
+                "[yellow]vocal output unavailable — "
+                "set JEANMICHEL_VOICE_MODEL to a Piper .onnx and ensure "
+                "paplay/aplay/ffplay is installed (see voice_models/README.md).[/]"
+            )
+
     return answer
 
 
@@ -462,6 +486,14 @@ def _run_deep_turn(
         status.stop()
         try:
             render_event(console, event, mode=mode)
+            # Vocal mode : announce delegations and direct research tool calls
+            # via async TTS so the user hears progress while the LLM works.
+            if mode == "vocal":
+                from . import voice
+                if isinstance(event, DelegationStarted):
+                    voice.announce_delegation(event.child_agent)
+                elif isinstance(event, ToolCallStarted):
+                    voice.announce_tool_call(event.tool_name)
         finally:
             status.start()
 
@@ -620,6 +652,17 @@ def main(argv: list[str] | None = None) -> int:
     # Pre-warm for chat/vocal modes (analyse defers to first turn).
     if args.mode in {"chat", "vocal"}:
         _prewarm(console, {"dispatch": dispatch_llm, "main": main_llm})
+
+    # Vocal mode preflight : warn now if TTS isn't usable, so the user
+    # knows responses will be text-only before the first turn runs.
+    if args.mode == "vocal":
+        from . import voice
+        if not voice.is_available():
+            console.print(
+                "[yellow]⚠ vocal mode requested but TTS not ready : "
+                "missing JEANMICHEL_VOICE_MODEL or no audio player. "
+                "Responses will be text-only. See voice_models/README.md.[/]\n"
+            )
 
     # ----- User profile + bootstrap user_memory -----
     profile = UserProfile.load()

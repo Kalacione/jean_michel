@@ -216,6 +216,109 @@ def test_classify_coerces_garbled_intent_when_tool_valid():
     assert decision.args == {"location": "Paris"}
 
 
+# ---- history-aware dispatch (chat/vocal follow-ups) ---------------------
+
+
+def test_classify_with_history_forwards_recent_turns_to_dispatcher():
+    """Dispatcher should see the last user/assistant pairs from history."""
+    sent_messages: list = []
+
+    class CapturingClient:
+        def chat_messages(self, **kwargs):
+            sent_messages.extend(kwargs.get("messages", []))
+            return LLMResponse(
+                thinking="",
+                content='{"intent":"alexa","tool":"weather","args":{}}',
+            )
+
+    history = [
+        {"role": "system", "content": "you are jean-michel"},
+        {"role": "user", "content": "météo de ce soir à Montréal"},
+        {"role": "assistant", "content": "Il fera 12°C ce soir."},
+    ]
+    decision = classify("et pour demain ?", CapturingClient(), history=history)
+
+    assert decision.intent == "alexa"
+    assert decision.tool == "weather"
+    # The system prompt + history-derived turns + current question are sent.
+    roles = [m["role"] for m in sent_messages]
+    assert roles[0] == "system"  # DISPATCH_SYSTEM_PROMPT
+    assert roles[-1] == "user"  # current question
+    # The Montreal reference is reachable in the prompt
+    full_text = " ".join(m["content"] for m in sent_messages)
+    assert "Montréal" in full_text
+    assert "et pour demain" in full_text
+
+
+def test_classify_without_history_uses_only_current_text():
+    """No history → only [system, user] is sent."""
+    sent_messages: list = []
+
+    class CapturingClient:
+        def chat_messages(self, **kwargs):
+            sent_messages.extend(kwargs.get("messages", []))
+            return LLMResponse(
+                thinking="",
+                content='{"intent":"deep","tool":null,"args":{}}',
+            )
+
+    classify("hello", CapturingClient(), history=None)
+    assert len(sent_messages) == 2
+    assert sent_messages[0]["role"] == "system"
+    assert sent_messages[1]["role"] == "user"
+    assert sent_messages[1]["content"] == "hello"
+
+
+def test_classify_history_drops_tool_and_assistant_with_tool_calls():
+    """History containing tool-call messages should not pollute the dispatcher."""
+    sent_messages: list = []
+
+    class CapturingClient:
+        def chat_messages(self, **kwargs):
+            sent_messages.extend(kwargs.get("messages", []))
+            return LLMResponse(
+                thinking="",
+                content='{"intent":"deep","tool":null,"args":{}}',
+            )
+
+    history = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "trouve X"},
+        {"role": "assistant", "content": "", "tool_calls": [{"name": "web_search"}]},
+        {"role": "tool", "content": '{"summary": "8 hits"}'},
+        {"role": "assistant", "content": "Voici les résultats."},
+    ]
+    classify("et maintenant ?", CapturingClient(), history=history)
+
+    # Only "trouve X" + final assistant + current user_text expected (besides system)
+    history_contents = [m["content"] for m in sent_messages]
+    assert any("trouve X" in c for c in history_contents)
+    assert any("Voici les résultats" in c for c in history_contents)
+    assert not any('"summary": "8 hits"' in c for c in history_contents)
+
+
+def test_classify_history_truncates_to_last_n_turns():
+    """Older history beyond the cutoff is dropped (cap = 4 turns)."""
+    sent_messages: list = []
+
+    class CapturingClient:
+        def chat_messages(self, **kwargs):
+            sent_messages.extend(kwargs.get("messages", []))
+            return LLMResponse(
+                thinking="",
+                content='{"intent":"deep","tool":null,"args":{}}',
+            )
+
+    history = [{"role": "user", "content": f"msg_{i}"} for i in range(10)]
+    classify("now", CapturingClient(), history=history)
+    contents = " ".join(m["content"] for m in sent_messages)
+    # Last 4 msgs kept, earlier ones dropped
+    assert "msg_9" in contents
+    assert "msg_6" in contents
+    assert "msg_5" not in contents
+    assert "msg_0" not in contents
+
+
 def test_classify_llm_exception_falls_back_to_deep():
     """If the LLM client raises (Ollama hung, etc.), dispatcher doesn't crash."""
 
