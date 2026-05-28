@@ -1,8 +1,9 @@
-# Fresh-context iteration for research specialists
+# Progressive externalised state for research specialists
 
 **Status**: draft spec, not yet implemented
-**Inspiration**: Ralph (snarktank/ralph) — fresh AI instance per iteration, memory externalised to files
-**Problem solved**: 120s LLM timeout when a research specialist accumulates 8+ tool calls in a single context
+**Inspiration**: Ralph (snarktank/ralph) — externalised memory + bounded LLM context per iteration
+**Problem solved**: 120s LLM timeout when a research specialist accumulates 8+ tool calls
+**Guiding principle**: KISS, measure before each step, reuse what already exists
 
 ---
 
@@ -10,260 +11,193 @@
 
 Today, when `web-search-specialist` (or `wikipedia-specialist`) does N iterations of `tool_call → tool_response → thought`, the conversation history grows linearly inside `messages`. By iteration 8 the prompt reaches ~25 KB and Ollama times out at 120 s.
 
-The Phase 6 patch (bounded re-injection, identity-arg fingerprint) is a mitigation — it slows the growth on duplicates but does not address the root cause.
-
-The root cause is the accumulative context model. We want a structural fix for research specialists, while keeping the current model for router / finalizer / one-shot specialists.
+The Phase 6 patch (bounded re-injection, identity-arg fingerprint) is a mitigation. We want a structural fix without building a parallel system.
 
 ---
 
-## Design — "fresh iteration" mode
+## Key insight — we already have 80% of Ralph
 
-A new value for `agents.context_mode`:
+Looking at any current conversation (e.g. `2026-05-25_01-50_fceaec9d54c6/`), the project **already externalises** what Ralph externalises:
 
-| Mode | Behaviour |
+| Ralph's `agent.md` | Jean-Michel's existing equivalent |
 |---|---|
-| `accumulative` (default) | Current. Each turn appends to `messages`. |
-| `fresh_iteration` | At each iteration, `messages` is rebuilt from scratch from a notes file. |
+| Briefing | `plan.md` section `Task:` (per delegation) |
+| Done log | `plan.md` section `Actions:` (timestamped, one line per tool call) |
+| Findings / artefacts | `workspace/*.md` (files produced by specialists) |
+| Summary | `plan.md` section `Summary:` |
 
-Activated initially on **3 agents** only:
-- `web-search-specialist`
-- `wikipedia-specialist`
-- `comparator-specialist`
+What we **don't** have:
+- The LLM doesn't **read** its own slice of `plan.md` during its iterations — it relies on accumulated `messages` instead.
+- `Citations` (URL → claim) aren't explicitly extracted; they're buried in `workspace/*.md` text.
 
-All other agents (router, finalizer, one-shot specialists, critical-thinker, document-builder, code-runner, …) remain `accumulative` — they don't suffer the same iteration-count problem and benefit from accumulative chain-of-thought.
+**The cure isn't to build a new notes file. It's to feed back what's already written.**
 
----
-
-## The notes file — `research_notes.md`
-
-One file per delegation, in the conversation workspace. Structure is fixed and parts are owned by either the orchestrator or the LLM.
-
-```markdown
-# Briefing
-[copied verbatim from the delegate_to briefing — invariant]
-
-# Open questions
-- [Q1] Quelles sources fournissent des données scientifiques structurées ?
-- [Q2] Quelles licences sont compatibles avec un usage commercial ?
-
-# Done
-- iter 1 (00:01:23): web_search("scientific data API") → 8 hits, kept 3
-- iter 2 (00:01:45): wikipedia_get_page("PubMed") → license CC0 confirmed
-- iter 3 (00:02:11): update_research_notes — closed Q2, added Q3
-
-# Citations
-[1] https://arxiv.org/help/api — arXiv OAI-PMH, daily dumps
-[2] https://www.ncbi.nlm.nih.gov/home/develop/api/ — PubMed E-utilities
-[3] https://api.openalex.org/ — OpenAlex graph API, no key required
-
-# Next intended action
-web_search("openalex API rate limits")
-```
-
-### Ownership of each section
-
-| Section | Owner | Mechanism |
-|---|---|---|
-| `# Briefing` | orchestrator | written once at delegation start |
-| `# Done` | orchestrator | one line appended per successful tool execution (auto, from the existing `plan_writer` flow) |
-| `# Citations` | orchestrator | auto-extracted from `tool_response` JSON of `web_search` and `wikipedia_*` tools (URL + first 80 chars of snippet) |
-| `# Open questions` | LLM | written/updated via `update_research_notes` tool |
-| `# Next intended action` | LLM | same tool |
-
-**Key insight**: the orchestrator does ~80% of the maintenance deterministically. The LLM only handles the semantic 20% (which questions remain open, what to do next). This is critical because small / medium local models are unreliable at maintaining structured state.
+This reframes the whole approach: no `research_notes.md`, no `context_mode` enum, no new tool at step 1. Just close the loop.
 
 ---
 
-## The orchestrator loop in fresh mode
+## Design — progressive, three steps, each measurable
+
+### Step 0 — Measure (no code change)
+
+Before touching anything, instrument or analyse the 3 most recent long research conversations and record:
+- bytes of `messages` payload at each LLM call
+- bytes at the moment of timeout (if any)
+- number of duplicate tool fingerprints caught by Phase 6
+- total iterations per specialist
+
+**Decision gate**: if the recent prompt-engineering patch (`source_admission_criteria` paradigm, migration 055) + Phase 6 are enough to keep specialists under 15 KB and below the timeout — **stop here**. Don't implement anything else. The cheapest win is the one already in production.
+
+### Step 1 — Sliding-window context for specialists (atomic)
+
+If Step 0 shows the wall is still hit, do this single atomic change. **One commit, one toggle, fully reversible.**
+
+The change has two halves that must ship together (otherwise we just add bytes — see "Why redundancy was a real risk" below):
+
+**1a. Trim `messages` to a sliding window for specialists.**
 
 ```python
-# Pseudocode for _run_request when agent.context_mode == "fresh_iteration"
+# In the messages builder for specialist roles, inside _run_request:
+SPECIALIST_WINDOW_TURNS = 3  # last 3 turns kept raw (tunable)
 
-research_notes_writer.init(conv_folder, briefing)
-
-for step in range(STEP_BUDGET_FRESH):
-    if wall_clock_exceeded(): break
-
-    notes_md = read(conv_folder / "research_notes.md")
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": (
-            f"BRIEFING (verbatim):\n{briefing}\n\n"
-            f"CURRENT RESEARCH NOTES:\n{notes_md}\n\n"
-            f"What is your next single action? "
-            f"Either: (a) call exactly one research tool, "
-            f"(b) call update_research_notes to revise Open/Next, "
-            f"or (c) call report_findings to converge."
-        )}
-    ]
-
-    response = llm.chat(messages)
-    yield ThoughtCaptured(...)
-
-    # Enforce: one tool call max
-    if not response.tool_calls:
-        # Treat as soft warning, force an update_research_notes prompt on next iter
-        research_notes_writer.append_note(
-            conv_folder,
-            f"iter {step}: model produced no tool call — forcing convergence prompt"
-        )
-        continue
-
-    primary = response.tool_calls[0]
-    if len(response.tool_calls) > 1:
-        research_notes_writer.append_note(
-            conv_folder,
-            f"iter {step}: dropped {len(response.tool_calls)-1} extra tool call(s) — fresh mode allows 1/iter"
-        )
-
-    # Execute primary
-    if primary.name == "report_findings":
-        # standard convergence path, exits the loop
-        return _handle_report_findings(primary)
-
-    if primary.name == "update_research_notes":
-        research_notes_writer.update_semantic_sections(
-            conv_folder,
-            open_questions=primary.arguments["open_questions"],
-            next_action=primary.arguments["next_action"],
-        )
-        continue
-
-    # Any other tool — execute normally, then auto-append to Done + Citations
-    result = execute_tool(primary)
-    research_notes_writer.append_done(conv_folder, step, primary, result)
-    if primary.name in CITING_TOOLS:
-        research_notes_writer.append_citations(conv_folder, result)
-
-# Budget exhausted → orchestrator forces a final report_findings synthesis turn
-yield ForcedConvergence(...)
+if agent.role == 'specialist' and len(history) > SPECIALIST_WINDOW_TURNS * 2:
+    # Keep system + initial briefing + last N raw turns
+    history = history[:2] + history[-SPECIALIST_WINDOW_TURNS * 2:]
 ```
 
----
-
-## The new tool — `update_research_notes`
-
-Granted only to agents in `fresh_iteration` mode.
+**1b. Inject a deterministic "what you have done" block as a system-side prefix.**
 
 ```python
-ToolSpec(
-    name="update_research_notes",
-    description=(
-        "Revise the semantic sections of research_notes.md. "
-        "Use this to update Open questions (mark answered, add new sub-questions, "
-        "abandon dead-ends) and to declare your Next intended action. "
-        "Call this when your understanding of the research has changed — "
-        "typically after 2-3 tool results."
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "open_questions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "The current list of open sub-questions, prefixed "
-                               "with their status: '[OPEN]', '[PARTIAL]', "
-                               "'[ANSWERED]', '[ABANDONED]'.",
-            },
-            "next_action": {
-                "type": "string",
-                "description": "Single sentence describing your next intended tool call.",
-            },
-        },
-        "required": ["open_questions", "next_action"],
-    },
-    handler=...,  # context-bound on conv_folder
+# Built deterministically by orchestrator from existing artefacts:
+progress_block = render_specialist_progress(
+    plan_path=conv_folder / 'plan.md',
+    workspace_dir=conv_folder / 'workspace',
+    delegation_id=current_delegation_id,
+    max_bytes=2048,
 )
+# Then prepended to the system message (or as a second system turn)
 ```
 
-Returns standard `tool_ok(summary, ...)`.
+`render_specialist_progress()` produces something like:
 
----
+```
+## Your progress so far in this delegation
+Briefing: <verbatim Task: from plan.md, truncated to 400 chars>
 
-## Stop conditions (in priority order)
+Actions already executed (N=5):
+- wikipedia_search("…") → 3 pages: List of file formats | …
+- wikipedia_search("…") → 10 pages: API key | List of Java APIs | …
+- workspace_create_file(wikipedia_sources.md) → wrote 1648 bytes
 
-1. LLM calls `report_findings(...)` → clean exit, standard convergence flow.
-2. All Open questions tagged `[ANSWERED]` or `[ABANDONED]` → orchestrator injects on next prompt:
-   *"All sub-questions are closed. Call report_findings to deliver your synthesis now."*
-   If the agent ignores, force a final synthesis prompt.
-3. Step budget exhausted (proposed: 50 in fresh mode, vs 20 in accumulative).
-4. Wall-clock for `_run_request` exhausted (existing `REQUEST_WALL_CLOCK_SECONDS=900`).
-
----
-
-## DB changes
-
-```sql
--- migrate_055_context_mode.sql
-ALTER TABLE agents ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'accumulative';
-
-UPDATE agents SET context_mode = 'fresh_iteration'
-WHERE code IN ('web-search-specialist', 'wikipedia-specialist', 'comparator-specialist');
-
--- Grant update_research_notes to the same three agents
-INSERT INTO tools (code, ...) VALUES ('update_research_notes', ...) ON CONFLICT DO NOTHING;
-INSERT INTO agent_tools (agent_id, tool_code)
-SELECT id, 'update_research_notes' FROM agents
-WHERE code IN ('web-search-specialist', 'wikipedia-specialist', 'comparator-specialist')
-ON CONFLICT DO NOTHING;
+Workspace files you have produced:
+- wikipedia_sources.md (1648 bytes) — first line: "## Reliable Information Sources…"
 ```
 
+**The two halves are non-negotiable together**: window without injection = LLM forgets earlier turns; injection without window = duplicated bytes, no relief.
+
+**Step 1 properties**:
+- 0 new files, 0 new tools, 0 migrations, 0 DB columns
+- 1 new function (`render_specialist_progress`)
+- ~80-100 LOC + tests
+- Rollback: set `SPECIALIST_WINDOW_TURNS = math.inf` → exact pre-patch behaviour
+- Applies to all `role='specialist'` agents uniformly (no per-agent flag yet)
+
+### Step 2 — Explicit `Open questions` slot (optional, only if Step 1 insufficient)
+
+If after Step 1 we still observe specialists losing track of what they were trying to answer (e.g. they conclude early on a partial answer, or they thrash on the same sub-question), then add a lightweight semantic slot:
+
+- New tool `note_progress(open_questions: list[str], next_action: str)`
+- The orchestrator stores its output in **a new section of the existing `plan.md`** for the current delegation (NOT a new file)
+- `render_specialist_progress` reads that section back into the prefix
+
+Granted only to specialists. No `context_mode` enum even at this stage — every specialist gets it, the LLM uses it when relevant or ignores it.
+
+**Properties**:
+- 1 new tool (~50 LOC)
+- Extend `plan_writer` to manage the new section (~30 LOC)
+- 0 new files, 0 migrations beyond a tool grant insert
+- Rollback: revoke the tool grant
+
+This step is **optional and provisional**. Don't pre-build it.
+
+### Step 3 — Citations extraction (optional, quality bet)
+
+Independent of the timeout problem, an `Auto-cited URLs` block inside `render_specialist_progress` could further reduce hallucinations (it pairs with the `source_admission_criteria` paradigm from migration 055):
+
+- Orchestrator scans `tool_response` JSON for keys `url`, `link`, `source` after each `web_search` / `wikipedia_*` call
+- Builds a flat list `[N] URL — title` in memory keyed by delegation
+- Includes it in the progress prefix
+
+**Properties**:
+- ~30 LOC, deterministic, no DB, no tool
+- Activated independently of Steps 1-2
+
 ---
 
-## New code surface
+## Why redundancy was a real risk
 
-| File | Purpose |
-|---|---|
-| `src/jeanmichel/research_notes_writer.py` | deterministic notes file manager (init, append_done, append_citations, update_semantic_sections) |
-| `src/jeanmichel/tools/update_research_notes.py` | the new tool |
-| `src/jeanmichel/orchestrator.py` | branch on `context_mode` in `_run_request` |
-| `db/migrations/migrate_055_context_mode.sql` | schema + seed |
-| `tests/test_research_notes_writer.py` | unit tests for the writer |
-| `tests/test_fresh_iteration_orchestrator.py` | integration: MockClient scripts a 5-iteration fresh research flow |
+The naive "just inject a summary into the system prompt" idea (an earlier draft of this spec) would have **made the timeout worse**: the LLM would receive
 
-Estimated diff: ~400 lines of code + ~200 lines of tests. No removal — all behind a DB flag.
+```
+[system + injected summary]
+[user briefing]
+[full accumulated messages]
+```
 
----
-
-## Backwards compatibility & risk
-
-- Default `context_mode='accumulative'` → existing flows unchanged.
-- 274 existing tests still pass without modification (they only touch accumulative agents in their fixtures).
-- The 3 migrated agents see a behavioural shift — to be validated by replaying the "sources of truth" conversation from `2026-05-25_00-19` and comparing latency + output quality.
-- Rollback: flip `context_mode` back to `accumulative` in DB. Tool grants for `update_research_notes` can stay (the LLM just won't call it).
-
----
-
-## Open questions for review
-
-1. **Citations format**: keep flat `[N] URL — title`, or include the snippet too? Flat is smaller, snippet helps the LLM judge relevance without re-fetching. Suggest: title only at first, escalate to snippet if the LLM keeps re-searching.
-
-2. **Should `critical-thinker` read `research_notes.md`** when it's invoked after a research phase? Today it reads the workspace artifact. Reading `research_notes.md` would give it the structured Open/Done view for free.
-
-3. **Step budget in fresh mode**: 50 feels right. With ~1-2 s per iter (constant context), that's ~60-90 s of pure LLM time per delegation. Well under the 900 s request wall-clock.
-
-4. **What if the LLM calls `update_research_notes` every iteration**? It would burn steps without progress. Mitigation: detect 2 consecutive `update_research_notes` calls and inject a notice "you've updated notes twice in a row — your next action must be a research tool or report_findings".
-
-5. **Should the orchestrator log dropped tool calls (when LLM produces 2+) into the `# Done` section** or into a separate `# Warnings` section? Suggest `# Warnings` to keep `# Done` clean.
-
----
-
-## Implementation order
-
-1. Migration 055 + DB seed (5 min).
-2. `research_notes_writer.py` + its unit tests (deterministic, easy).
-3. `update_research_notes` tool + grants + unit tests.
-4. Orchestrator branch `fresh_iteration` in `_run_request` + integration tests with MockClient.
-5. Smoke test: replay the "sources of truth" question, compare with `2026-05-25_00-19` baseline.
-6. If green: extend to `wikipedia-specialist` and `comparator-specialist`. Update README.
-7. If issues: iterate on the spec, don't extend.
+i.e. the summary on top **plus** the same information still in raw form below. Net effect: more bytes, faster blow-up. That's why Step 1 must combine injection with `messages` trimming. The injection replaces the elided history, it doesn't supplement it.
 
 ---
 
 ## What this is NOT
 
-- Not a replacement for the duplicate-call detection (Phase 6) — that still applies inside one iteration's tool call.
-- Not a planner. There's no upstream LLM deciding the plan; the specialist itself owns its `Open questions`.
-- Not multi-agent within a single research turn. It's a single specialist iterating, just with externalised memory.
-- Not Ralph itself. We borrow the principle, our stack and use case are different.
+- Not a new mode (`context_mode` enum) — same code path for all specialists, just a tighter window.
+- Not a new file (`research_notes.md`) — `plan.md` already plays the role, slice it per delegation.
+- Not a new module (`research_notes_writer.py`) — extend `plan_writer.py` if and only if Step 2 ships.
+- Not opt-in per agent — applies to all `role='specialist'` (with the window size as the single tunable).
+- Not Ralph — borrows the externalisation principle, otherwise our stack and trade-offs differ.
+
+---
+
+## Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Trimming drops the tool_call that established a hypothesis, LLM loses thread | Injection brings the summary back; if not enough, raise `SPECIALIST_WINDOW_TURNS` from 3 to 5 |
+| `render_specialist_progress` itself grows unbounded over a 20-iter delegation | Hard cap `max_bytes=2048`; oldest actions get elided into "… (12 earlier actions omitted)" |
+| Different specialists need different window sizes | If observed, promote `SPECIALIST_WINDOW_TURNS` to a per-role config (still simpler than `context_mode`) |
+| Existing 274 tests break | Step 1 only touches the messages builder; tests that script ≤3 turns are unaffected. Tests with >3 turns may need a feature flag in the test fixture |
+
+---
+
+## Implementation order (only after Step 0 measurement)
+
+1. Add `render_specialist_progress()` in a new helper (could live alongside `plan_writer.py`) — pure function over `plan.md` + workspace ls. Easy to unit test.
+2. Modify the messages-builder branch in `orchestrator.py`: window trim + prefix injection, guarded by `role == 'specialist'`.
+3. Unit tests on the renderer.
+4. Integration test with MockClient: simulate 10-iteration specialist, assert messages payload stays < 8 KB.
+5. Smoke test: replay the "sources of truth" question, compare with baseline (latency, output quality, byte size at peak).
+6. If green: ship. If not: tune `SPECIALIST_WINDOW_TURNS`, retest. If still not: consider Step 2.
+
+---
+
+## Open questions for review
+
+1. **Where to put `render_specialist_progress`** — sibling of `plan_writer.py` (good cohesion) or inside `prompts.py` (close to where it's consumed)? Lean toward `prompts.py` since it's prompt-shaping logic.
+
+2. **Should the injected progress block be a separate `system` message or appended to the existing one?** Ollama tends to give more weight to the first system message; a second system turn keeps the original paradigms uncontaminated. Lean toward second turn.
+
+3. **Initial window size** — 3 turns feels right (~6 messages: 3 tool_call/response pairs + a couple of thoughts). To be confirmed by Step 0 measurements.
+
+4. **Does this change the behaviour of `report_findings`?** No — convergence path is untouched. Only the steady-state context construction changes.
+
+5. **Apply to `comparator-specialist` and `code-runner` too?** They are specialists but typically converge in <3 turns. The window won't trim them in practice. Safe to apply uniformly to `role='specialist'`.
+
+---
+
+## Decision checkpoints
+
+- After **Step 0**: do we even need to ship anything?
+- After **Step 1** smoke test: is the wall gone? If yes, stop. If partially, tune window. If no, escalate to Step 2.
+- After **Step 2** (if reached): is convergence quality improved? If no, revert and accept the limitation.
+
+Each checkpoint is a measurable observation, not a feeling. The whole point of the staging is to avoid paying engineering cost upfront for a problem that may already be solved by cheaper means.

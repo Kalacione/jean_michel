@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp /home/kalacione/projects/jean-michel/jeanmichel.db /tmp/jm_test.db)",
+      "Bash(sqlite3 /tmp/jm_test.db)"
+    ]
+  }
+}

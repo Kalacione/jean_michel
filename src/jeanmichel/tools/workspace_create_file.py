@@ -26,32 +26,40 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             msg = str(e)
             code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
             return tool_error(code, msg)
-        # plan.md is owned exclusively by plan_update
+        # plan.md is owned exclusively by the orchestrator (see plan_writer.py).
+        # It is rewritten automatically when delegate_to fires and when a child
+        # converges. Agents must not write to it directly.
         if target == safe_resolve(ws_root, "plan.md"):
             return tool_error(
                 "reserved_path",
                 (
-                    "plan.md is managed by the plan_update tool. "
-                    "Use plan_update(action='init', ...) to create it, "
-                    "plan_update(action='mark', ...) to update steps."
+                    "plan.md is managed automatically by the orchestrator "
+                    "as a side-effect of delegate_to. Agents cannot write to it directly. "
+                    "To organise your own task list, call manage_todo_list or write to "
+                    "another workspace file."
                 ),
-                action_required="plan_update",
             )
         if target.exists():
             try:
                 existing = target.read_text(encoding="utf-8")[:6000]
             except OSError:
                 existing = None
-            extra: dict = {"action_required": "workspace_str_replace"}
+            extra: dict = {
+                "action_required": "workspace_append",
+                "alternatives": ["workspace_append", "workspace_str_replace"],
+            }
             if existing is not None:
                 extra["existing_content"] = existing
+            canonical = target.relative_to(ws_root).as_posix()
             return tool_error(
                 "file_exists",
                 (
-                    f"File already exists: {relative_path}. "
+                    f"File already exists: {canonical}. "
                     "DO NOT call workspace_create_file again. "
-                    "Call workspace_str_replace(relative_path, old_str, new_str) to update it."
+                    "To ADD new content at the end, call workspace_append(relative_path, content). "
+                    "To MODIFY existing content, call workspace_str_replace(relative_path, old_str, new_str)."
                 ),
+                path=canonical,
                 **extra,
             )
         encoded = content.encode("utf-8")
@@ -59,9 +67,10 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             return tool_error("quota_exceeded", "Quota exceeded. No space left in workspace.")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(encoded)
+        canonical = target.relative_to(ws_root).as_posix()
         return tool_ok(
-            f"wrote {relative_path} ({len(encoded)} bytes)",
-            path=relative_path,
+            f"wrote {canonical} ({len(encoded)} bytes)",
+            path=canonical,
             bytes_written=len(encoded),
         )
 

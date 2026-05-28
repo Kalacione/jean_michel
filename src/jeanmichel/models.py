@@ -16,6 +16,7 @@ class Agent:
     thinking_mode: bool
     temperature: float
     sandbox_image: str | None = None   # override Docker image for bash_sandbox
+    model_override: str | None = None  # v2 : per-agent Ollama model (cf. migrate_102)
 
 
 @dataclass
@@ -64,3 +65,31 @@ class LLMResponse:
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     corrupted: bool = False
+    # v2 additions: token usage reported by Ollama. Zero when unknown
+    # (e.g. MockClient or older Ollama versions). Used by hooks to refine
+    # token estimates after each call.
+    prompt_eval_count: int = 0
+    eval_count: int = 0
+
+
+# ---- v2 conversation runtime state ---------------------------------------
+#
+# Snapshot of scalar counters tracked by the orchestrator (cf. §6 doc 06).
+# Persisted to `state.json` after each iteration of the main loop.
+# Not a state machine — just a structured bag of counters that hooks read
+# and mutate. `working_tokens_used` is recomputed from `estimate_tokens(messages)
+# − system_reserve_tokens` rather than accumulated, so it stays accurate even
+# when the compaction shrinks `messages[]`.
+
+
+@dataclass
+class ConversationState:
+    system_reserve_tokens: int = 0
+    output_reserve_tokens: int = 0
+    working_budget: int = 0
+    working_tokens_used: int = 0
+    depth_current: int = 0
+    search_calls_total: int = 0
+    search_calls_since_last_persist: int = 0
+    active_subagent: str | None = None
+    last_iteration_at_utc: str = ""

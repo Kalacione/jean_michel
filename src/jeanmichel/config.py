@@ -13,6 +13,47 @@ REPO_ROOT = Path(os.environ.get("JEANMICHEL_HOME", Path.cwd())).resolve()
 DB_PATH = REPO_ROOT / "jeanmichel.db"
 CONVERSATIONS_DIR = REPO_ROOT / "conversations"
 USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
+ENV_FILE_PATH = REPO_ROOT / ".env"
+
+
+# ---- .env loader (minimal, no dependency) --------------------------------
+#
+# Loads `KEY=value` pairs from `.env` at the repo root into `os.environ`.
+# Existing shell variables WIN — we never overwrite them. This means a
+# `NEWSDATA_API_KEY=…` exported in your shell takes precedence over the
+# value in `.env`, which is the principle of least surprise.
+#
+# Format (intentionally minimal — no python-dotenv dep) :
+#   - One `KEY=value` per line.
+#   - Blank lines and lines starting with `#` are ignored.
+#   - Optional surrounding single or double quotes are stripped.
+#   - No interpolation (`$VAR`), no multi-line values, no `export` prefix.
+#
+# Missing `.env` = no-op. The file is gitignored by default.
+
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv(ENV_FILE_PATH)
+
 
 # ---- Runtime constants ----------------------------------------------------
 
@@ -46,10 +87,42 @@ def _int_env(name: str, default: int) -> int:
 # internet" on a single user request.
 MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)
 
+# Hard cap on distinct search-tool calls within a single specialist request.
+# Counts web_search, wikipedia_search, wikipedia_fetch, wikipedia_get_page.
+# When reached the agent is restricted to its conclusion tool (report_findings)
+# so it must synthesize what it already has instead of keep searching.
+MAX_SEARCH_CALLS_PER_REQUEST = _int_env("JEANMICHEL_MAX_SEARCH_CALLS", 10)
+
 # Wall-clock timeouts (configurable via env vars).
+#
+# Three nested scopes, checked at every iteration of the orchestrator loop:
+#
+# - LLM_CALL_TIMEOUT_SECONDS  → one individual `llm.chat()` call. Raised as
+#   LLMTimeoutError; the orchestrator yields WallClockExceeded(scope="llm_call")
+#   and retries once with a "conclude with what you have" hint (soft recovery)
+#   if the turn budget still allows it.
+# - REQUEST_WALL_CLOCK_SECONDS → total time spent inside ONE agent request
+#   (one agent's step loop, from its first LLM call to return/report_findings).
+#   Each delegated child gets its own fresh request budget.
+# - TURN_WALL_CLOCK_SECONDS   → total time for the WHOLE user turn, shared by
+#   the router and every (recursively delegated) child. The upper safety net.
+#
+# Hitting any of these triggers a hard cut: the in-flight request is failed,
+# a partial report is synthesised from recorded tool calls, and
+# WallClockExceeded + OrchestrationFailed are yielded.
+#
+# To avoid that brutal cut, SOFT_DEADLINE_RATIO (below) fires earlier and
+# forces a graceful wrap-up by restricting the tool payload to the agent's
+# conclusion tool only.
 LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 120)
 REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 900)
 TURN_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_TURN_TIMEOUT", 1800)
+# Soft deadline ratio: once elapsed/budget crosses this fraction, the
+# orchestrator forces a graceful wrap-up (restrict tools to the agent's
+# conclusion tool and inject a "conclude now with partial results" message).
+# 0.75 means at 75 % of the wall-clock the agent must conclude with whatever
+# it has. Set to 1.0 to disable (hard cut only).
+SOFT_DEADLINE_RATIO = float(os.environ.get("JEANMICHEL_SOFT_DEADLINE_RATIO", "0.75"))
 
 # Workspace soft quota per conversation, in bytes.
 WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
@@ -57,9 +130,100 @@ WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",
+    #"qwen3:14b",
     "gemma4:26b",
 )
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+
+
+# =============================================================================
+# v2 — paramètres de la nouvelle architecture (cf. DevNotes/REVOLUCION/06)
+# =============================================================================
+# Les noms évitent les collisions avec les constantes v1 (MAX_RECURSION_DEPTH,
+# MAX_SEARCH_CALLS_PER_REQUEST, TURN_WALL_CLOCK_SECONDS) qui restent en place
+# pour la rétrocompat tant que le code legacy n'est pas retiré (Phase 6).
+# Tous ces paramètres sont overridables par env var pour tuning sans recompile.
+
+# Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : CLI > env > default.
+DISPATCH_MODEL = os.environ.get("JEANMICHEL_DISPATCH_MODEL", "granite4.1:8b")
+MAIN_MODEL = os.environ.get("JEANMICHEL_MAIN_MODEL", "gemma4:latest")
+COMPACTOR_MODEL = os.environ.get("JEANMICHEL_COMPACTOR_MODEL", "gemma4:latest")
+SUBAGENT_DEFAULT_MODEL = os.environ.get("JEANMICHEL_SUBAGENT_MODEL", "gemma4:latest")
+# Slot dédié aux agents dont le métier EST le raisonnement (strategist,
+# critical-thinker, comparator-specialist, meta-analyst). Aujourd'hui chacun
+# pointe dur sur 'gemma4:26b' via `agents.model_override` ; ce slot existe
+# pour qu'un futur switch global (changer de modèle de raisonnement) se fasse
+# par env var, sans migration DB. Le résolveur actuel (orchestrator_v2) ne le
+# lit pas encore — il sera consommé si on bascule de model_override sur un
+# flag d'agent (cognitive_tier='high', par exemple). Documenté ici comme
+# point d'extension stable.
+REASONER_MODEL = os.environ.get("JEANMICHEL_REASONER_MODEL", "gemma4:26b")
+
+# Budget de contexte partitionné (cf. §1.7 et §7 doc 06).
+# 4 seuils d'escalade pour la compaction sur le WORKING : snip / microcompact /
+# context_collapse / autocompact.
+COMPACTION_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)
+# Ratio du contexte total réservé pour la réponse finale (cf. §1.7 et §12 doc 06).
+# 15 % parce que les outputs longs sont persistés au workspace, la réponse
+# finale est toujours un résumé court.
+OUTPUT_RESERVE_RATIO = float(os.environ.get("JEANMICHEL_OUTPUT_RESERVE_RATIO", "0.15"))
+# Seuil au-dessus duquel un tool result devient candidat à la microcompaction
+# (cf. §7 doc 06). ~1500 tokens ≈ 6000 chars ≈ une page de prose.
+MICROCOMPACT_TOKEN_THRESHOLD = _int_env("JEANMICHEL_MICROCOMPACT_THRESHOLD", 1500)
+
+# Garde-fous structurels v2 (cf. §8 doc 06).
+MAX_DEPTH = _int_env("JEANMICHEL_MAX_DEPTH", 5)
+MAX_SEARCH_CALLS_PER_TURN = _int_env("JEANMICHEL_MAX_SEARCH_TURN", 10)
+WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
+
+# Mémoire long-terme utilisateur (cf. §10 doc 06). Limite et seuil d'alerte
+# sur l'index injecté dans le system prompt.
+USER_MEMORY_INDEX_LIMIT = _int_env("JEANMICHEL_USER_MEMORY_LIMIT", 100)
+USER_MEMORY_WARN_AT = _int_env("JEANMICHEL_USER_MEMORY_WARN_AT", 90)
+
+# Ratio du budget WORKING du parent alloué à un subagent par défaut.
+# 40 % par défaut, à tuner empiriquement (§12 doc 06).
+SUBAGENT_BUDGET_RATIO = float(os.environ.get("JEANMICHEL_SUBAGENT_BUDGET_RATIO", "0.40"))
+
+# Fenêtre de contexte par modèle (en tokens). Utilisée pour calculer
+# SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE. Override par modèle via env :
+# `JEANMICHEL_CTX_WINDOW_<model_slug>` où model_slug est le nom du modèle
+# avec ':' et '-' remplacés par '_'.
+DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 128_000)
+
+
+def model_context_window(model: str) -> int:
+    """Return the context window size (in tokens) for a given Ollama model.
+
+    Lookup order : env var `JEANMICHEL_CTX_WINDOW_<slug>` → default 128k.
+    The slug is the model name with non-alphanumeric chars replaced by '_'
+    (e.g. 'gemma4:latest' → 'gemma4_latest').
+    """
+    slug = "".join(c if c.isalnum() else "_" for c in model)
+    return _int_env(f"JEANMICHEL_CTX_WINDOW_{slug}", DEFAULT_MODEL_CONTEXT_WINDOW)
+
+
+# Audit sandbox cross-conversation : fichier JSONL global (cf. §6 bis doc 06).
+SANDBOX_AUDIT_LOG = Path(
+    os.environ.get(
+        "JEANMICHEL_SANDBOX_AUDIT_LOG",
+        str(Path.home() / ".jean-michel" / "sandbox_audit.jsonl"),
+    )
+)
+
+# Vocal mode — Piper TTS model. The matching .onnx.json config is auto-
+# discovered by Piper. Falls back to `voice_models/default.onnx` at the
+# repo root if unset ; vocal mode degrades gracefully (text-only) when
+# neither resolves.
+VOICE_MODEL_PATH = Path(
+    os.environ.get(
+        "JEANMICHEL_VOICE_MODEL",
+        str(REPO_ROOT / "voice_models" / "default.onnx"),
+    )
+)
+# Audio player command to feed the synthesised WAV. Empty = auto-detect
+# in this order : paplay → aplay → ffplay.
+VOICE_AUDIO_PLAYER = os.environ.get("JEANMICHEL_AUDIO_PLAYER", "").strip()
 
 
 # ---- User profile ---------------------------------------------------------

@@ -1,11 +1,23 @@
-"""CLI: chat loop rendered with `rich`. Consumes orchestrator events."""
+"""v2 CLI for Jean-Michel.
+
+Wires together the v2 stack : Tier 0 dispatcher (granite, JSON-forced) +
+Tier 1 main loop (gemma, multi-turn) + nested subagents. The CLI is the
+sole consumer of the orchestrator's event stream and the sole point where
+human input is solicited.
+
+Implements the §11 ter B contract of DevNotes/REVOLUCION/06_proposition_v2.md.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
+import logging
 import sys
-from collections.abc import Iterable
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
@@ -17,46 +29,56 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
+from . import bootstrap as bootstrap_mod
 from . import db
-from .config import DEFAULT_OLLAMA_MODEL, UserProfile
-from .llm import OllamaClient
-from .orchestrator import (
-    AgentStarted,
-    ConversationStarted,
-    CorruptedOutputDetected,
-    DelegationStarted,
-    DuplicateCallBlocked,
-    FinalAnswer,
-    ForcedConvergence,
-    HumanAnswerReceived,
-    HumanQuestionAsked,
-    OrchestrationFailed,
-    Orchestrator,
-    RecursionLimitReached,
-    ReportFindingsReceived,
-    SignalConvergenceRedirected,
-    SummaryUpdated,
-    ThoughtCaptured,
-    ToolCallEmitted,
-    ToolResponseRecorded,
-    TurnStarted,
-    WallClockExceeded,
+from . import dispatcher
+from . import persistence
+from .config import (
+    CONVERSATIONS_DIR,
+    DISPATCH_MODEL,
+    MAIN_MODEL,
+    UserProfile,
+    ensure_dirs,
 )
+from .events import (
+    DelegationCompleted,
+    DelegationStarted,
+    HookFired,
+    LLMCallCompleted,
+    LLMCallStarted,
+    MemoryNearCapacity,
+    RequestCompleted,
+    RequestStarted,
+    ToolCallCompleted,
+    ToolCallStarted,
+    WorkingBudgetUpdate,
+)
+from .llm import OllamaClient
+from .orchestrator_v2 import (
+    AgentSpec,
+    load_agent_spec_v2,
+    run_main_loop,
+)
+from .prompts import render_user_memory_index
+from .tools import build_registry
+
+_log = logging.getLogger(__name__)
+
 
 # ---- Style palette --------------------------------------------------------
 
-C_USER     = "bold cyan"
-C_AGENT    = "bold cyan"
-C_TOOL     = "yellow"
-C_THOUGHT  = "dim italic"
-C_HUMAN_Q  = "bold yellow"
-C_FINAL    = "bold green"
-C_WARN     = "bold red"
+C_USER = "bold cyan"
+C_AGENT = "bold cyan"
+C_TOOL = "yellow"
+C_THOUGHT = "dim italic"
+C_HUMAN_Q = "bold yellow"
+C_FINAL = "bold green"
+C_WARN = "bold red"
 
 
 # ---- Splash ---------------------------------------------------------------
 
-SPLASH = r"""
+_SPLASH = r"""
      _                  __  __ _      _          _
     | | ___  __ _ _ __ |  \/  (_) ___| |__   ___| |
  _  | |/ _ \/ _` | '_ \| |\/| | |/ __| '_ \ / _ \ |
@@ -65,332 +87,664 @@ SPLASH = r"""
 """
 
 
-def render_splash(console: Console, model: str, mode: str = "analyse") -> None:
-    console.print(Text(SPLASH, style="bold cyan"))
-    console.print(f"[dim]model: {model} · mode: {mode} • Enter=newline  Alt+Enter=send  Ctrl-D=quit[/]\n")
+def render_splash(console: Console, main_model: str, dispatch_model: str, mode: str) -> None:
+    console.print(Text(_SPLASH, style="bold cyan"))
+    console.print(
+        f"[dim]main={main_model} · dispatch={dispatch_model} · mode={mode} • "
+        "Enter=newline  Ctrl+Enter=send  Ctrl-D=quit[/]\n"
+    )
 
 
-# ---- Event renderer -------------------------------------------------------
-
-def render_events(console: Console, events: Iterable[object],
-                  show_thoughts: bool) -> None:
-    gen = iter(events)
-    awaiting_human = False  # True right after HumanQuestionAsked — skip spinner
-    while True:
-        try:
-            if awaiting_human:
-                ev = next(gen)
-            else:
-                with console.status("[dim]thinking…[/]", spinner="dots"):
-                    ev = next(gen)
-        except StopIteration:
-            break
-        awaiting_human = False
-
-        if isinstance(ev, ConversationStarted):
-            console.print(Rule(
-                Text(f"conversation {ev.conversation_id} • lang={ev.user_language}",
-                     style="dim"),
-                style="dim",
-            ))
-
-        elif isinstance(ev, AgentStarted):
-            indent = "  " * ev.depth
-            console.print(
-                f"{indent}[{C_AGENT}]→ {ev.agent_code}[/] "
-                f"[dim](depth={ev.depth})[/]"
-            )
-
-        elif isinstance(ev, ThoughtCaptured):
-            if show_thoughts:
-                console.print(Panel(
-                    Text(ev.text.strip(), style=C_THOUGHT),
-                    title=f"thought · {ev.agent_code}",
-                    border_style="dim",
-                    padding=(0, 1),
-                ))
-
-        elif isinstance(ev, ToolCallEmitted):
-            args_preview = ", ".join(f"{k}={_truncate(v)}"
-                                     for k, v in ev.arguments.items())
-            console.print(
-                f"  [{C_TOOL}]🔧 {ev.tool_name}[/] [dim]({args_preview})[/]"
-            )
-
-        elif isinstance(ev, ToolResponseRecorded):
-            if ev.tool_name in ("workspace_create_file", "workspace_str_replace"):
-                try:
-                    rdata = json.loads(ev.response)
-                    if "error" not in rdata:
-                        fpath = rdata.get("path", "?")
-                        if ev.tool_name == "workspace_create_file":
-                            nb = rdata.get("bytes_written", "?")
-                            console.print(
-                                f"  [green]📄 workspace/{fpath}[/] [dim]({nb} bytes)[/]"
-                            )
-                        else:
-                            console.print(
-                                f"  [green]✏ workspace/{fpath}[/] [dim]modifié[/]"
-                            )
-                        continue
-                except Exception:  # noqa: BLE001
-                    pass
-            console.print(
-                f"  [dim]↳ {ev.tool_name} → {_truncate(ev.response, 100)}[/]"
-            )
-
-        elif isinstance(ev, DelegationStarted):
-            console.print(
-                f"  [{C_AGENT}]↳ delegating to {ev.child_agent}[/] "
-                f"[dim]: {_truncate(ev.briefing, 80)}[/]"
-            )
-
-        elif isinstance(ev, HumanQuestionAsked):
-            # The callback will run on the very next next(gen) call — skip the
-            # spinner so Rich doesn't fight prompt_toolkit for the terminal.
-            awaiting_human = True
-
-        elif isinstance(ev, HumanAnswerReceived):
-            console.print("  [dim]↳ human answered.[/]")
-
-        elif isinstance(ev, TurnStarted):
-            console.print(Rule(
-                Text(f"turn {ev.turn_index}", style="dim"),
-                style="dim",
-            ))
-
-        elif isinstance(ev, SummaryUpdated):
-            console.print("[dim]· summary updated[/]")
-
-        elif isinstance(ev, CorruptedOutputDetected):
-            console.print(
-                f"[{C_WARN}]⚠ corrupted LLM output detected · {ev.agent_code} (escalating)[/]"
-            )
-
-        elif isinstance(ev, DuplicateCallBlocked):
-            console.print(
-                f"  [{C_WARN}]⚠ duplicate blocked · {ev.tool_name}[/]"
-            )
-
-        elif isinstance(ev, ForcedConvergence):
-            console.print(
-                f"[{C_WARN}]■ forced convergence ({ev.agent_code}) — {ev.reason}[/]"
-            )
-
-        elif isinstance(ev, ReportFindingsReceived):
-            _files = f" · {len(ev.files_produced)} file(s)" if ev.files_produced else ""
-            _qs = f" · {ev.sub_questions_count} sub-q(s)" if ev.sub_questions_count else ""
-            console.print(
-                f"  [{C_TOOL}]✓ report_findings · {ev.agent_code} "
-                f"[confidence:{ev.confidence}]{_files}{_qs}[/]"
-            )
-
-        elif isinstance(ev, SignalConvergenceRedirected):
-            console.print(
-                f"  [{C_WARN}]⚠ signal_convergence deprecated · {ev.agent_code} "
-                f"→ use report_findings[/]"
-            )
-
-        elif isinstance(ev, WallClockExceeded):
-            console.print(
-                f"[{C_WARN}]⏱ Wall-clock exceeded ({ev.scope}) — "
-                f"{ev.elapsed_seconds:.1f}s · {ev.agent_code}[/]"
-            )
-
-        elif isinstance(ev, RecursionLimitReached):
-            console.print(
-                f"[{C_WARN}]⚠ recursion limit reached at depth {ev.depth} "
-                f"({ev.agent_code}).[/]"
-            )
-
-        elif isinstance(ev, OrchestrationFailed):
-            console.print(f"[{C_WARN}]✖ {ev.reason}[/]")
-
-        elif isinstance(ev, FinalAnswer):
-            console.print()
-            console.print(Panel(
-                Markdown(ev.text),
-                title="Jean-Michel",
-                border_style="green",
-                padding=(1, 2),
-            ))
+# ---- Event rendering -----------------------------------------------------
 
 
-def _truncate(value: object, max_len: int = 60) -> str:
+def _truncate(value: object, max_len: int = 80) -> str:
     s = str(value).replace("\n", " ")
-    return s if len(s) <= max_len else s[:max_len - 1] + "…"
+    return s if len(s) <= max_len else s[: max_len - 1] + "…"
 
 
-# ---- ask_human callback ---------------------------------------------------
+def render_event(
+    console: Console,
+    event: Any,
+    *,
+    mode: str = "analyse",
+    show_thoughts: bool = False,
+) -> None:
+    """Render one v2 event live to the console.
 
-def make_ask_human(console: Console, session: PromptSession):
+    Each event type has a focused, line-oriented presentation. The final
+    answer Panel is rendered by `run_one_turn` AFTER the loop returns, not
+    here — `RequestCompleted` is just a thin rule marker.
+    """
+    if isinstance(event, RequestStarted):
+        indent = "  " * max(0, event.depth)
+        console.print(
+            f"{indent}[{C_AGENT}]→ {event.agent}[/] [dim](depth={event.depth})[/]"
+        )
+        if event.briefing_summary:
+            console.print(f"{indent}  [dim]{_truncate(event.briefing_summary, 100)}[/]")
+
+    elif isinstance(event, LLMCallStarted):
+        # Keep this quiet to avoid spamming during compaction-heavy runs.
+        # Show only the working budget consumption.
+        pass
+
+    elif isinstance(event, LLMCallCompleted):
+        # Quiet by default — token info is in the events.jsonl for audit.
+        pass
+
+    elif isinstance(event, ToolCallStarted):
+        console.print(
+            f"  [{C_TOOL}]🔧 {event.tool_name}[/] [dim]({event.args_summary})[/]"
+        )
+
+    elif isinstance(event, ToolCallCompleted):
+        console.print(f"  [dim]↳ {event.tool_name} → {_truncate(event.result_summary, 120)}[/]")
+
+    elif isinstance(event, DelegationStarted):
+        console.print(
+            f"  [{C_AGENT}]↳ delegating to {event.child_agent}[/] "
+            f"[dim](depth={event.depth}, budget={event.child_working_budget})[/]"
+        )
+
+    elif isinstance(event, DelegationCompleted):
+        confidence_color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+            event.confidence, "dim"
+        )
+        files = f" · {len(event.files_produced)} file(s)" if event.files_produced else ""
+        console.print(
+            f"  [{C_TOOL}]✓ {event.child_agent}[/] "
+            f"[{confidence_color}]confidence={event.confidence}[/]{files} "
+            f"[dim]{_truncate(event.summary, 100)}[/]"
+        )
+
+    elif isinstance(event, HookFired):
+        console.print(
+            f"  [{C_WARN}]⚠ {event.hook_name}: {event.action}[/] "
+            f"[dim]{_truncate(event.reason, 120)}[/]"
+        )
+
+    elif isinstance(event, WorkingBudgetUpdate):
+        labels = {1: "snip", 2: "microcompact", 3: "collapse", 4: "autocompact"}
+        label = labels.get(event.compaction_level_triggered, f"L{event.compaction_level_triggered}")
+        console.print(
+            f"  [{C_WARN}]⏱ compaction · {label}[/] "
+            f"[dim](working at {event.ratio * 100:.0f}%)[/]"
+        )
+
+    elif isinstance(event, MemoryNearCapacity):
+        console.print(
+            f"[{C_WARN}]⚠ user_memory at {event.current_count}/{event.limit} — "
+            "consider purging obsolete entries via manage_user_memory(action='delete')[/]"
+        )
+
+    elif isinstance(event, RequestCompleted):
+        # Thin marker — the final answer is printed as a Panel by the caller.
+        indent = ""
+        console.print(Rule(Text(f"answer from {event.agent}", style="dim"), style="dim"))
+
+    else:
+        # Unknown event type — log it raw.
+        console.print(f"  [dim]· {type(event).__name__}: {event!r}[/]")
+
+
+# ---- ask_human callback --------------------------------------------------
+
+
+def make_ask_human(console: Console, session: PromptSession) -> Callable[[str, str], str]:
+    """Build the ask_human callback that pauses the loop for a human reply."""
+
     def _ask(question: str, why: str) -> str:
         console.print()
-        console.print(Panel(
-            Group(
-                Text(why, style="dim italic"),
-                Text(""),
-                Text(question, style=C_HUMAN_Q),
-            ),
-            title="Question",
-            border_style="yellow",
-            padding=(1, 2),
-        ))
+        console.print(
+            Panel(
+                Group(
+                    Text(why, style="dim italic"),
+                    Text(""),
+                    Text(question, style=C_HUMAN_Q),
+                ),
+                title="Question",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
         answer = session.prompt(
             HTML('<ansiyellow><b>your answer</b></ansiyellow>: '),
             multiline=True,
             prompt_continuation=lambda width, line_number, wrap_count: " " * width,
         )
         return answer.strip()
+
     return _ask
 
 
-# ---- Pre-warm -------------------------------------------------------------
-
-def _prewarm(llm: OllamaClient, model: str, console: Console) -> None:
-    console.print(f"[dim]warming up {model}\u2026[/]", end="")
-    try:
-        llm.chat(system="You are a warmup probe.", user="ok",
-                 tools=[], temperature=0.0, thinking=False)
-        console.print(" [dim]ready.[/]")
-    except Exception as e:  # noqa: BLE001
-        console.print(f" [yellow]warmup failed: {e}[/]")
+# ---- Conversation lifecycle ---------------------------------------------
 
 
-# ---- Main loop ------------------------------------------------------------
+def _make_conv_folder(conv_id: str) -> Path:
+    name = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M") + f"_{conv_id}"
+    folder = CONVERSATIONS_DIR / name
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jean-michel")
-    parser.add_argument("--model", default=DEFAULT_OLLAMA_MODEL,
-                        help="Ollama model tag (default: %(default)s).")
-    parser.add_argument("--show-thoughts", action="store_true",
-                        help="Display the agent's thought channel.")
-    parser.add_argument("--mode", choices=["analyse", "chat", "vocal"], default="analyse",
-                        help="Conversation mode (default: analyse).")
-    parser.add_argument("--resume", nargs="?", const="__last__", default=None,
-                        metavar="CONV_ID",
-                        help="Resume a conversation. Without CONV_ID: resumes the "
-                             "most recent active conversation.")
-    parser.add_argument("--list-conv", action="store_true",
-                        help="List recent active conversations and exit.")
-    parser.add_argument("--once", metavar="TEXT",
-                        help="Process a single prompt non-interactively then exit.")
-    args = parser.parse_args(argv)
 
-    console = Console()
+def _create_new_conversation(mode: str) -> tuple[str, Path]:
+    conv_id = uuid.uuid4().hex
+    conv_folder = _make_conv_folder(conv_id)
+    with db.connect() as conn:
+        db.create_conversation(
+            conn,
+            conv_id=conv_id,
+            folder_path=str(conv_folder),
+            user_language=None,
+            mode=mode,
+        )
+    return conv_id, conv_folder
 
-    # ---- --list-conv (no LLM needed) -------------------------------------
-    if args.list_conv:
-        from rich.table import Table
-        with db.connect() as conn:
-            rows = db.list_active_conversations(conn)
-        if not rows:
-            console.print("[dim]No active conversation.[/]")
-            return 0
-        table = Table(title="Active conversations", show_lines=True)
-        for col in ("conv_id (prefix)", "mode", "status", "lang", "created", "last activity"):
-            table.add_column(col, no_wrap=True)
-        for r in rows:
-            table.add_row(
-                r["id"][:12], r["mode"], r["status"],
-                r["user_language"] or "?",
-                r["created_at"][:16], r["modified_at"][:16],
+
+def _resolve_resume(
+    resume_arg: str, console: Console
+) -> tuple[str, Path, str] | tuple[None, None, None]:
+    """Find the conversation to resume. Returns (id, folder, mode) or all-None."""
+    with db.connect() as conn:
+        if resume_arg == "__last__":
+            rows = db.list_active_conversations(conn, limit=1)
+            row = rows[0] if rows else None
+        else:
+            row = db.get_conversation(conn, resume_arg)
+    if row is None:
+        console.print("[red]Conversation not found or already closed.[/]")
+        return None, None, None
+    if row["status"] not in {"active", "awaiting_human"}:
+        console.print(
+            f"[red]Conversation {row['id'][:12]} is '{row['status']}' — cannot resume.[/]"
+        )
+        return None, None, None
+    return row["id"], Path(row["folder_path"]), row["mode"]
+
+
+# ---- One-turn processing -------------------------------------------------
+
+
+def run_one_turn(
+    *,
+    user_text: str,
+    conv_folder: Path,
+    conv_id: str,
+    dispatch_llm: OllamaClient,
+    main_llm: OllamaClient,
+    profile: UserProfile,
+    mode: str,
+    console: Console,
+    ask_human_cb: Callable[[str, str], str],
+    initial_messages: list[dict] | None,
+) -> str:
+    """Process one user turn end-to-end.
+
+    Shows a "thinking…" spinner while the LLM is busy and pauses it for
+    event rendering / ask_human prompts. Once the spinner is up the user
+    can no longer type — the prompt session won't return to its prompt
+    until we finish and call ``session.prompt()`` again.
+
+    Returns the final user-facing answer (also printed as a Panel here).
+    """
+    user_lang = dispatcher.detect_language(user_text)
+
+    # Update conversation language opportunistically.
+    if user_lang and user_lang != "und":
+        try:
+            with db.connect() as conn:
+                db.update_conversation_language(conn, conv_id, user_lang)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("update_conversation_language failed: %s", exc)
+
+    # --- Tier 0 : dispatch (under spinner) ---
+    # In chat / vocal modes we pass the conversation history so the small
+    # dispatcher LLM can resolve follow-ups ("et pour demain ?" → still
+    # weather, with the previous location). In analyse mode each question
+    # is treated standalone — that's the documented contract.
+    dispatcher_history = initial_messages if mode in ("chat", "vocal") else None
+    with console.status("[dim]thinking…[/]", spinner="dots"):
+        decision = dispatcher.classify(
+            user_text, dispatch_llm, history=dispatcher_history
+        )
+
+    if decision.intent == "alexa":
+        console.print(
+            f"[dim]→ tier 0 alexa · tool={decision.tool} · "
+            f"confidence={decision.confidence}[/]"
+        )
+        with console.status("[dim]thinking…[/]", spinner="dots"):
+            answer = dispatcher.execute_alexa(
+                decision,
+                dispatch_llm,
+                user_lang=user_lang,
+                user_profile=profile,
             )
-        console.print(table)
-        return 0
+    else:
+        console.print(
+            f"[dim]→ tier 1 deep · confidence={decision.confidence}[/]"
+        )
+        answer = _run_deep_turn(
+            user_text=user_text,
+            conv_folder=conv_folder,
+            conv_id=conv_id,
+            main_llm=main_llm,
+            profile=profile,
+            mode=mode,
+            user_lang=user_lang,
+            console=console,
+            ask_human_cb=ask_human_cb,
+            initial_messages=initial_messages,
+        )
 
-    render_splash(console, args.model, args.mode)
+    # Final answer panel.
+    console.print()
+    console.print(
+        Panel(
+            Markdown(answer),
+            title="Jean-Michel",
+            border_style="green",
+            padding=(1, 2),
+        )
+    )
 
-    profile = UserProfile.load()
+    # Vocal mode : play the answer through the TTS pipeline. Failure is
+    # non-fatal — the text panel already shows the response.
+    if mode == "vocal":
+        from . import voice
+        # Wait for any async announcement still playing before starting the
+        # final answer playback (otherwise they overlap).
+        voice.wait_for_announcements(timeout=10.0)
+        with console.status("[dim]🔊 speaking…[/]", spinner="dots"):
+            ok = voice.speak(answer)
+        if not ok:
+            console.print(
+                "[yellow]vocal output unavailable — "
+                "set JEANMICHEL_VOICE_MODEL to a Piper .onnx and ensure "
+                "paplay/aplay/ffplay is installed (see voice_models/README.md).[/]"
+            )
+
+    return answer
+
+
+def _run_deep_turn(
+    *,
+    user_text: str,
+    conv_folder: Path,
+    conv_id: str,
+    main_llm: OllamaClient,
+    profile: UserProfile,
+    mode: str,
+    user_lang: str,
+    console: Console,
+    ask_human_cb: Callable[[str, str], str],
+    initial_messages: list[dict] | None,
+) -> str:
+    """Engage Tier 1 : load jean-michel spec, build registry, run the main loop.
+
+    Manages a "thinking…" spinner that pauses for event rendering and
+    ``ask_human`` prompts — so the user always knows whether the system is
+    waiting on the LLM or on them.
+    """
+    with db.connect() as conn:
+        user_memory_block, count = render_user_memory_index(conn)
+        if count >= 90:  # cf. USER_MEMORY_WARN_AT
+            render_event(
+                console,
+                MemoryNearCapacity(current_count=count, limit=100),
+                mode=mode,
+            )
+        main_agent = load_agent_spec_v2(
+            conn,
+            "jean-michel",
+            mode=mode,
+            user_profile_text=profile.render(),
+            user_memory_block=user_memory_block,
+            user_language=user_lang,
+        )
+
+    def agent_resolver(code: str) -> AgentSpec | None:
+        try:
+            with db.connect() as conn:
+                u_mem, _ = render_user_memory_index(conn)
+                return load_agent_spec_v2(
+                    conn,
+                    code,
+                    mode=mode,
+                    user_profile_text=profile.render(),
+                    user_memory_block=u_mem,
+                    user_language=user_lang,
+                )
+        except (KeyError, Exception) as exc:  # noqa: BLE001
+            _log.warning("agent_resolver(%r) failed: %s", code, exc)
+            return None
+
+    # Tools registry — built once per turn. Permissive grants ; per-agent
+    # filtering is enforced by the PreToolUse hook via AgentSpec.tool_grants.
+    #
+    # For bash_sandbox specifically, we load the UNION of `agent_sandbox_grants`
+    # commands across all active agents and pass it as the sandbox whitelist.
+    # The bash_sandbox tool spec then exists in the registry (otherwise it
+    # would be silently absent for agents that have it in their `agent_tools`,
+    # causing the LLM to fail at runtime). Per-agent command restriction is
+    # currently best-effort — see TODO below.
+    #
+    # TODO (deferred) : a single agent can today execute any command from the
+    # union (not strictly its own subset) because the bash_sandbox handler
+    # captures the superset in a closure. Acceptable while ONLY `code-runner`
+    # has sandbox grants ; revisit when a second agent gets sandbox access.
+    with db.connect() as _grants_conn:
+        sandbox_grants = sorted({
+            r["command"]
+            for r in _grants_conn.execute(
+                "SELECT DISTINCT command FROM agent_sandbox_grants"
+            )
+        })
+
+    tools_registry = build_registry(
+        conv_folder=conv_folder,
+        has_workspace_write=True,
+        conv_id=conv_id,
+        request_id_provider=lambda: "main",
+        sandbox_grants=sandbox_grants,
+        sandbox_image=None,
+        agent_role="router",
+    )
+
+    # Spinner managed by hand so we can pause it during event rendering
+    # and ask_human prompts. The legacy CLI used `with console.status()` +
+    # generator yielding ; v2 uses a callback so we drive start/stop ourselves.
+    status = console.status("[dim]thinking…[/]", spinner="dots")
+    status.start()
+
+    def emitter(event: Any) -> None:
+        status.stop()
+        try:
+            render_event(console, event, mode=mode)
+            # Vocal mode : announce thinking start, delegations, and direct
+            # research tool calls via async TTS so the user hears progress
+            # while the LLM works.
+            if mode == "vocal":
+                from . import voice
+                if isinstance(event, RequestStarted) and event.depth == 0:
+                    # Start of a DEEP turn — no ALEXA shortcut. Tell the
+                    # user we're thinking so they don't stare at silence
+                    # during a long generation with no tool calls.
+                    voice.announce_thinking()
+                elif isinstance(event, DelegationStarted):
+                    voice.announce_delegation(event.child_agent)
+                elif isinstance(event, ToolCallStarted):
+                    voice.announce_tool_call(event.tool_name)
+        finally:
+            status.start()
+
+    # Pause the spinner while waiting on a human answer.
+    def ask_human_with_pause(question: str, why: str) -> str:
+        status.stop()
+        try:
+            return ask_human_cb(question, why)
+        finally:
+            status.start()
+
+    # If we're resuming, replace messages[0] with a freshly rendered
+    # system prompt to pick up user_memory updates.
+    seeded_messages: list[dict] | None = None
+    if initial_messages:
+        seeded_messages = list(initial_messages)
+        if seeded_messages and seeded_messages[0].get("role") == "system":
+            seeded_messages[0] = {
+                "role": "system",
+                "content": main_agent.system_prompt,
+            }
+
     try:
-        llm = OllamaClient(model=args.model)
-    except RuntimeError as e:
-        console.print(f"[{C_WARN}]{e}[/]")
-        return 2
+        answer = run_main_loop(
+            conv_folder=conv_folder,
+            agent=main_agent,
+            tools_registry=tools_registry,
+            llm_client=main_llm,
+            user_text=user_text,
+            initial_messages=seeded_messages,
+            ask_human_callback=ask_human_with_pause,
+            agent_resolver=agent_resolver,
+            event_emitter=emitter,
+        )
+    finally:
+        status.stop()
+    return answer
 
-    if args.mode in {"chat", "vocal"}:
-        _prewarm(llm, args.model, console)
 
+# ---- Argument parsing & main --------------------------------------------
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="jean-michel")
+    parser.add_argument(
+        "--main-model",
+        default=MAIN_MODEL,
+        help="Ollama model tag for the main agent (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--dispatch-model",
+        default=DISPATCH_MODEL,
+        help="Ollama model tag for the Tier 0 dispatcher (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Deprecated alias for --main-model.",
+    )
+    parser.add_argument(
+        "--show-thoughts",
+        action="store_true",
+        help="Display the agent's thought channel (verbose).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["analyse", "chat", "vocal"],
+        default="analyse",
+        help="Conversation mode (default: analyse).",
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="__last__",
+        default=None,
+        metavar="CONV_ID",
+        help="Resume a conversation. Without ID : the most recent active one.",
+    )
+    parser.add_argument(
+        "--list-conv",
+        action="store_true",
+        help="List recent active conversations and exit.",
+    )
+    parser.add_argument(
+        "--once",
+        metavar="TEXT",
+        help="Process a single prompt non-interactively then exit.",
+    )
+    return parser
+
+
+def _build_prompt_session() -> PromptSession[str]:
     kb = KeyBindings()
 
     @kb.add("enter")
     def _newline(event):
         event.current_buffer.insert_text("\n")
 
-    @kb.add("escape", "enter")   # Meta+Enter / Alt+Enter
+    # Ctrl+Enter submits. Most terminals (Linux/Mac terminals, Windows
+    # Terminal, PowerShell) deliver Ctrl+Enter as Ctrl+J — Alt+Enter is
+    # unreliable under Windows so we switched to Ctrl+J / c-j.
+    @kb.add("c-j")
     def _submit(event):
         event.current_buffer.validate_and_handle()
 
-    session: PromptSession[str] = PromptSession(
-        history=InMemoryHistory(),
-        key_bindings=kb,
-    )
+    return PromptSession(history=InMemoryHistory(), key_bindings=kb)
 
-    # ---- --resume --------------------------------------------------------
-    if args.resume is not None:
-        with db.connect() as conn:
-            if args.resume == "__last__":
-                rows = db.list_active_conversations(conn, limit=1)
-                row = rows[0] if rows else None
-            else:
-                row = db.get_conversation(conn, args.resume)
-        if row is None:
-            console.print("[red]Conversation not found or already closed.[/]")
-            return 1
-        if row["status"] not in {"active", "awaiting_human"}:
-            console.print(f"[red]Conversation {row['id'][:12]} is '{row['status']}' — cannot resume.[/]")
-            return 1
-        orch = Orchestrator(llm=llm, profile=profile, mode=row["mode"],
-                            conv_id=row["id"],
-                            ask_human_callback=make_ask_human(console, session))
-        orch.resume_conversation(
-            folder_path=row["folder_path"],
-            user_language=row["user_language"] or "und",
+
+def _list_conv_and_exit(console: Console) -> int:
+    from rich.table import Table
+
+    with db.connect() as conn:
+        rows = db.list_active_conversations(conn)
+    if not rows:
+        console.print("[dim]No active conversation.[/]")
+        return 0
+    table = Table(title="Active conversations", show_lines=True)
+    for col in ("conv_id (prefix)", "mode", "status", "lang", "created", "last activity"):
+        table.add_column(col, no_wrap=True)
+    for r in rows:
+        table.add_row(
+            r["id"][:12],
+            r["mode"],
+            r["status"],
+            r["user_language"] or "?",
+            r["created_at"][:16],
+            r["modified_at"][:16],
         )
-        args.mode = row["mode"]
-        console.print(f"[dim]Resumed conversation {row['id'][:12]} (mode: {row['mode']})[/]\n")
-    else:
-        # New conversation — bootstrap the folder before first input.
-        orch = Orchestrator(llm=llm, profile=profile, mode=args.mode,
-                            ask_human_callback=make_ask_human(console, session))
-        orch.bootstrap_conversation()
+    console.print(table)
+    return 0
 
-    # --once: non-interactive single-turn mode (used by jm.sh --meta-analysis etc.)
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+
+    # --model is a deprecated alias for --main-model.
+    if args.model and args.main_model == MAIN_MODEL:
+        args.main_model = args.model
+
+    console = Console()
+
+    if args.list_conv:
+        return _list_conv_and_exit(console)
+
+    ensure_dirs()
+
+    # ----- LLM clients -----
+    try:
+        dispatch_llm = OllamaClient(model=args.dispatch_model)
+        main_llm = OllamaClient(model=args.main_model)
+    except RuntimeError as exc:
+        console.print(f"[{C_WARN}]{exc}[/]")
+        return 2
+
+    # Vocal mode preflight : warn now if TTS isn't usable, so the user
+    # knows responses will be text-only before the first turn runs.
+    if args.mode == "vocal":
+        from . import voice
+        if not voice.is_available():
+            console.print(
+                "[yellow]⚠ vocal mode requested but TTS not ready : "
+                "missing JEANMICHEL_VOICE_MODEL or no audio player. "
+                "Responses will be text-only. See voice_models/README.md.[/]\n"
+            )
+
+    # ----- User profile + bootstrap user_memory -----
+    profile = UserProfile.load()
+    try:
+        with db.connect() as conn:
+            bootstrap_mod.bootstrap_user_memory_from_profile(conn, profile)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]bootstrap skipped: {exc}[/]")
+
+    # ----- Conversation lifecycle -----
+    initial_messages: list[dict] | None = None
+    if args.resume is not None:
+        conv_id, conv_folder, conv_mode = _resolve_resume(args.resume, console)
+        if conv_id is None:
+            return 1
+        args.mode = conv_mode
+        initial_messages = persistence.load_messages(conv_folder)
+        console.print(f"[dim]Resumed conversation {conv_id[:12]} (mode: {conv_mode})[/]\n")
+    else:
+        conv_id, conv_folder = _create_new_conversation(args.mode)
+
+    render_splash(console, args.main_model, args.dispatch_model, args.mode)
+
+    session = _build_prompt_session()
+    ask_human_cb = make_ask_human(console, session)
+
+    def _close_conv() -> None:
+        try:
+            with db.connect() as conn:
+                db.close_conversation(conn, conv_id)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("close_conversation failed: %s", exc)
+
+    # ----- --once : single non-interactive turn -----
     if args.once:
         try:
-            render_events(console, orch.run(args.once), show_thoughts=args.show_thoughts)
-        except Exception as e:  # noqa: BLE001
-            console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
+            run_one_turn(
+                user_text=args.once,
+                conv_folder=conv_folder,
+                conv_id=conv_id,
+                dispatch_llm=dispatch_llm,
+                main_llm=main_llm,
+                profile=profile,
+                mode=args.mode,
+                console=console,
+                ask_human_cb=ask_human_cb,
+                initial_messages=initial_messages,
+            )
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
+            return 1
         finally:
-            orch.close_conversation()
+            _close_conv()
         return 0
 
-    while True:
-        try:
-            user_input = session.prompt(
-                HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
-                multiline=True,
-                prompt_continuation=lambda width, line_number, wrap_count: " " * width,
-            )
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]bye.[/]")
-            orch.close_conversation()
-            return 0
-        if user_input.strip().lower() in {"exit", "quit"}:
-            console.print("[dim]bye.[/]")
-            orch.close_conversation()
-            return 0
-        if not user_input.strip():
-            continue
+    # ----- Interactive loop -----
+    # try/finally wrapping ensures the conversation row is closed on every
+    # exit path — including KeyboardInterrupt during a long LLM call, which
+    # is NOT caught by `except Exception` and used to leak active rows in DB.
+    try:
+        while True:
+            try:
+                user_input = session.prompt(
+                    HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
+                    multiline=True,
+                    prompt_continuation=lambda width, line_number, wrap_count: " " * width,
+                )
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[dim]bye.[/]")
+                return 0
+            if user_input.strip().lower() in {"exit", "quit"}:
+                console.print("[dim]bye.[/]")
+                return 0
+            if not user_input.strip():
+                continue
 
-        try:
-            render_events(console, orch.run(user_input), show_thoughts=args.show_thoughts)
-        except Exception as e:  # noqa: BLE001
-            console.print(f"[{C_WARN}]\u2716 orchestration failed: {e}[/]")
-            orch.cleanup_sandbox()
-            return 1
+            try:
+                run_one_turn(
+                    user_text=user_input,
+                    conv_folder=conv_folder,
+                    conv_id=conv_id,
+                    dispatch_llm=dispatch_llm,
+                    main_llm=main_llm,
+                    profile=profile,
+                    mode=args.mode,
+                    console=console,
+                    ask_human_cb=ask_human_cb,
+                    initial_messages=initial_messages,
+                )
+            except KeyboardInterrupt:
+                # User aborted mid-turn (Ctrl-C). Close cleanly via the
+                # outer finally, no error message.
+                console.print("\n[dim]interrupted — bye.[/]")
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
+                return 1
 
-        console.print()
+            # Reload the persisted messages for the next turn.
+            initial_messages = persistence.load_messages(conv_folder)
+            console.print()
+    finally:
+        _close_conv()
+
 
 if __name__ == "__main__":
     sys.exit(main())
