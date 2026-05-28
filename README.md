@@ -39,14 +39,14 @@ architectural complet.
 
 ## Agents v2 — le mille-feuille cognitif
 
-13 agents actifs, organisés en **deux dimensions** :
+14 agents actifs, organisés en **deux dimensions** :
 
 **1. Dimension structurelle (place dans le task tree)** — exposée par
 `agents.role` :
 
 - **`router`** (1) : `jean-michel` — main agent Tier 1. Reçoit la requête,
   formalise, délègue, synthétise. **Ne raisonne pas, ne fait pas le boulot.**
-- **`specialist`** (11) — exécutent les tâches concrètes, terminent par
+- **`specialist`** (12) — exécutent les tâches concrètes, terminent par
   `report_back`. Peuvent eux-mêmes spawn d'autres specialists
   (`MAX_DEPTH=5`).
 - **`finalizer`** (1) : `synthesizer` — fusion finale quand plusieurs
@@ -58,7 +58,7 @@ colonne SQL formelle, mais une convention reflétée dans
 
 | Tier cognitif | Agents | Modèle |
 |---|---|---|
-| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `workspace-manager`, `code-runner` | `gemma4:latest` (default) |
+| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `workspace-manager`, `code-runner` | `gemma4:latest` (default) |
 | **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
 | **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
 
@@ -238,6 +238,8 @@ paradigmes actifs** au total. Trajectoire :
   initialement nommé `parallel_specialists_for_inventory`).
 - Migration 105 (strategist) : +1 paradigme (`strategist_first`) côté
   router.
+- Migration 106 (news-specialist) : +1 paradigme
+  (`news_freshness_discipline`) côté nouveau specialist.
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -273,6 +275,34 @@ Override modèles :
 ./jm.sh --dispatch-model qwen3:14b        # un dispatcher différent
 ```
 
+## Clés API externes et fichier `.env`
+
+Certains tools dépendent d'APIs tierces. Configure-les soit via un export
+shell, soit via un fichier `.env` à la racine du repo (ignoré par git) :
+
+```bash
+cp .env.example .env
+$EDITOR .env          # remplir NEWSDATA_API_KEY=...
+./jm.sh               # le loader lit .env au démarrage
+```
+
+Quand une clé est manquante, le tool concerné renvoie un
+`tool_error("api_key_missing", …)` clair — pas de dégradation silencieuse,
+le LLM voit l'erreur et bascule sur un autre outil.
+
+| Env var              | Tool(s)                       | Notes                              |
+|----------------------|-------------------------------|------------------------------------|
+| `NEWSDATA_API_KEY`   | `news_latest`, `news_archive` | newsdata.io, free 200 req/jour     |
+
+Les tools `clock`, `weather` (open-meteo), `wikipedia_*`, `web_search`
+(SearXNG local) ne nécessitent pas de clé.
+
+**Précédence** : un export shell prend le pas sur la valeur du `.env`.
+Le `.env` sert de défaut persistant ; tu peux overrider un run avec
+`KEY=value ./jm.sh`. Format du `.env` : `KEY=value` une par ligne,
+commentaires `#`, quotes optionnelles, pas d'interpolation `$VAR`
+(loader maison de 20 lignes dans `config.py`, sans dépendance externe).
+
 ## Migrations BDD
 
 `db/schema.sql` est l'état v2 consolidé (fresh installs partent de là).
@@ -301,11 +331,15 @@ Migrations v2 sous `db/migrations/` :
   `gemma4:26b` sur les 4 reasoners (strategist + critical-thinker +
   comparator-specialist + meta-analyst), retour de jean-michel sur
   MAIN_MODEL.
+- `migrate_106_news_specialist.sql` — création de l'agent `news-specialist`
+  (lookup-tier, default model), grants des nouveaux tools `news_latest`
+  + `news_archive`, paradigme `news_freshness_discipline`, ajout aux
+  delegation_targets de jean-michel.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105; do
+for m in 100 101 102 103 104 105 106; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -400,7 +434,7 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
-**13 agents actifs** (dont 4 reasoners sur gemma4:26b). ~310 tests v2 verts.
+**14 agents actifs** (dont 4 reasoners sur gemma4:26b). ~320 tests v2 verts.
 CLI multi-tour en tous modes, `--resume`, `--list-conv`. Dispatcher Tier 0
 opérationnel via granite. Main loop Tier 1 multi-turn natif. Subagents Tier 2
 avec délégation imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme

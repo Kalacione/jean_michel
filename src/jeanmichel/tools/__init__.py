@@ -19,6 +19,7 @@ from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_status as _conv_status_mod
 from . import manage_user_memory as _manage_user_memory_mod
+from . import news as _news_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
@@ -80,6 +81,8 @@ def build_registry(
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
         _manage_user_memory_mod.SPEC.name: _manage_user_memory_mod.SPEC,
+        _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
+        _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
     }
     if conv_status_spec is not None:
         registry[conv_status_spec.name] = conv_status_spec
