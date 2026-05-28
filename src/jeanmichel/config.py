@@ -13,6 +13,47 @@ REPO_ROOT = Path(os.environ.get("JEANMICHEL_HOME", Path.cwd())).resolve()
 DB_PATH = REPO_ROOT / "jeanmichel.db"
 CONVERSATIONS_DIR = REPO_ROOT / "conversations"
 USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
+ENV_FILE_PATH = REPO_ROOT / ".env"
+
+
+# ---- .env loader (minimal, no dependency) --------------------------------
+#
+# Loads `KEY=value` pairs from `.env` at the repo root into `os.environ`.
+# Existing shell variables WIN — we never overwrite them. This means a
+# `NEWSDATA_API_KEY=…` exported in your shell takes precedence over the
+# value in `.env`, which is the principle of least surprise.
+#
+# Format (intentionally minimal — no python-dotenv dep) :
+#   - One `KEY=value` per line.
+#   - Blank lines and lines starting with `#` are ignored.
+#   - Optional surrounding single or double quotes are stripped.
+#   - No interpolation (`$VAR`), no multi-line values, no `export` prefix.
+#
+# Missing `.env` = no-op. The file is gitignored by default.
+
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv(ENV_FILE_PATH)
+
 
 # ---- Runtime constants ----------------------------------------------------
 
