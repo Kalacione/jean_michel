@@ -2,6 +2,32 @@
 
 from __future__ import annotations
 
+# =============================================================================
+# v2 — Static prompts used outside the agent prompt-composition pipeline.
+# =============================================================================
+
+# Tier 0 dispatcher prompt (cf. DevNotes/REVOLUCION/06_proposition_v2.md §3).
+# Static, never composed dynamically. Used by `jeanmichel.dispatcher.classify`
+# with `format="json"` enforced on the Ollama side.
+DISPATCH_SYSTEM_PROMPT = """You classify a user request. Reply with strict JSON of shape:
+{
+  "intent": "alexa" | "deep",
+  "tool":   "clock" | "weather" | "wikipedia_search" | null,
+  "args":   { ... }
+}
+
+intent="alexa" when ONE tool from the list can satisfy the request directly:
+  - clock              : current time / date
+  - weather            : current weather or forecast at a location
+  - wikipedia_search   : single factual lookup (definition, dates, identity)
+
+intent="deep" for everything else (comparison, multi-step research,
+codebase analysis, document production, debugging, advice).
+
+If you cannot decide, answer "deep". Never invent a tool name not in
+the list above."""
+
+
 import logging
 import os
 import platform
