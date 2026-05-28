@@ -34,10 +34,15 @@ Chaque principe énonce un changement concret par rapport à l'existant.
    Le LLM peut référencer ses propres tool_calls et ses propres
    raisonnements précédents directement. Aucun récap reconstruit.
 
-3. **Plusieurs modèles, dispatch côté Python.** `granite4.1:8b` pour la
-   classification d'entrée et la compaction. `gemma4:latest` (9.6 GB) pour
-   le main agent et les subagents par défaut. Le choix est fait par le
-   code de l'orchestrateur, jamais par un LLM amont.
+3. **Plusieurs modèles, choix entièrement configurable.** Quatre slots
+   de modèles nommés (`DISPATCH_MODEL`, `MAIN_MODEL`, `COMPACTOR_MODEL`,
+   `SUBAGENT_DEFAULT_MODEL`) définis dans `config.py`. Chacun peut être
+   surchargé par env var et par CLI flag (cf. §12 pour la chaîne de
+   précédence). Per-agent : la table `agents` reçoit une colonne
+   `model_override` qui permet d'assigner un modèle spécifique à un
+   subagent donné (ex: `critical-thinker` → gemma4:26b si on veut plus
+   de fidélité d'analyse). Le choix est fait par le code de
+   l'orchestrateur, jamais par un LLM amont, et **rien n'est hardcoded**.
 
 4. **Toute exigence déterministe est un hook Python, pas une consigne
    prompt.** Si on doit garantir un comportement (refus, validation,
@@ -129,9 +134,11 @@ Hooks Python autour de chaque appel LLM et de chaque tool call :
 
 ### Modèle et configuration
 
-- **Modèle Ollama** : `granite4.1:8b` (5.3 GB, déjà présent en local).
-- **Thinking** : désactivé. Granite n'a pas besoin de raisonner pour
-  classifier ; un raisonnement coûterait latence et tokens sans gain.
+- **Modèle Ollama** : `config.DISPATCH_MODEL` (défaut : `granite4.1:8b`,
+  5.3 GB, déjà présent en local). Override par env
+  `JEANMICHEL_DISPATCH_MODEL` ou CLI `--dispatch-model`.
+- **Thinking** : désactivé. Le dispatcher n'a pas besoin de raisonner
+  pour classifier ; un raisonnement coûterait latence et tokens sans gain.
 - **Température** : 0.0 (output déterministe).
 - **Format** : `format: "json"` côté Ollama (option officielle qui contraint
   le modèle à produire un JSON syntaxiquement valide). Validation Python
@@ -190,12 +197,12 @@ de validation post-implémentation.
 
 ### Modèle et configuration
 
-- **Modèle** : `gemma4:latest` (9.6 GB) par défaut. Override possible via
-  `--main-model` ou env `JEANMICHEL_MAIN_MODEL` pour passer à `gemma4:26b`
-  ou `qwen3:14b` selon la configuration matérielle (cf. §11 ter B). Choix
-  du défaut justifié : gemma4 dans sa version courante a démontré le
-  meilleur équilibre tool-use / thinking sur ce projet d'après les
-  commits historiques.
+- **Modèle** : `config.MAIN_MODEL` (défaut : `gemma4:latest`, 9.6 GB).
+  Override par env `JEANMICHEL_MAIN_MODEL` ou CLI `--main-model` pour
+  passer à `gemma4:26b` ou `qwen3:14b` selon la configuration matérielle
+  (cf. §11 ter B). Choix du défaut justifié : gemma4 dans sa version
+  courante a démontré le meilleur équilibre tool-use / thinking sur ce
+  projet d'après les commits historiques.
 - **Thinking** : activé (le système prompt expose la canalisation thought).
 - **Température** : 0.2.
 
@@ -328,7 +335,10 @@ non, selon son grant). Quand il est appelé, l'orchestrateur :
 4. Lance la même boucle (`run_main_loop`-équivalent) avec ce `messages[]`,
    l'`agent_code` du subagent, et **son propre budget partitionné**
    calculé sur la fenêtre de contexte du modèle qu'il invoque
-   (cf. §1.7). Pas d'héritage du caller : le subagent démarre frais.
+   (cf. §1.7). Modèle choisi dans l'ordre : `agents.model_override` du
+   subagent si non-NULL, sinon `config.SUBAGENT_DEFAULT_MODEL` (défaut
+   `gemma4:latest`). Pas d'héritage du caller : le subagent démarre
+   frais.
 5. Le subagent itère jusqu'à émettre un `tool_call` nommé `report_back`.
    Schéma :
    ```
@@ -760,8 +770,9 @@ Coût : 1 appel LLM long (~1500 tokens output). Gain : ramène le
 
 ### Choix du modèle pour les niveaux 3 et 4
 
-Compactor = **`gemma4:latest`**. Choix de gemma plutôt que granite : la
-fidélité du résumé prime sur la latence — un résumé qui perd les
+Compactor = `config.COMPACTOR_MODEL` (défaut : **`gemma4:latest`**).
+Override par env `JEANMICHEL_COMPACTOR_MODEL`. Choix du défaut justifié :
+la fidélité du résumé prime sur la latence — un résumé qui perd les
 pointeurs vers les workspace files ou inverse une conclusion serait
 pire qu'un résumé un peu plus lent.
 
@@ -1370,13 +1381,15 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
 
 - **Pivot architectural** : Claude-Code-style avec `messages[]` multi-turn
   natif Ollama. Le LLM voit son histoire complète.
-- **Modèles** :
-  - `granite4.1:8b` pour le dispatch d'entrée (Tier 0).
-  - `gemma4:latest` pour le main agent (Tier 1) et pour le compactor
-    aux niveaux 3/4 (la fidélité du résumé prime sur la latence).
-  - `gemma4:latest` par défaut aussi pour les subagents. Un override
-    par agent peut être ajouté ultérieurement via une nouvelle colonne
-    `model_override` sur la table `agents` (out-of-scope v2 minimale).
+- **Modèles configurables, 4 slots nommés** dans `config.py` :
+  - `DISPATCH_MODEL` (défaut `granite4.1:8b`) — Tier 0.
+  - `MAIN_MODEL` (défaut `gemma4:latest`) — Tier 1 main agent.
+  - `COMPACTOR_MODEL` (défaut `gemma4:latest`) — compactor niveaux 3 et 4.
+  - `SUBAGENT_DEFAULT_MODEL` (défaut `gemma4:latest`) — subagents
+    Tier 2 sans override.
+  Chaîne d'override : CLI flag > env var (`JEANMICHEL_*_MODEL`) >
+  `config.py` default > colonne BDD `agents.model_override` (per-agent,
+  uniquement pour les subagents). Aucun modèle hardcoded dans le code.
 - **4 hooks Python** : `PreLLMCall`, `PreToolUse`, `PostToolUse`,
   `OnDelegateReturn`. Aucun MUST en cascade dans les prompts.
 - **Garde-fous unifiés** : budget de contexte partitionné par appel
@@ -1447,12 +1460,19 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
 - **Seuil de microcompaction = 1500 tokens** (≈ 6000 chars, ≈ une page
   pleine). Tool result au-dessus de ce seuil = remplacé par stub si
   recomputable depuis disque.
-- **Tous les seuils numériques sont exposés dans `config.py`**. Aucun
-  thresholds hardcoded ailleurs dans le code. Liste minimale :
-  `COMPACTION_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)`, `OUTPUT_RESERVE_RATIO = 0.15`,
-  `MICROCOMPACT_TOKEN_THRESHOLD = 1500`, `MAX_DEPTH = 5`,
-  `MAX_SEARCH_CALLS_PER_TURN = 10`, `WALL_CLOCK_TURN_SECONDS = 900`,
-  `USER_MEMORY_INDEX_LIMIT = 100`, `USER_MEMORY_WARN_AT = 90`.
+- **Tous les paramètres tunables sont exposés dans `config.py`**. Aucun
+  threshold ni modèle hardcoded ailleurs dans le code. Liste minimale :
+  - Seuils numériques :
+    `COMPACTION_THRESHOLDS = (0.70, 0.80, 0.90, 0.95)`,
+    `OUTPUT_RESERVE_RATIO = 0.15`,
+    `MICROCOMPACT_TOKEN_THRESHOLD = 1500`, `MAX_DEPTH = 5`,
+    `MAX_SEARCH_CALLS_PER_TURN = 10`, `WALL_CLOCK_TURN_SECONDS = 900`,
+    `USER_MEMORY_INDEX_LIMIT = 100`, `USER_MEMORY_WARN_AT = 90`.
+  - Slots de modèles : `DISPATCH_MODEL`, `MAIN_MODEL`, `COMPACTOR_MODEL`,
+    `SUBAGENT_DEFAULT_MODEL` (défauts détaillés dans la bullet "Modèles"
+    ci-dessus). Override par env var et CLI flag.
+  - Per-agent : colonne `agents.model_override` (NULL = utiliser
+    `SUBAGENT_DEFAULT_MODEL`).
   Tunables sans redéploiement ni recompile.
 
 ### Reste à trancher en phase d'implémentation
