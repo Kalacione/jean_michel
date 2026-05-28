@@ -591,7 +591,10 @@ Recompté à partir des tableaux ci-dessus, après revue humaine du 2026-05-27 :
 | `delete`           | 18     | 15.1 %      |
 | **Total existant** | **119**| 100 %       |
 | `new`              | +5     | (ajouts)    |
-| **Total post-v2**  | **105**| 119 − 18 (delete) − 1 (merge net) + 5 (new) |
+| **Total post-v2**  | **104**| 119 − 18 (delete) − 2 (merged sources) + 5 (new, dont workspace_progressive_write qui remplace les 2 merged) |
+
+Compté vérifié après application de `migrate_100_paradigm_realignment.sql`
+sur une copie de la BDD : `SELECT COUNT(*) FROM paradigms WHERE active=1` retourne **104**.
 
 Liste exhaustive des 18 suppressions :
 
