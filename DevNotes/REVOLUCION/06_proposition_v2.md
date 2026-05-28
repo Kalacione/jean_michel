@@ -291,14 +291,41 @@ Points techniques :
 
 ### Tools exposés au main agent
 
-| Catégorie     | Tools                                                                                         |
-|---------------|-----------------------------------------------------------------------------------------------|
-| Recherche     | `web_search`, `wikipedia_search`, `wikipedia_get_page`                                        |
-| Workspace     | `workspace_create_file`, `workspace_append`, `workspace_str_replace`, `workspace_view`, `workspace_list` |
-| Exécution     | `bash_sandbox` (selon `agent_sandbox_grants`)                                                 |
-| Subagent      | `delegate_to`                                                                                 |
-| Utilitaires   | `clock`, `conv_read_file`, `self_inspect_*`                                                   |
-| Mémoire user  | `manage_user_memory` (cf. §10)                                                                |
+| Catégorie       | Tools                                                                                         |
+|-----------------|-----------------------------------------------------------------------------------------------|
+| Recherche       | `web_search`, `wikipedia_search`, `wikipedia_get_page`                                        |
+| Workspace       | `workspace_create_file`, `workspace_append`, `workspace_str_replace`, `workspace_view`, `workspace_list` |
+| Exécution       | `bash_sandbox` (selon `agent_sandbox_grants`)                                                 |
+| Subagent        | `delegate_to`                                                                                 |
+| Clarification   | `ask_human` — exclusif au main agent (cf. §5 et l'analyse en `08_paradigm_audit_table.md`)    |
+| Utilitaires     | `clock`, `conv_read_file`, `self_inspect_*`                                                   |
+| Mémoire user    | `manage_user_memory` (cf. §10)                                                                |
+
+### Comportement de `ask_human` (main agent uniquement)
+
+Quand le main agent émet `ask_human(question, why)` :
+
+1. Le hook `PreToolUse` valide que le caller est le main agent (les
+   subagents n'ont pas ce tool dans leur payload — voir §5).
+2. L'orchestrateur pause la boucle, surface la question via le callback
+   CLI (cf. `make_ask_human` dans `cli.py`).
+3. La réponse humaine est appendée au `messages[]` comme `role=user`
+   (et non pas `role=tool` — la réponse humaine est une contribution
+   naturelle au dialogue).
+4. La boucle reprend à l'itération suivante avec le `messages[]` enrichi.
+
+### Comportement de `return_to_user` — implicite
+
+Pas de tool `return_to_user` explicite dans le payload v2. La fin de la
+boucle est détectée par l'orchestrateur quand le LLM émet un turn
+`assistant` **sans `tool_calls`**. Le `content` de ce turn EST la
+réponse à l'utilisateur, transmise telle quelle par `run_main_loop`.
+
+Rationale : protocole plus simple, surface API plus petite, format
+flexible (Markdown, JSON, prose). Asymétrie justifiée avec les subagents
+qui terminent explicitement via `report_back` — les subagents
+retournent à un caller technique avec un payload structuré, le main
+agent retourne à un humain avec de la prose.
 
 ### Tools retirés du payload (par rapport à l'existant)
 
@@ -470,6 +497,26 @@ jamais le raisonnement de son subagent. Il voit le retour structuré + les
 fichiers workspace produits (qu'il peut lire avec `workspace_view` ou
 `conv_read_file` s'il en a besoin). C'est le pattern Task tool de Claude
 Code, généralisé à tous les niveaux.
+
+### Subagent n'a PAS `ask_human`
+
+Décision architecturale (analysée en `08_paradigm_audit_table.md` à
+l'occasion de la revue Phase 0) : `ask_human` est exclusivement
+disponible au main agent (cf. §4). Le payload tools d'un subagent ne
+contient pas `ask_human`.
+
+Cas d'usage : un subagent qui rencontre un manque d'information ne
+demande pas directement à l'humain. Il termine avec
+`report_back(confidence="low", low_confidence_reason="…")`. Le caller
+(main agent ou subagent intermédiaire) voit le retour et décide :
+- soit ré-déléguer à un autre specialist avec une briefing plus précise,
+- soit (si le caller est le main agent) appeler `ask_human` pour
+  obtenir la clarification manquante puis ré-déléguer,
+- soit conclure avec ce qu'on a (`confidence=low` propagé au plus haut).
+
+Cette discipline préserve l'isolation subagent posée comme principe v2
+et évite la confusion UX où l'humain reçoit des questions de
+specialists divers sans contexte clair sur qui les pose et pourquoi.
 
 ## 6. État runtime persisté (§E)
 
@@ -1431,6 +1478,16 @@ en phase 0 nettoyage paradigmes). Détail exact dans 07 — probablement :
   `signal_convergence`, `report_findings`, `planner_done`, `gather_done`,
   `critic_done`, `build_done`, `return_to_user` (implicite via arrêt
   de boucle).
+- **Sémantique `ask_human` / `return_to_user`** (clarifié à l'occasion
+  de la Phase 0, cf. §4 et §5) :
+  - `ask_human` reste un tool, **exclusivement disponible au main
+    agent**. Mécanique : pause loop → callback CLI → réponse humaine
+    appendée comme `role=user` → reprise loop.
+  - `return_to_user` est implicite : LLM main agent émet un assistant
+    turn sans tool_calls → `content` = réponse, fin de boucle.
+  - Subagents : pas de `ask_human` dans le payload. Si clarification
+    nécessaire, `report_back(confidence="low",
+    low_confidence_reason="…")` ; le caller décide.
 - **Agent `archivist`** : devient inutile, retrait en phase de migration.
 - **Audit + nettoyage des paradigmes BDD** (§11 bis) : livrable
   prioritaire de la phase 0 du plan d'implémentation. Tableau exhaustif
