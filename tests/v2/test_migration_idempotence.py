@@ -39,6 +39,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_100_paradigm_realignment.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_101_user_memory.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_102_drop_runtime_tables.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_103_search_quality.sql")
     yield conn
     conn.close()
 
@@ -159,12 +160,16 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 
 
 def test_total_active_paradigms_count(v2_migrated_db):
-    """Sanity : the migration produces ~104 active paradigms (cf. doc 08)."""
+    """Sanity : the migration chain produces 108 active paradigms.
+
+    104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
+    + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
+    check, P4 parallel specialists).
+    """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    # 104 is the audit-confirmed count (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md).
-    assert row["c"] == 104
+    assert row["c"] == 108
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -258,7 +263,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 104
+    assert n == 108
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
