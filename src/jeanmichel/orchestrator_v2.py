@@ -897,6 +897,22 @@ def load_agent_spec_v2(
     tool_grants = frozenset(_db.load_tool_grants(conn, row["id"]))
     delegation_targets = frozenset(_db.load_delegation_targets(conn, row["id"]))
 
+    # Load (code, role, mission) for each delegation target so the system
+    # prompt can literally list the agent codes the LLM may pass to
+    # `delegate_to`. Without this block, the LLM hallucinates target names or
+    # gives up delegating altogether.
+    delegation_targets_meta: list[tuple[str, str, str]] = []
+    if delegation_targets:
+        placeholders = ",".join("?" * len(delegation_targets))
+        target_rows = conn.execute(
+            f"SELECT code, role, mission FROM agents "  # noqa: S608 — placeholders generated above
+            f"WHERE active=1 AND code IN ({placeholders}) ORDER BY code",
+            tuple(sorted(delegation_targets)),
+        ).fetchall()
+        delegation_targets_meta = [
+            (r["code"], r["role"], r["mission"]) for r in target_rows
+        ]
+
     system_prompt = _prompts.render_system_prompt_v2(
         agent_code=row["code"],
         agent_name=row["name"],
@@ -907,6 +923,7 @@ def load_agent_spec_v2(
         user_memory_block=user_memory_block,
         user_language=user_language,
         mode=mode,
+        delegation_targets_meta=delegation_targets_meta,
     )
 
     # Resolve the model.

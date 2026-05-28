@@ -97,9 +97,12 @@ backups/*
 config.local.yaml
 
 
-# Local datas
+# Local datas — runtime SQLite, WAL/SHM sidecars and stray copies
 jeanmichel.db
 jeanmichel.db-shm
 jeanmichel.db-wal
+*.db
+*.db-shm
+*.db-wal
 user_profile.toml
 conversations/*

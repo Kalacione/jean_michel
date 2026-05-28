@@ -187,6 +187,31 @@ def _render_output_contract_v2(role: str) -> str:
 # =============================================================================
 
 
+def render_delegation_targets_block(
+    targets: list[tuple[str, str, str]],
+) -> str:
+    """Render the ``## Delegation targets`` block for the system prompt.
+
+    ``targets`` is a list of ``(code, role, mission)`` triples. The mission is
+    one-line trimmed at 160 chars so the block stays compact. Returns an empty
+    string when the agent has no delegation targets — caller decides whether
+    to inject it. The block exists so the LLM literally sees the names it can
+    pass to ``delegate_to`` ; otherwise it hallucinates agent codes or skips
+    delegation entirely.
+    """
+    if not targets:
+        return ""
+    lines: list[str] = [
+        "## Delegation targets — the only agent codes you may pass to `delegate_to`",
+    ]
+    for code, role, mission in targets:
+        flat = " ".join((mission or "").split())
+        if len(flat) > 160:
+            flat = flat[:159].rstrip() + "…"
+        lines.append(f"- `{code}` ({role}) — {flat}")
+    return "\n".join(lines) + "\n"
+
+
 def render_system_prompt_v2(
     *,
     agent_code: str,
@@ -198,6 +223,7 @@ def render_system_prompt_v2(
     user_memory_block: str = "",
     user_language: str = "und",
     mode: str = "analyse",
+    delegation_targets_meta: list[tuple[str, str, str]] | None = None,
 ) -> str:
     """v2 system prompt renderer.
 
@@ -207,6 +233,7 @@ def render_system_prompt_v2(
       # CONTEXT
         ## Human  (profile + user_memory index)
         ## Conversation
+        ## Delegation targets  (only when the agent has any)
       # DIRECTIVES
         (paradigms grouped by category)
       # OUTPUT CONTRACT
@@ -226,6 +253,9 @@ def render_system_prompt_v2(
         else "No user profile provided."
     )
 
+    targets_block = render_delegation_targets_block(delegation_targets_meta or [])
+    targets_section = f"\n{targets_block}" if targets_block else ""
+
     return (
         f"# IDENTITY\n"
         f"You are {agent_name} ({agent_code}).\n"
@@ -238,7 +268,8 @@ def render_system_prompt_v2(
         f"Working language for everything else (internal reasoning, tool queries, "
         f"briefings to other agents): English only.\n\n"
         f"## Conversation\n"
-        f"- mode: {mode}\n\n"
+        f"- mode: {mode}\n"
+        f"{targets_section}\n"
         f"# DIRECTIVES\n"
         f"{directives}\n\n"
         f"{output_contract}\n"
