@@ -4,6 +4,37 @@ This folder hosts Piper TTS voice models (`.onnx` + `.onnx.json`) used by
 the `--mode vocal` of Jean-Michel. Models are NOT committed to git
 (they're 30-150 MB each) ; only this README is tracked.
 
+## System prerequisites (Linux)
+
+Before vocal mode produces any sound, your user must be able to access
+the audio hardware. On Manjaro / Arch / most desktop distros the audio
+devices in `/dev/snd/*` are restricted to the `audio` group OR to the
+user owning the current `seat0` (graphical login). When you're working
+from a terminal, SSH, or a CLI session, you're typically NOT on seat0 —
+so the group membership is the reliable path.
+
+Check :
+
+```bash
+groups | tr ' ' '\n' | grep audio       # should print "audio"
+aplay -l                                # should list your sound cards
+pactl get-default-sink                  # should NOT print "auto_null"
+```
+
+If `audio` is missing :
+
+```bash
+sudo usermod -aG audio $USER
+```
+
+Then **close your session completely and log back in** (or reboot — that's
+the no-surprise path). Group changes are only picked up at session login,
+and the `systemd --user` daemon that runs PipeWire needs to restart with
+the new groups for PipeWire to expose real sinks.
+
+`./jm.sh --install` checks this automatically and warns if the group is
+missing.
+
 ## How vocal mode picks the model
 
 Set `JEANMICHEL_VOICE_MODEL` (env var or `.env`) to the absolute path of

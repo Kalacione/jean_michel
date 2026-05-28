@@ -87,8 +87,10 @@ Choisi au démarrage via `--mode {analyse,chat,vocal}` (défaut `analyse`).
 - **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
   `concise_output` activé. Le texte est aussi synthétisé via **Piper TTS**
   (modèle ONNX local) puis joué via `paplay` / `aplay` / `ffplay`. Voir
-  [voice_models/README.md](voice_models/README.md) pour les modèles et
-  `JEANMICHEL_VOICE_MODEL` dans `.env.example` pour la config.
+  [voice_models/README.md](voice_models/README.md) pour les modèles, les
+  **prérequis système** (groupe `audio`, vérifié automatiquement par
+  `./jm.sh --install`) et `JEANMICHEL_VOICE_MODEL` dans `.env.example`
+  pour la config.
   Pendant que le LLM travaille, des **annonces vocales asynchrones**
   ("Je cherche sur internet", "Je consulte Wikipédia"…) sont émises à
   chaque délégation et à chaque appel d'outil de recherche par le
