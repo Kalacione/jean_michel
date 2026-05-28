@@ -201,8 +201,9 @@ class MockClient:
     (v2 entries) so tests can inspect what was sent.
     """
 
-    def __init__(self, script: list[LLMResponse]) -> None:
+    def __init__(self, script: list[LLMResponse], model: str = "mock-model") -> None:
         self.script = list(script)
+        self.model = model  # parity with OllamaClient.model for the CLI _prewarm code path
         self.calls: list[tuple[str, str]] = []
         # v2 — each call records the full args dict (messages, tools, model, …).
         self.calls_v2: list[dict[str, Any]] = []

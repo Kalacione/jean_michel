@@ -851,6 +851,84 @@ def spawn_subagent(
     return result
 
 
+def load_agent_spec_v2(
+    conn: Any,
+    agent_code: str,
+    *,
+    mode: str = "analyse",
+    user_profile_text: str = "",
+    user_memory_block: str = "",
+    user_language: str = "und",
+) -> AgentSpec:
+    """Build an `AgentSpec` from the DB (agent row + paradigms + grants + targets).
+
+    Caller (CLI / jm.sh) provides the pre-rendered user_memory index and the
+    user_profile text — the helper composes them into the system prompt.
+
+    `model` resolution :
+      1. `agents.model_override` if non-NULL (v2 per-agent override) ;
+      2. else `config.MAIN_MODEL` for routers, `config.SUBAGENT_DEFAULT_MODEL`
+         for specialists / finalizers.
+    """
+    from . import config as _cfg
+    from . import db as _db
+    from . import prompts as _prompts
+
+    # Robust SELECT : try v2 (with model_override), fall back to v1 schema.
+    try:
+        row = conn.execute(
+            "SELECT id, code, name, role, mission, thinking_mode, temperature, "
+            "model_override FROM agents WHERE code=? AND active=1",
+            (agent_code,),
+        ).fetchone()
+        model_override = row["model_override"] if row is not None else None
+    except Exception:  # noqa: BLE001 — sqlite3.OperationalError, etc.
+        row = conn.execute(
+            "SELECT id, code, name, role, mission, thinking_mode, temperature "
+            "FROM agents WHERE code=? AND active=1",
+            (agent_code,),
+        ).fetchone()
+        model_override = None
+
+    if row is None:
+        raise KeyError(f"Unknown or inactive agent: {agent_code!r}")
+
+    paradigms = _db.load_paradigms_for_agent(conn, row["id"], mode)
+    tool_grants = frozenset(_db.load_tool_grants(conn, row["id"]))
+    delegation_targets = frozenset(_db.load_delegation_targets(conn, row["id"]))
+
+    system_prompt = _prompts.render_system_prompt_v2(
+        agent_code=row["code"],
+        agent_name=row["name"],
+        agent_role=row["role"],
+        agent_mission=row["mission"],
+        paradigms=paradigms,
+        user_profile_text=user_profile_text,
+        user_memory_block=user_memory_block,
+        user_language=user_language,
+        mode=mode,
+    )
+
+    # Resolve the model.
+    if model_override:
+        model = model_override
+    elif row["role"] == "router":
+        model = _cfg.MAIN_MODEL
+    else:
+        model = _cfg.SUBAGENT_DEFAULT_MODEL
+
+    return AgentSpec(
+        code=row["code"],
+        role=row["role"],
+        system_prompt=system_prompt,
+        tool_grants=tool_grants,
+        delegation_targets=delegation_targets,
+        model=model,
+        thinking=bool(row["thinking_mode"]),
+        temperature=float(row["temperature"]),
+    )
+
+
 def _format_subagent_briefing(
     briefing: str, support_files: list[str], expected: str
 ) -> str:

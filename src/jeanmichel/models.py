@@ -16,6 +16,7 @@ class Agent:
     thinking_mode: bool
     temperature: float
     sandbox_image: str | None = None   # override Docker image for bash_sandbox
+    model_override: str | None = None  # v2 : per-agent Ollama model (cf. migrate_102)
 
 
 @dataclass

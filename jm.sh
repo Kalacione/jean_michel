@@ -209,13 +209,19 @@ cmd_test() {
 cmd_meta_analysis() {
   ensure_venv
   export JEANMICHEL_HOME="${PROJECT_ROOT}"
+  # Note (v2 update): self_inspect was split into three scoped tools in
+  # migration 015 — self_inspect_config / _activity / _architecture.
+  # The v1 prompt referenced a non-existent self_inspect(scope=...) tool.
   local prompt="Run a full meta-analysis of your own configuration and recent activity."
-  prompt+=' Call self_inspect(scope="agents") to review agent and tool grants,'
-  prompt+=' self_inspect(scope="conversations") for failure rates and ask_human frequency,'
-  prompt+=' and self_inspect(scope="recent_summaries") to read recent conversation content.'
-  prompt+=' Then produce a structured improvement proposal document in the workspace:'
-  prompt+=' 1) Agent/tool gap analysis, 2) Paradigm effectiveness observations,'
-  prompt+=' 3) Behavioral patterns from recent summaries, 4) Concrete SQL proposals.'
+  prompt+=' Use the three scoped introspection tools:'
+  prompt+=' - self_inspect_config to review agent roster, tool grants, and paradigm bindings,'
+  prompt+=' - self_inspect_activity for conversation stats, sandbox audit, and recent summaries,'
+  prompt+=' - self_inspect_architecture to read the README and DB schema before writing any SQL or code.'
+  prompt+=' Then produce a structured improvement proposal document in the workspace covering:'
+  prompt+=' 1) Agent / tool gap analysis,'
+  prompt+=' 2) Paradigm effectiveness observations,'
+  prompt+=' 3) Behavioural patterns from recent activity,'
+  prompt+=' 4) Concrete SQL proposals with rationale.'
   jean-michel --mode analyse --once "${prompt}"
 }
 

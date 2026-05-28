@@ -107,6 +107,113 @@ def render_user_memory_index(
         )
     return "\n".join(lines) + "\n", total_count
 
+
+# =============================================================================
+# v2 — system prompt rendering (cf. §4 doc 06).
+# =============================================================================
+#
+# Distinct from the legacy `render_system_prompt(ctx)` which composes plan
+# injection, tool descriptions, and other legacy concerns. The v2 version is
+# slimmer : identity + human context + paradigms + role-specific output
+# contract. The orchestrator passes the rendered string as
+# `AgentSpec.system_prompt`.
+
+
+def _render_output_contract_v2(role: str) -> str:
+    """v2 output contract — role-specific termination rules.
+
+    - **specialist** : terminate via `report_back`. No `ask_human`.
+    - **router**     : terminate by emitting an assistant turn WITHOUT
+                       tool_calls. Has `ask_human` for human clarification.
+    - **finalizer**  : terminate by emitting an assistant turn WITHOUT
+                       tool_calls. No delegation, no ask_human.
+    """
+    if role == "specialist":
+        return (
+            "# OUTPUT CONTRACT\n"
+            "- Reflect first in your thought channel ; surface assumptions and traps.\n"
+            "- You may use `delegate_to(agent_code, briefing, expected?, support_files?)` "
+            "to descend the task tree if a sub-task exceeds your scope.\n"
+            "- You do NOT have `ask_human`. If a clarification is missing, "
+            "conclude with `report_back(confidence='low', low_confidence_reason='...')`. "
+            "The main agent (jean-michel) decides whether to ask the human.\n"
+            "- Conclude with `report_back(summary, files_produced, confidence, low_confidence_reason?)`. "
+            "This is the ONLY way to exit. `low_confidence_reason` is mandatory when confidence='low'.\n"
+            "- Inter-agent briefings: English. Workspace files: English unless explicitly requested otherwise."
+        )
+    if role == "router":
+        return (
+            "# OUTPUT CONTRACT\n"
+            "- Reflect first in your thought channel.\n"
+            "- Delegate via `delegate_to(agent_code, briefing, expected?, support_files?)`. "
+            "Multiple parallel delegate_to calls in the same turn are processed sequentially.\n"
+            "- Ask the human via `ask_human(question, why)` only when a clarification blocks progress.\n"
+            "- Conclude by emitting an assistant turn WITHOUT any tool_calls. "
+            "The `content` field of that turn IS the final answer to the user.\n"
+            "- Inter-agent briefings: English. Human-facing output: in the detected language."
+        )
+    # finalizer
+    return (
+        "# OUTPUT CONTRACT\n"
+        "- Reflect first ; produce the deliverable.\n"
+        "- Conclude by emitting an assistant turn WITHOUT any tool_calls. "
+        "The `content` field of that turn IS the final answer to the user.\n"
+        "- You do NOT delegate, you do NOT ask the human. Work with the inputs provided."
+    )
+
+
+def render_system_prompt_v2(
+    *,
+    agent_code: str,
+    agent_name: str,
+    agent_role: str,
+    agent_mission: str,
+    paradigms: list[Paradigm],
+    user_profile_text: str = "",
+    user_memory_block: str = "",
+    user_language: str = "und",
+    mode: str = "analyse",
+) -> str:
+    """v2 system prompt renderer (cf. §4 doc 06 §5).
+
+    Composition order :
+      # IDENTITY
+      # CONTEXT
+        ## Human  (profile + user_memory index)
+        ## Conversation
+      # DIRECTIVES
+        (paradigms grouped by category)
+      # OUTPUT CONTRACT
+        (role-specific)
+    """
+    directives = render_directives(paradigms) if paradigms else "(no paradigms)"
+    output_contract = _render_output_contract_v2(agent_role)
+
+    human_block_parts: list[str] = []
+    if user_profile_text.strip():
+        human_block_parts.append(user_profile_text.strip())
+    if user_memory_block.strip():
+        human_block_parts.append(user_memory_block.rstrip())
+    human_block = "\n\n".join(human_block_parts) if human_block_parts else "No user profile provided."
+
+    return (
+        f"# IDENTITY\n"
+        f"You are {agent_name} ({agent_code}).\n"
+        f"Role: {agent_role}.\n"
+        f"Mission: {agent_mission}\n\n"
+        f"# CONTEXT\n"
+        f"## Human\n"
+        f"{human_block}\n\n"
+        f"Detected language — use for human-facing output: {user_language}\n"
+        f"Working language for everything else (internal reasoning, tool queries, "
+        f"briefings to other agents): English only.\n\n"
+        f"## Conversation\n"
+        f"- mode: {mode}\n\n"
+        f"# DIRECTIVES\n"
+        f"{directives}\n\n"
+        f"{output_contract}\n"
+    )
+
 # Maximum characters of plan.md injected into the router's system prompt.
 # Truncates from the end (most recent steps matter most).
 _PLAN_INJECTION_MAX_CHARS = 3000
