@@ -305,6 +305,11 @@ def run_one_turn(
 ) -> str:
     """Process one user turn end-to-end.
 
+    Shows a "thinking…" spinner while the LLM is busy and pauses it for
+    event rendering / ask_human prompts. Once the spinner is up the user
+    can no longer type — the prompt session won't return to its prompt
+    until we finish and call ``session.prompt()`` again.
+
     Returns the final user-facing answer (also printed as a Panel here).
     """
     user_lang = dispatcher.detect_language(user_text)
@@ -317,15 +322,19 @@ def run_one_turn(
         except Exception as exc:  # noqa: BLE001
             _log.debug("update_conversation_language failed: %s", exc)
 
-    # --- Tier 0 : dispatch ---
-    decision = dispatcher.classify(user_text, dispatch_llm)
+    # --- Tier 0 : dispatch (under spinner) ---
+    with console.status("[dim]thinking…[/]", spinner="dots"):
+        decision = dispatcher.classify(user_text, dispatch_llm)
 
     if decision.intent == "alexa":
         console.print(
             f"[dim]→ tier 0 alexa · tool={decision.tool} · "
             f"confidence={decision.confidence}[/]"
         )
-        answer = dispatcher.execute_alexa(decision, dispatch_llm, user_lang=user_lang)
+        with console.status("[dim]thinking…[/]", spinner="dots"):
+            answer = dispatcher.execute_alexa(
+                decision, dispatch_llm, user_lang=user_lang
+            )
     else:
         console.print(
             f"[dim]→ tier 1 deep · confidence={decision.confidence}[/]"
@@ -369,7 +378,12 @@ def _run_deep_turn(
     ask_human_cb: Callable[[str, str], str],
     initial_messages: list[dict] | None,
 ) -> str:
-    """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
+    """Engage Tier 1 : load jean-michel spec, build registry, run the main loop.
+
+    Manages a "thinking…" spinner that pauses for event rendering and
+    ``ask_human`` prompts — so the user always knows whether the system is
+    waiting on the LLM or on them.
+    """
     with db.connect() as conn:
         user_memory_block, count = render_user_memory_index(conn)
         if count >= 90:  # cf. USER_MEMORY_WARN_AT
@@ -415,8 +429,26 @@ def _run_deep_turn(
         agent_role="router",
     )
 
+    # Spinner managed by hand so we can pause it during event rendering
+    # and ask_human prompts. The legacy CLI used `with console.status()` +
+    # generator yielding ; v2 uses a callback so we drive start/stop ourselves.
+    status = console.status("[dim]thinking…[/]", spinner="dots")
+    status.start()
+
     def emitter(event: Any) -> None:
-        render_event(console, event, mode=mode)
+        status.stop()
+        try:
+            render_event(console, event, mode=mode)
+        finally:
+            status.start()
+
+    # Pause the spinner while waiting on a human answer.
+    def ask_human_with_pause(question: str, why: str) -> str:
+        status.stop()
+        try:
+            return ask_human_cb(question, why)
+        finally:
+            status.start()
 
     # If we're resuming, replace messages[0] with a freshly rendered
     # system prompt to pick up user_memory updates.
@@ -429,17 +461,20 @@ def _run_deep_turn(
                 "content": main_agent.system_prompt,
             }
 
-    answer = run_main_loop(
-        conv_folder=conv_folder,
-        agent=main_agent,
-        tools_registry=tools_registry,
-        llm_client=main_llm,
-        user_text=user_text,
-        initial_messages=seeded_messages,
-        ask_human_callback=ask_human_cb,
-        agent_resolver=agent_resolver,
-        event_emitter=emitter,
-    )
+    try:
+        answer = run_main_loop(
+            conv_folder=conv_folder,
+            agent=main_agent,
+            tools_registry=tools_registry,
+            llm_client=main_llm,
+            user_text=user_text,
+            initial_messages=seeded_messages,
+            ask_human_callback=ask_human_with_pause,
+            agent_resolver=agent_resolver,
+            event_emitter=emitter,
+        )
+    finally:
+        status.stop()
     return answer
 
 
