@@ -155,7 +155,7 @@ def synthesize_to_wav(text: str, output_path: Path) -> bool:
                     wav_file.setframerate(chunk.sample_rate)
                     silence_bytes = (
                         b"\x00"
-                        * int(chunk.sample_rate * 0.15)
+                        * int(chunk.sample_rate * 1.5)
                         * chunk.sample_width
                         * chunk.sample_channels
                     )
@@ -234,11 +234,12 @@ def speak(text: str) -> bool:
 
     assert proc.stdin is not None
     try:
-        # Pre-roll : 150 ms of silence at the front. Without this, when the
-        # PulseAudio/PipeWire sink was SUSPENDED, its wake-up swallows the
-        # first 100-200 ms of audio and the speech starts mid-syllable.
-        # ~6.6 KB at 22050 Hz mono S16LE — negligible.
-        preroll = b"\x00\x00" * int(rate * 0.15)
+        # 1.5 s of silent pre-roll. Covers BOTH the PulseAudio sink wake-up
+        # (~200-500 ms) AND a powered speaker's auto-mute wake-up
+        # (~500 ms-1.5 s on common consumer amps). Below this value the
+        # first syllables get clipped on speakers with aggressive
+        # power-save. ~66 KB at 22050 Hz mono S16LE — negligible.
+        preroll = b"\x00\x00" * int(rate * 1.5)
         proc.stdin.write(preroll)
         for chunk in voice.synthesize(text):
             proc.stdin.write(chunk.audio_int16_bytes)
