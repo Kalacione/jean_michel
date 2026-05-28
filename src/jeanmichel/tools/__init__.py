@@ -18,11 +18,14 @@ from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_status as _conv_status_mod
+from . import github as _github_mod
 from . import manage_user_memory as _manage_user_memory_mod
 from . import news as _news_mod
+from . import pypi as _pypi_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
+from . import stackoverflow as _stackoverflow_mod
 from . import weather as _weather_mod
 from . import web_fetch as _web_fetch_mod
 from . import web_search as _web_search_mod
@@ -85,6 +88,10 @@ def build_registry(
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
         _web_fetch_mod.SPEC.name: _web_fetch_mod.SPEC,
+        _github_mod.SEARCH_CODE_SPEC.name: _github_mod.SEARCH_CODE_SPEC,
+        _github_mod.SEARCH_REPOS_SPEC.name: _github_mod.SEARCH_REPOS_SPEC,
+        _stackoverflow_mod.SPEC.name: _stackoverflow_mod.SPEC,
+        _pypi_mod.SPEC.name: _pypi_mod.SPEC,
     }
     if conv_status_spec is not None:
         registry[conv_status_spec.name] = conv_status_spec

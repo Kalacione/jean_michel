@@ -39,14 +39,14 @@ architectural complet.
 
 ## Agents v2 — le mille-feuille cognitif
 
-14 agents actifs, organisés en **deux dimensions** :
+15 agents actifs, organisés en **deux dimensions** :
 
 **1. Dimension structurelle (place dans le task tree)** — exposée par
 `agents.role` :
 
 - **`router`** (1) : `jean-michel` — main agent Tier 1. Reçoit la requête,
   formalise, délègue, synthétise. **Ne raisonne pas, ne fait pas le boulot.**
-- **`specialist`** (12) — exécutent les tâches concrètes, terminent par
+- **`specialist`** (13) — exécutent les tâches concrètes, terminent par
   `report_back`. Peuvent eux-mêmes spawn d'autres specialists
   (`MAX_DEPTH=5`).
 - **`finalizer`** (1) : `synthesizer` — fusion finale quand plusieurs
@@ -58,9 +58,16 @@ colonne SQL formelle, mais une convention reflétée dans
 
 | Tier cognitif | Agents | Modèle |
 |---|---|---|
-| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `workspace-manager`, `code-runner` | `gemma4:latest` (default) |
+| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `code-fetcher`, `workspace-manager` | `gemma4:latest` (default) |
+| **Production / exécution** | `code-runner` (write + run code in Docker sandbox) | `gemma4:latest` (default) |
 | **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
 | **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
+
+**Pattern fetcher/runner pour le code** : `code-fetcher` fait du lookup
+(GitHub, Stack Overflow, PyPI + web_fetch sur les URLs) ; `code-runner`
+écrit et exécute du code dans le sandbox Docker. Quand code-runner coince
+sur une erreur ou doute d'une API, il délègue à code-fetcher avant de
+deviner — pattern miroir de `news-specialist` + `web_fetch`.
 
 Les **reasoners** sont des specialists dont le métier *EST* le raisonnement —
 ils sont sur un modèle plus capable parce que c'est leur raison d'être, pas
@@ -245,6 +252,11 @@ paradigmes actifs** au total. Trajectoire :
   web-search-specialist et news-specialist réécrites pour lever le
   chevauchement sémantique sur "news", tool `web_fetch` granté aux
   deux specialists.
+- Migration 108 (code-fetcher) : +3 paradigmes
+  (`code_fetcher_multi_source` côté code-fetcher,
+  `delegate_to_code_fetcher_on_doubt` côté code-runner,
+  `cite_sources_in_user_facing_output` côté jean-michel — bonus pour
+  surfacer les sources dans la réponse user-facing).
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -295,12 +307,15 @@ Quand une clé est manquante, le tool concerné renvoie un
 `tool_error("api_key_missing", …)` clair — pas de dégradation silencieuse,
 le LLM voit l'erreur et bascule sur un autre outil.
 
-| Env var              | Tool(s)                       | Notes                              |
-|----------------------|-------------------------------|------------------------------------|
-| `NEWSDATA_API_KEY`   | `news_latest`, `news_archive` | newsdata.io, free 200 req/jour     |
+| Env var              | Tool(s)                                          | Notes                              |
+|----------------------|--------------------------------------------------|------------------------------------|
+| `NEWSDATA_API_KEY`   | `news_latest`, `news_archive`                    | newsdata.io, free 200 req/jour     |
+| `GITHUB_TOKEN`       | `github_search_code` (requis), `github_search_repos` (5000 req/h) | fine-grained PAT read-only public  |
+| `STACKEXCHANGE_KEY`  | `stackoverflow_search` (optionnel)               | 300 req/j sans, 10 000 avec        |
 
 Les tools `clock`, `weather` (open-meteo), `wikipedia_*`, `web_search`
-(SearXNG local), `web_fetch` (readability-lxml) ne nécessitent pas de clé.
+(SearXNG local), `web_fetch` (readability-lxml), `pypi_lookup` ne
+nécessitent pas de clé.
 
 **Pattern de recherche en profondeur** : `news_latest` ou `web_search`
 renvoient des URLs + previews courts (snippet ou description). Pour
@@ -354,11 +369,19 @@ Migrations v2 sous `db/migrations/` :
   côté router, `news_freshness_discipline` réécrit autour du pattern
   news_latest + web_fetch), grants `web_fetch` à news-specialist +
   web-search-specialist.
+- `migrate_108_code_fetcher_agent.sql` — création de l'agent
+  `code-fetcher` (lookup-tier : GitHub + Stack Overflow + PyPI +
+  web_fetch), mise à jour mission de `code-runner` pour acknowledger
+  la délégation, paradigme `delegate_to_code_fetcher_on_doubt` côté
+  code-runner, ajout aux delegation_targets de jean-michel ET de
+  code-runner. Bonus : paradigme `cite_sources_in_user_facing_output`
+  côté jean-michel pour que la réponse au user inclue les sources
+  consultées (URLs + dates).
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107; do
+for m in 100 101 102 103 104 105 106 107 108; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -453,7 +476,8 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
-**14 agents actifs** (dont 4 reasoners sur gemma4:26b). ~320 tests v2 verts.
+**15 agents actifs** (dont 4 reasoners sur gemma4:26b, et le pattern
+fetcher/runner pour le code). ~360 tests v2 verts.
 CLI multi-tour en tous modes, `--resume`, `--list-conv`. Dispatcher Tier 0
 opérationnel via granite. Main loop Tier 1 multi-turn natif. Subagents Tier 2
 avec délégation imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme
