@@ -59,9 +59,8 @@ colonne SQL formelle, mais une convention reflétée dans
 | Tier cognitif | Agents | Modèle |
 |---|---|---|
 | **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `code-fetcher`, `workspace-manager` | `gemma4:latest` (default) |
-| **Production / exécution** | `code-runner` (write + run code in Docker sandbox) | `gemma4:latest` (default) |
 | **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
-| **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
+| **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst`, `code-runner` | `gemma4:26b` via `model_override` |
 
 **Pattern fetcher/runner pour le code** : `code-fetcher` fait du lookup
 (GitHub, Stack Overflow, PyPI + web_fetch sur les URLs) ; `code-runner`
@@ -269,6 +268,10 @@ paradigmes actifs** au total. Trajectoire :
   `bash -n`, `node --check`, `python -m json.tool`, parser YAML).
   Le budget de 3 itérations couvre désormais syntax + runtime
   combinés.
+- Migration 111 (code-runner → reasoner) : `code-runner` passe sur
+  `gemma4:26b` via model_override. La production de code est du
+  raisonnement intense, pas du lookup — le 9b par défaut était
+  insuffisant pour produire du code de qualité.
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -401,11 +404,14 @@ Migrations v2 sous `db/migrations/` :
   rapide AVANT l'exécution complète (recipes par langage : Python /
   Bash / Node / JSON / YAML). Évite de consommer un run sandbox pour
   des erreurs triviales (typos, brackets, indentation).
+- `migrate_111_code_runner_to_reasoner.sql` — `code-runner` rejoint
+  les reasoners (`model_override='gemma4:26b'`). L'écriture de code
+  est du raisonnement, pas du lookup.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108 109 110; do
+for m in 100 101 102 103 104 105 106 107 108 109 110 111; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -500,8 +506,9 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
-**15 agents actifs** (dont 4 reasoners sur gemma4:26b, et le pattern
-fetcher/runner pour le code). ~360 tests v2 verts.
+**15 agents actifs** (dont 5 reasoners sur gemma4:26b — strategist +
+critical-thinker + comparator + meta-analyst + code-runner — et le
+pattern fetcher/runner pour le code). ~360 tests v2 verts.
 CLI multi-tour en tous modes, `--resume`, `--list-conv`. Dispatcher Tier 0
 opérationnel via granite. Main loop Tier 1 multi-turn natif. Subagents Tier 2
 avec délégation imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme

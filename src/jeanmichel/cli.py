@@ -422,12 +422,32 @@ def _run_deep_turn(
 
     # Tools registry — built once per turn. Permissive grants ; per-agent
     # filtering is enforced by the PreToolUse hook via AgentSpec.tool_grants.
+    #
+    # For bash_sandbox specifically, we load the UNION of `agent_sandbox_grants`
+    # commands across all active agents and pass it as the sandbox whitelist.
+    # The bash_sandbox tool spec then exists in the registry (otherwise it
+    # would be silently absent for agents that have it in their `agent_tools`,
+    # causing the LLM to fail at runtime). Per-agent command restriction is
+    # currently best-effort — see TODO below.
+    #
+    # TODO (deferred) : a single agent can today execute any command from the
+    # union (not strictly its own subset) because the bash_sandbox handler
+    # captures the superset in a closure. Acceptable while ONLY `code-runner`
+    # has sandbox grants ; revisit when a second agent gets sandbox access.
+    with db.connect() as _grants_conn:
+        sandbox_grants = sorted({
+            r["command"]
+            for r in _grants_conn.execute(
+                "SELECT DISTINCT command FROM agent_sandbox_grants"
+            )
+        })
+
     tools_registry = build_registry(
         conv_folder=conv_folder,
         has_workspace_write=True,
         conv_id=conv_id,
         request_id_provider=lambda: "main",
-        sandbox_grants=None,
+        sandbox_grants=sandbox_grants,
         sandbox_image=None,
         agent_role="router",
     )
