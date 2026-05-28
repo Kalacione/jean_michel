@@ -91,16 +91,22 @@ def test_synthesize_returns_false_when_no_voice(tmp_path, monkeypatch):
     assert voice.synthesize_to_wav("hello", out) is False
 
 
-def _fake_synth_writes_silent_wav(text, wav_file):
-    """Stand-in for PiperVoice.synthesize_wav : write a valid 0.05 s silent WAV.
+def _fake_chunk_iter(text):
+    """Stand-in for PiperVoice.synthesize(text) : one short 16-bit-PCM chunk."""
+    yield _FakeAudioChunk(
+        audio_int16_bytes=b"\x00\x00" * 1102,  # ~50 ms of silence
+        sample_rate=22050,
+        sample_channels=1,
+        sample_width=2,
+    )
 
-    Real piper configures the wave_file with channels / sampwidth / framerate
-    before writing frames ; without that, `wave.open(...)` raises on close.
-    """
-    wav_file.setnchannels(1)
-    wav_file.setsampwidth(2)
-    wav_file.setframerate(22050)
-    wav_file.writeframes(b"\x00\x00" * 1102)  # ~50 ms of silence
+
+class _FakeAudioChunk:
+    def __init__(self, audio_int16_bytes, sample_rate, sample_channels, sample_width):
+        self.audio_int16_bytes = audio_int16_bytes
+        self.sample_rate = sample_rate
+        self.sample_channels = sample_channels
+        self.sample_width = sample_width
 
 
 def test_synthesize_returns_true_on_success(tmp_path, monkeypatch):
@@ -108,7 +114,7 @@ def test_synthesize_returns_true_on_success(tmp_path, monkeypatch):
     fake_model.write_bytes(b"x")
     monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
 
-    fake_voice = MagicMock(synthesize_wav=_fake_synth_writes_silent_wav)
+    fake_voice = MagicMock(synthesize=_fake_chunk_iter)
     fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
     out = tmp_path / "out.wav"
 
@@ -183,44 +189,91 @@ def test_speak_empty_text_is_noop():
     assert voice.speak("   ") is True
 
 
-def test_speak_full_pipeline(tmp_path, monkeypatch):
+class _FakeChunk:
+    """Stand-in for piper.AudioChunk : just needs `audio_int16_bytes`."""
+    def __init__(self, n: int):
+        self.audio_int16_bytes = b"\x00\x00" * n
+
+
+class _FakePopen:
+    """Stand-in for subprocess.Popen for streaming tests."""
+    def __init__(self, *args, **kwargs):
+        self.stdin = MagicMock()
+        self.returncode = 0
+        self.written: list[bytes] = []
+        self.stdin.write = lambda b: self.written.append(b)
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        pass
+
+
+def test_speak_streams_raw_pcm_to_player(tmp_path, monkeypatch):
+    """speak() should pipe AudioChunks directly into the player's stdin."""
     fake_model = tmp_path / "ok.onnx"
     fake_model.write_bytes(b"x")
     monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
     monkeypatch.setattr(voice.config, "VOICE_AUDIO_PLAYER", "")
-    monkeypatch.setattr(voice.shutil, "which", lambda c: "/usr/bin/paplay" if c == "paplay" else None)
-
-    fake_voice = MagicMock(synthesize_wav=_fake_synth_writes_silent_wav)
-    fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
+    # paplay is available, others are not — we expect the paplay raw command.
     monkeypatch.setattr(
-        voice.subprocess, "run",
-        lambda *a, **kw: MagicMock(returncode=0),
+        voice.shutil, "which",
+        lambda c: "/usr/bin/paplay" if c == "paplay" else None,
     )
+
+    chunks = [_FakeChunk(1000), _FakeChunk(500)]
+    fake_voice = MagicMock(
+        config=MagicMock(sample_rate=22050),
+        synthesize=MagicMock(return_value=iter(chunks)),
+    )
+    fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
+
+    captured_cmd: list = []
+    def _track_popen(cmd, *args, **kwargs):
+        captured_cmd.append(cmd)
+        return _FakePopen()
+    monkeypatch.setattr(voice.subprocess, "Popen", _track_popen)
 
     with patch.dict("sys.modules", {"piper": MagicMock(PiperVoice=fake_piper_voice_cls)}):
         ok = voice.speak("hello world")
 
     assert ok is True
+    assert captured_cmd, "Popen should have been invoked once"
+    cmd = captured_cmd[0]
+    assert cmd[0] == "/usr/bin/paplay"
+    assert "--raw" in cmd
+    assert "--rate=22050" in cmd
+    assert "--channels=1" in cmd
 
 
-def test_speak_cleans_up_temp_file_on_failure(tmp_path, monkeypatch):
-    """Even if synthesis fails, the temp file must be removed."""
+def test_speak_falls_back_to_wav_when_no_streaming_player(tmp_path, monkeypatch):
+    """When no known streaming player is found, speak() uses the WAV fallback."""
+    fake_model = tmp_path / "ok.onnx"
+    fake_model.write_bytes(b"x")
+    monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
+    monkeypatch.setattr(voice.config, "VOICE_AUDIO_PLAYER", "")
+    # No streaming-capable player found.
+    monkeypatch.setattr(voice.shutil, "which", lambda c: None)
+
+    fake_voice = MagicMock(
+        config=MagicMock(sample_rate=22050),
+        synthesize=_fake_chunk_iter,
+    )
+    fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
+
+    with patch.dict("sys.modules", {"piper": MagicMock(PiperVoice=fake_piper_voice_cls)}):
+        ok = voice.speak("hi")
+
+    # No streaming player AND no wav player either → fallback returns False.
+    assert ok is False
+
+
+def test_speak_returns_false_when_no_model(tmp_path, monkeypatch):
+    """No model file → speak() exits cleanly with False, no exception."""
     monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", tmp_path / "nope.onnx")
-    created_paths: list[Path] = []
-    real_named_tempfile = voice.tempfile.NamedTemporaryFile
-
-    def _track(*args, **kwargs):
-        f = real_named_tempfile(*args, **kwargs)
-        created_paths.append(Path(f.name))
-        return f
-
-    monkeypatch.setattr(voice.tempfile, "NamedTemporaryFile", _track)
-
     ok = voice.speak("hi")
     assert ok is False
-    assert created_paths
-    for p in created_paths:
-        assert not p.exists(), f"temp file leaked: {p}"
 
 
 # ---- is_available -------------------------------------------------------
@@ -274,7 +327,7 @@ def test_speak_async_skips_when_one_is_in_flight(tmp_path, monkeypatch):
     fake_model = tmp_path / "ok.onnx"
     fake_model.write_bytes(b"x")
     monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
-    fake_voice = MagicMock(synthesize_wav=_fake_synth_writes_silent_wav)
+    fake_voice = MagicMock(synthesize=_fake_chunk_iter)
     fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
 
     with patch.dict("sys.modules", {"piper": MagicMock(PiperVoice=fake_piper_voice_cls)}):
@@ -296,7 +349,7 @@ def test_speak_async_proceeds_when_previous_finished(tmp_path, monkeypatch):
     monkeypatch.setattr(voice.config, "VOICE_AUDIO_PLAYER", "")
     monkeypatch.setattr(voice.shutil, "which", lambda c: "/usr/bin/paplay" if c == "paplay" else None)
 
-    fake_voice = MagicMock(synthesize_wav=_fake_synth_writes_silent_wav)
+    fake_voice = MagicMock(synthesize=_fake_chunk_iter)
     fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
     new_proc = MagicMock()
     monkeypatch.setattr(voice.subprocess, "Popen", lambda *a, **kw: new_proc)

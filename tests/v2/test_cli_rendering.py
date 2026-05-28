@@ -1,4 +1,4 @@
-"""Tests for `jeanmichel.cli` — event rendering, ask_human callback, _prewarm.
+"""Tests for `jeanmichel.cli` — event rendering, ask_human callback.
 
 Snapshot-style tests : each event type goes through `render_event` and the
 captured text is asserted to contain the expected markers. We don't do byte
@@ -15,7 +15,6 @@ import pytest
 from rich.console import Console
 
 from jeanmichel.cli import (
-    _prewarm,
     make_ask_human,
     render_event,
 )
@@ -32,8 +31,6 @@ from jeanmichel.events import (
     ToolCallStarted,
     WorkingBudgetUpdate,
 )
-from jeanmichel.llm import MockClient
-from jeanmichel.models import LLMResponse
 
 
 # ---- Helper ---------------------------------------------------------------
@@ -187,51 +184,6 @@ def test_render_unknown_event_falls_back_to_repr():
     text = _capture(FakeEvent())
     # Falls back to type name + repr.
     assert "FakeEvent" in text
-
-
-# ---- _prewarm ------------------------------------------------------------
-
-
-class _FailingClient:
-    """MockClient-shaped stub that raises on every chat_messages call."""
-
-    model = "missing-model:0"
-
-    def chat_messages(self, **kwargs):
-        raise RuntimeError("Ollama unreachable")
-
-
-def test_prewarm_logs_warning_when_model_missing():
-    """_prewarm must log a warning and continue, not crash."""
-    console = Console(record=True, width=120, force_terminal=False)
-    _prewarm(console, {"dispatch": _FailingClient()})
-    text = console.export_text()
-    assert "warming up" in text
-    assert "warmup failed" in text
-    assert "Ollama unreachable" in text
-
-
-def test_prewarm_succeeds_when_client_works():
-    console = Console(record=True, width=120, force_terminal=False)
-    mock = MockClient(script=[LLMResponse(thinking="", content="ok")])
-    _prewarm(console, {"main": mock})
-    text = console.export_text()
-    assert "warming up" in text
-    assert "ready" in text
-
-
-def test_prewarm_continues_after_partial_failure():
-    """If one of two models fails, the other still gets warmed (and the loop
-    continues — no exception bubbled up)."""
-    console = Console(record=True, width=120, force_terminal=False)
-    ok_mock = MockClient(script=[LLMResponse(thinking="", content="ok")])
-    _prewarm(console, {"dispatch": _FailingClient(), "main": ok_mock})
-    text = console.export_text()
-    # Both attempts present.
-    assert text.count("warming up") == 2
-    # One failed, one succeeded.
-    assert "warmup failed" in text
-    assert "ready" in text
 
 
 # ---- --resume persistence integration -----------------------------------

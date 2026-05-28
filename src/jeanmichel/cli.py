@@ -218,30 +218,6 @@ def make_ask_human(console: Console, session: PromptSession) -> Callable[[str, s
     return _ask
 
 
-# ---- Pre-warm ------------------------------------------------------------
-
-
-def _prewarm(console: Console, llm_clients: dict[str, OllamaClient]) -> None:
-    """Best-effort warm-up of one or more Ollama models.
-
-    Each model is probed with a tiny no-thinking call. Failures are logged
-    but do not stop the CLI — the v2 architecture degrades gracefully when
-    the dispatcher model is missing (everything falls through to DEEP).
-    """
-    for label, llm in llm_clients.items():
-        console.print(f"[dim]warming up {label}={llm.model}…[/]", end="")
-        try:
-            llm.chat_messages(
-                messages=[{"role": "user", "content": "ok"}],
-                tools=[],
-                temperature=0.0,
-                thinking=False,
-            )
-            console.print(" [dim]ready.[/]")
-        except Exception as exc:  # noqa: BLE001
-            console.print(f" [yellow]warmup failed: {exc}[/]")
-
-
 # ---- Conversation lifecycle ---------------------------------------------
 
 
@@ -486,11 +462,17 @@ def _run_deep_turn(
         status.stop()
         try:
             render_event(console, event, mode=mode)
-            # Vocal mode : announce delegations and direct research tool calls
-            # via async TTS so the user hears progress while the LLM works.
+            # Vocal mode : announce thinking start, delegations, and direct
+            # research tool calls via async TTS so the user hears progress
+            # while the LLM works.
             if mode == "vocal":
                 from . import voice
-                if isinstance(event, DelegationStarted):
+                if isinstance(event, RequestStarted) and event.depth == 0:
+                    # Start of a DEEP turn — no ALEXA shortcut. Tell the
+                    # user we're thinking so they don't stare at silence
+                    # during a long generation with no tool calls.
+                    voice.announce_thinking()
+                elif isinstance(event, DelegationStarted):
                     voice.announce_delegation(event.child_agent)
                 elif isinstance(event, ToolCallStarted):
                     voice.announce_tool_call(event.tool_name)
@@ -648,10 +630,6 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         console.print(f"[{C_WARN}]{exc}[/]")
         return 2
-
-    # Pre-warm for chat/vocal modes (analyse defers to first turn).
-    if args.mode in {"chat", "vocal"}:
-        _prewarm(console, {"dispatch": dispatch_llm, "main": main_llm})
 
     # Vocal mode preflight : warn now if TTS isn't usable, so the user
     # knows responses will be text-only before the first turn runs.
