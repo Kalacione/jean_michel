@@ -103,11 +103,20 @@ DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # pour la rétrocompat tant que le code legacy n'est pas retiré (Phase 6).
 # Tous ces paramètres sont overridables par env var pour tuning sans recompile.
 
-# Modèles — 4 slots (cf. §1.3 doc 06). Chaîne d'override : CLI > env > default.
+# Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : CLI > env > default.
 DISPATCH_MODEL = os.environ.get("JEANMICHEL_DISPATCH_MODEL", "granite4.1:8b")
 MAIN_MODEL = os.environ.get("JEANMICHEL_MAIN_MODEL", "gemma4:latest")
 COMPACTOR_MODEL = os.environ.get("JEANMICHEL_COMPACTOR_MODEL", "gemma4:latest")
 SUBAGENT_DEFAULT_MODEL = os.environ.get("JEANMICHEL_SUBAGENT_MODEL", "gemma4:latest")
+# Slot dédié aux agents dont le métier EST le raisonnement (strategist,
+# critical-thinker, comparator-specialist, meta-analyst). Aujourd'hui chacun
+# pointe dur sur 'gemma4:26b' via `agents.model_override` ; ce slot existe
+# pour qu'un futur switch global (changer de modèle de raisonnement) se fasse
+# par env var, sans migration DB. Le résolveur actuel (orchestrator_v2) ne le
+# lit pas encore — il sera consommé si on bascule de model_override sur un
+# flag d'agent (cognitive_tier='high', par exemple). Documenté ici comme
+# point d'extension stable.
+REASONER_MODEL = os.environ.get("JEANMICHEL_REASONER_MODEL", "gemma4:26b")
 
 # Budget de contexte partitionné (cf. §1.7 et §7 doc 06).
 # 4 seuils d'escalade pour la compaction sur le WORKING : snip / microcompact /

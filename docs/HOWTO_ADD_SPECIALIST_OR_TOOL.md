@@ -131,7 +131,7 @@ def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
 
 ## Règles à respecter
 
-- Tool `name` = clé LLM-facing (ex. `conv_read_file`), pas le nom du module Python.
+- Tool `name` = clé LLM-facing (ex. `workspace_view`), pas le nom du module Python.
 - Les paradigmes globaux (`is_global=1`) s'appliquent à tous les agents — ne pas les rebinder.
 - Marquer un paradigme `is_global=1` doit être un choix conscient. Préférer un binding explicite si le paradigme ne sert que 2-3 agents : ça évite la pollution des prompts des autres agents.
 - Ne pas hardcoder de grants en Python : toujours passer par `agent_tools`.

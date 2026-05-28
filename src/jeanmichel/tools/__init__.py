@@ -17,7 +17,6 @@ from pathlib import Path
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
-from . import conv_read_file as _conv_read_file_mod
 from . import conv_status as _conv_status_mod
 from . import manage_user_memory as _manage_user_memory_mod
 from . import self_inspect_activity as _si_activity_mod
@@ -58,7 +57,6 @@ def build_registry(
     agent's ``tool_grants`` (loaded from ``agent_tools``) at call time, so
     even tools present here are denied to agents that lack the grant.
     """
-    conv_read_file_spec = _conv_read_file_mod.make_spec(conv_folder)
     conv_status_spec = _conv_status_mod.make_spec(conv_id) if conv_id else None
     ws_create_spec = _ws_create_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_append_spec = _ws_append_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
@@ -68,7 +66,6 @@ def build_registry(
 
     registry: dict[str, ToolSpec] = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
-        conv_read_file_spec.name: conv_read_file_spec,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
         _web_search_mod.SPEC.name: _web_search_mod.SPEC,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,

@@ -37,17 +37,40 @@ turn assistant **sans tool_calls** : le `content` EST la réponse.
 Voir `DevNotes/REVOLUCION/06_proposition_v2.md` pour le détail
 architectural complet.
 
-## Agents v2
+## Agents v2 — le mille-feuille cognitif
 
-12 agents actifs (l'archivist legacy a disparu — la persistance native
-`messages.json` couvre son rôle) :
+13 agents actifs, organisés en **deux dimensions** :
 
-- **jean-michel** (router) — main agent du Tier 1.
-- **summarizer**, **weather-specialist**, **wikipedia-specialist**,
-  **web-search-specialist**, **comparator-specialist**, **critical-thinker**,
-  **document-builder**, **workspace-manager**, **meta-analyst**, **code-runner**
-  (specialists).
-- **synthesizer** (finalizer).
+**1. Dimension structurelle (place dans le task tree)** — exposée par
+`agents.role` :
+
+- **`router`** (1) : `jean-michel` — main agent Tier 1. Reçoit la requête,
+  formalise, délègue, synthétise. **Ne raisonne pas, ne fait pas le boulot.**
+- **`specialist`** (11) — exécutent les tâches concrètes, terminent par
+  `report_back`. Peuvent eux-mêmes spawn d'autres specialists
+  (`MAX_DEPTH=5`).
+- **`finalizer`** (1) : `synthesizer` — fusion finale quand plusieurs
+  specialists ont contribué. Termine par un turn assistant sans tool_calls.
+
+**2. Dimension cognitive (intensité de raisonnement requise)** — pas une
+colonne SQL formelle, mais une convention reflétée dans
+`agents.model_override` :
+
+| Tier cognitif | Agents | Modèle |
+|---|---|---|
+| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `workspace-manager`, `code-runner` | `gemma4:latest` (default) |
+| **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
+| **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
+
+Les **reasoners** sont des specialists dont le métier *EST* le raisonnement —
+ils sont sur un modèle plus capable parce que c'est leur raison d'être, pas
+un workaround. `strategist` notamment décompose une requête exploratoire
+ouverte en N axes thématiques disjoints et retourne un *plan* que le
+router exécute en parallèle.
+
+**Règle d'or** : si tu as envie de mettre du `model_override` sur le router
+parce qu'il "doit faire X de plus", arrête — c'est un signal qu'il faut un
+nouveau specialist dont c'est le métier.
 
 ## Modes
 
@@ -64,7 +87,7 @@ Le mode est porté par la conversation et apparaît dans le bloc
 
 ## Modèles configurables
 
-4 slots dans `config.py`, chacun overridable par env var et CLI flag :
+5 slots dans `config.py`, chacun overridable par env var et CLI flag :
 
 | Slot                     | Défaut             | Env var                           | CLI flag           |
 |--------------------------|--------------------|-----------------------------------|--------------------|
@@ -72,10 +95,23 @@ Le mode est porté par la conversation et apparaît dans le bloc
 | `MAIN_MODEL`             | `gemma4:latest`    | `JEANMICHEL_MAIN_MODEL`           | `--main-model`     |
 | `COMPACTOR_MODEL`        | `gemma4:latest`    | `JEANMICHEL_COMPACTOR_MODEL`      | —                  |
 | `SUBAGENT_DEFAULT_MODEL` | `gemma4:latest`    | `JEANMICHEL_SUBAGENT_MODEL`       | —                  |
+| `REASONER_MODEL`         | `gemma4:26b`       | `JEANMICHEL_REASONER_MODEL`       | —                  |
 
 Per-agent override : la colonne `agents.model_override` permet d'assigner
-un modèle spécifique à un subagent (ex. `critical-thinker → gemma4:26b`)
-sans toucher au code.
+un modèle spécifique à un subagent (ex. `strategist → gemma4:26b`).
+
+**Convention** : aujourd'hui, les 4 reasoners (strategist, critical-thinker,
+comparator-specialist, meta-analyst) ont chacun `model_override='gemma4:26b'`
+directement en BDD. Le slot `REASONER_MODEL` existe en Python comme point
+d'extension stable — un futur switch global (changer de modèle de raisonnement
+pour tous les reasoners) pourra se faire par env var sans migration DB, une
+fois qu'on aura introduit un flag d'agent (genre `cognitive_tier='high'`)
+lu par le résolveur.
+
+**Les paradigmes (contenu en BDD injecté dans les system prompts) sont
+strictement model-agnostic** : aucun ne mentionne `gemma`, `qwen`, `granite`
+ou un nom de slot. Le choix du modèle est une décision d'infrastructure
+(via `model_override` ou config Python), pas une instruction comportementale.
 
 ## Hooks Python
 
@@ -188,14 +224,23 @@ Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpi
 
 ## Paradigmes en BDD
 
-Le système de paradigmes survit en v2, mais purgé : 104 paradigmes actifs
-post-Phase 6 (vs 119 en v1) — les anti-loop incantatoires et les paradigmes
-référençant des outils morts ont été supprimés ou réécrits, 5 nouveaux
-paradigmes introduits (`user_memory_discipline`,
-`nested_delegation_discipline`, `report_back_format`,
-`workspace_progressive_write`, `output_contract_no_inline_dump`).
+Le système de paradigmes survit en v2, mais purgé puis enrichi : **109
+paradigmes actifs** au total. Trajectoire :
 
-Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail.
+- Phase 6 (migrate_100) : passage de 119 v1 → 104 v2 (anti-loop
+  incantatoires retirés, outils morts purgés, 5 nouveaux paradigmes :
+  `user_memory_discipline`, `nested_delegation_discipline`,
+  `report_back_format`, `workspace_progressive_write`,
+  `output_contract_no_inline_dump`).
+- Migration 103 (search quality) : +4 paradigmes
+  (`breadth_before_depth`, `wikipedia_lateral_exploration`,
+  `coverage_check`, `strategist_decomposition_discipline` — ce dernier
+  initialement nommé `parallel_specialists_for_inventory`).
+- Migration 105 (strategist) : +1 paradigme (`strategist_first`) côté
+  router.
+
+Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
+de la purge initiale.
 
 ## Stack
 
@@ -244,13 +289,25 @@ Migrations v2 sous `db/migrations/` :
 - `migrate_102_drop_runtime_tables.sql` — drop `requests`/`artifacts`/
   `conversation_phases`/`sandbox_executions` + colonne `agents.model_override`
   + suppression définitive `archivist`.
+- `migrate_103_search_quality.sql` — 4 paradigmes ciblés sur la qualité
+  des recherches multi-domaine (`breadth_before_depth` côté web-search,
+  `wikipedia_lateral_exploration`, `coverage_check` côté document-builder,
+  `parallel_specialists_for_inventory` initialement côté router).
+- `migrate_104_drop_conv_read_file.sql` — suppression des grants
+  `conv_read_file` (outil redondant avec `workspace_view`, retiré du code).
+- `migrate_105_strategist_agent.sql` — création de l'agent `strategist`
+  (reasoner dédié à la décomposition stratégique), déplacement du
+  paradigme inventory de jean-michel vers strategist, model_override
+  `gemma4:26b` sur les 4 reasoners (strategist + critical-thinker +
+  comparator-specialist + meta-analyst), retour de jean-michel sur
+  MAIN_MODEL.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-sqlite3 jeanmichel.db < db/migrations/migrate_100_paradigm_realignment.sql
-sqlite3 jeanmichel.db < db/migrations/migrate_101_user_memory.sql
-sqlite3 jeanmichel.db < db/migrations/migrate_102_drop_runtime_tables.sql
+for m in 100 101 102 103 104 105; do
+  sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
+done
 ```
 
 ## Profil utilisateur
@@ -343,9 +400,9 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
-12 agents actifs. ~300 tests v2 verts. CLI multi-tour en tous modes,
-`--resume`, `--list-conv`. Dispatcher Tier 0 opérationnel via granite.
-Main loop Tier 1 multi-turn natif. Subagents Tier 2 avec délégation
-imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme utilisateur active.
-Compaction 4 niveaux. Configuration tunable sans recompile via `config.py`
-+ env vars + CLI flags.
+**13 agents actifs** (dont 4 reasoners sur gemma4:26b). ~310 tests v2 verts.
+CLI multi-tour en tous modes, `--resume`, `--list-conv`. Dispatcher Tier 0
+opérationnel via granite. Main loop Tier 1 multi-turn natif. Subagents Tier 2
+avec délégation imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme
+utilisateur active. Compaction 4 niveaux. Configuration tunable sans
+recompile via `config.py` + env vars + CLI flags.
