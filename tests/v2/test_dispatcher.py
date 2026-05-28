@@ -167,6 +167,55 @@ def test_classify_garbage_intent_falls_back():
     assert decision.confidence == "low"
 
 
+def test_classify_coerces_tool_name_in_intent_field():
+    """granite 8b confuses intent and tool — coerce when intent is a valid tool name."""
+    mock = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content='{"intent":"wikipedia_search","tool":"wikipedia_search","args":{"query":"inference"}}',
+            ),
+        ]
+    )
+    decision = classify("qu'est-ce qu'une inférence ?", mock)
+    assert decision.intent == "alexa"
+    assert decision.tool == "wikipedia_search"
+    assert decision.args == {"query": "inference"}
+    assert decision.confidence == "high"
+
+
+def test_classify_coerces_tool_name_in_intent_when_tool_is_null():
+    """If the LLM only set intent (to a tool name) and forgot the tool field."""
+    mock = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content='{"intent":"clock","tool":null,"args":{}}',
+            ),
+        ]
+    )
+    decision = classify("quelle heure ?", mock)
+    assert decision.intent == "alexa"
+    assert decision.tool == "clock"
+    assert decision.confidence == "high"
+
+
+def test_classify_coerces_garbled_intent_when_tool_valid():
+    """intent is None/garbage but tool is a known ALEXA tool — accept it."""
+    mock = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content='{"intent":null,"tool":"weather","args":{"location":"Paris"}}',
+            ),
+        ]
+    )
+    decision = classify("météo Paris", mock)
+    assert decision.intent == "alexa"
+    assert decision.tool == "weather"
+    assert decision.args == {"location": "Paris"}
+
+
 def test_classify_llm_exception_falls_back_to_deep():
     """If the LLM client raises (Ollama hung, etc.), dispatcher doesn't crash."""
 

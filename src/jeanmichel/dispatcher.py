@@ -184,6 +184,11 @@ def _parse_response(raw: str) -> DispatchDecision | None:
     malformed (caller will retry or fallback). When the LLM returns
     `intent="alexa"` with a hallucinated tool name or `tool=null`, we coerce
     to `intent="deep"` with `confidence="low"` per §3 doc 06.
+
+    Tolerant coercions for the small dispatcher LLM (granite 8b confuses
+    `intent` and `tool` regularly) :
+      - intent equals a known tool name → infer alexa, use that tool
+      - intent missing/garbled but tool is a known ALEXA tool → infer alexa
     """
     if not raw or not raw.strip():
         return None
@@ -195,13 +200,22 @@ def _parse_response(raw: str) -> DispatchDecision | None:
         return None
 
     intent = data.get("intent")
-    if intent not in ("alexa", "deep"):
-        return None
-
     tool = data.get("tool")
     args = data.get("args") or {}
     if not isinstance(args, dict):
         args = {}
+
+    # Coercion #1 : intent contains a tool name (e.g. "wikipedia_search").
+    if intent not in ("alexa", "deep") and intent in _ALEXA_TOOLS:
+        tool = tool or intent
+        intent = "alexa"
+
+    # Coercion #2 : intent is null/garbled but tool is recognisable.
+    elif intent not in ("alexa", "deep") and tool in _ALEXA_TOOLS:
+        intent = "alexa"
+
+    if intent not in ("alexa", "deep"):
+        return None
 
     if intent == "alexa":
         if tool is None:

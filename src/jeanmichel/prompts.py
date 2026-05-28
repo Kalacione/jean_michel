@@ -43,6 +43,10 @@ DISPATCH_SYSTEM_PROMPT = """You classify a user request. Reply with strict JSON 
   "args":   { ... }
 }
 
+IMPORTANT: `intent` is ALWAYS one of the two literal strings "alexa" or
+"deep" — never a tool name. The tool name goes in the `tool` field, never
+in `intent`.
+
 intent="alexa" when ONE tool from the list can satisfy the request directly:
   - clock              : current time / date
         args: {"location": "<city>"} when the user names a place
