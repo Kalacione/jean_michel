@@ -24,6 +24,7 @@ from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
 from . import weather as _weather_mod
+from . import web_fetch as _web_fetch_mod
 from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_append as _ws_append_mod
@@ -83,6 +84,7 @@ def build_registry(
         _manage_user_memory_mod.SPEC.name: _manage_user_memory_mod.SPEC,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
+        _web_fetch_mod.SPEC.name: _web_fetch_mod.SPEC,
     }
     if conv_status_spec is not None:
         registry[conv_status_spec.name] = conv_status_spec

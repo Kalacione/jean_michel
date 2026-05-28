@@ -240,6 +240,11 @@ paradigmes actifs** au total. Trajectoire :
   router.
 - Migration 106 (news-specialist) : +1 paradigme
   (`news_freshness_discipline`) côté nouveau specialist.
+- Migration 107 (news routing + web_fetch) : +1 paradigme
+  (`news_first_for_news_briefs`) côté jean-michel, missions de
+  web-search-specialist et news-specialist réécrites pour lever le
+  chevauchement sémantique sur "news", tool `web_fetch` granté aux
+  deux specialists.
 
 Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
 de la purge initiale.
@@ -295,7 +300,15 @@ le LLM voit l'erreur et bascule sur un autre outil.
 | `NEWSDATA_API_KEY`   | `news_latest`, `news_archive` | newsdata.io, free 200 req/jour     |
 
 Les tools `clock`, `weather` (open-meteo), `wikipedia_*`, `web_search`
-(SearXNG local) ne nécessitent pas de clé.
+(SearXNG local), `web_fetch` (readability-lxml) ne nécessitent pas de clé.
+
+**Pattern de recherche en profondeur** : `news_latest` ou `web_search`
+renvoient des URLs + previews courts (snippet ou description). Pour
+lire le texte complet de 1-3 articles intéressants sans consommer de
+crédit supplémentaire, l'agent fait suivre d'un ou plusieurs
+`web_fetch(url=…)` qui extrait l'article via l'algo readability
+(strip nav/footer/ads, plain text). Une seule requête news = jusqu'à
+10 URLs candidates + N lectures profondes.
 
 **Précédence** : un export shell prend le pas sur la valeur du `.env`.
 Le `.env` sert de défaut persistant ; tu peux overrider un run avec
@@ -335,11 +348,17 @@ Migrations v2 sous `db/migrations/` :
   (lookup-tier, default model), grants des nouveaux tools `news_latest`
   + `news_archive`, paradigme `news_freshness_discipline`, ajout aux
   delegation_targets de jean-michel.
+- `migrate_107_news_routing_and_web_fetch.sql` — fix routing
+  news-specialist (mission web-search-specialist sans "news", mission
+  news-specialist value-first, paradigme `news_first_for_news_briefs`
+  côté router, `news_freshness_discipline` réécrit autour du pattern
+  news_latest + web_fetch), grants `web_fetch` à news-specialist +
+  web-search-specialist.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106; do
+for m in 100 101 102 103 104 105 106 107; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
