@@ -161,6 +161,20 @@ def update_conversation_language(conn: sqlite3.Connection, conv_id: str, languag
     )
 
 
+def close_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
+    """Mark a conversation as ``closed`` (idempotent, no error if already closed).
+
+    Called by the CLI at every exit path (Ctrl-D, ``exit``/``quit``, end of
+    ``--once``). ``--resume`` will refuse to re-open a closed conversation,
+    which is the intended UX : starting a new turn requires a new conv.
+    """
+    conn.execute(
+        "UPDATE conversations SET status='closed', modified_at=datetime('now') "
+        "WHERE id=? AND status<>'closed'",
+        (conv_id,),
+    )
+
+
 def list_active_conversations(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
     """Return recent active or awaiting_human conversations, newest first."""
     return conn.execute(

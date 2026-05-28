@@ -626,6 +626,13 @@ def main(argv: list[str] | None = None) -> int:
     session = _build_prompt_session()
     ask_human_cb = make_ask_human(console, session)
 
+    def _close_conv() -> None:
+        try:
+            with db.connect() as conn:
+                db.close_conversation(conn, conv_id)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("close_conversation failed: %s", exc)
+
     # ----- --once : single non-interactive turn -----
     if args.once:
         try:
@@ -644,6 +651,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
             return 1
+        finally:
+            _close_conv()
         return 0
 
     # ----- Interactive loop -----
@@ -656,9 +665,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye.[/]")
+            _close_conv()
             return 0
         if user_input.strip().lower() in {"exit", "quit"}:
             console.print("[dim]bye.[/]")
+            _close_conv()
             return 0
         if not user_input.strip():
             continue
@@ -678,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as exc:  # noqa: BLE001
             console.print(f"[{C_WARN}]✖ orchestration failed: {exc}[/]")
+            _close_conv()
             return 1
 
         # Reload the persisted messages for the next turn.
