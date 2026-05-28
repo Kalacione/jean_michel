@@ -227,22 +227,23 @@ def _activity_snapshot(conn: sqlite3.Connection) -> dict:
 
 
 def _sandbox_snapshot(conn: sqlite3.Connection) -> dict:
-    rows = conn.execute(
-        """SELECT se.command, se.exit_code, se.duration_ms, se.created_at,
-                  a.code AS agent_code
-           FROM sandbox_executions se
-           JOIN requests r ON r.id=se.request_id
-           JOIN agents   a ON a.id=r.agent_id
-           ORDER BY se.id DESC LIMIT 50"""
-    ).fetchall()
+    """Read from the cross-conversation sandbox audit JSONL.
 
-    total = conn.execute("SELECT COUNT(*) AS n FROM sandbox_executions").fetchone()["n"]
-    refused = conn.execute(
-        "SELECT COUNT(*) AS n FROM sandbox_executions WHERE exit_code IS NULL"
-    ).fetchone()["n"]
-    avg_duration = conn.execute(
-        "SELECT AVG(duration_ms) AS avg FROM sandbox_executions WHERE exit_code IS NOT NULL"
-    ).fetchone()["avg"]
+    `conn` is kept in the signature for symmetry with the other snapshot
+    helpers but is not used here — audit data has moved out of SQL
+    (migration 102) into ``~/.jean-michel/sandbox_audit.jsonl``.
+    """
+    from ..persistence import load_sandbox_audit
+
+    entries = load_sandbox_audit()
+    total = len(entries)
+    refused = sum(1 for e in entries if e.get("exit_code") is None)
+    completed = [e for e in entries if e.get("exit_code") is not None]
+    avg_duration = (
+        sum(e.get("duration_ms", 0) for e in completed) / len(completed)
+        if completed else None
+    )
+    recent = entries[-50:]
 
     return {
         "summary": {
@@ -250,7 +251,7 @@ def _sandbox_snapshot(conn: sqlite3.Connection) -> dict:
             "refused": refused,
             "avg_duration_ms": round(avg_duration, 1) if avg_duration else None,
         },
-        "recent": [dict(r) for r in rows],
+        "recent": recent,
     }
 
 

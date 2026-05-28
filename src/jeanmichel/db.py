@@ -119,23 +119,9 @@ def load_delegation_targets(conn: sqlite3.Connection, agent_id: int) -> set[str]
     return {r[0] for r in rows}
 
 
-def record_sandbox_execution(
-    conn: sqlite3.Connection,
-    request_id: str,
-    command: str,
-    exit_code: int | None,
-    duration_ms: int,
-) -> None:
-    """Insert an audit row for a sandbox command execution.
-
-    exit_code=None means the command was refused before execution.
-    """
-    conn.execute(
-        "INSERT INTO sandbox_executions "
-        "(request_id, command, exit_code, duration_ms, created_at) "
-        "VALUES (?, ?, ?, ?, datetime('now'))",
-        (request_id, command, exit_code, duration_ms),
-    )
+# `record_sandbox_execution` was removed when migration 102 dropped the
+# `sandbox_executions` table. Audit now goes to
+# ``~/.jean-michel/sandbox_audit.jsonl`` via ``persistence.append_sandbox_audit``.
 
 
 # ---- Conversations --------------------------------------------------------

@@ -192,6 +192,68 @@ def append_event(conv_folder: Path, event: Any) -> None:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def append_sandbox_audit(
+    request_id: str,
+    command: str,
+    exit_code: int | None,
+    duration_ms: int,
+) -> None:
+    """Append one sandbox execution to the cross-conversation audit log.
+
+    Path : ``config.SANDBOX_AUDIT_LOG`` (default ``~/.jean-michel/sandbox_audit.jsonl``).
+    Replaces the deprecated ``sandbox_executions`` SQL table (dropped in
+    migration 102).
+
+    ``exit_code=None`` means the command was refused before execution
+    (allow-list violation, sandbox start failure, timeout).
+    """
+    from .config import SANDBOX_AUDIT_LOG
+
+    path = SANDBOX_AUDIT_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "request_id": request_id,
+        "command": command,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+    }
+    line = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    with open(path, "ab") as f:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(line)
+            f.flush()
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def load_sandbox_audit(limit: int | None = None) -> list[dict[str, Any]]:
+    """Read entries from the sandbox audit JSONL. Returns [] if absent.
+
+    With ``limit`` set, returns the LAST `limit` entries (chronological order
+    preserved). Used by self_inspect to surface recent activity.
+    """
+    from .config import SANDBOX_AUDIT_LOG
+
+    path = SANDBOX_AUDIT_LOG
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if limit is not None and len(out) > limit:
+        out = out[-limit:]
+    return out
+
+
 def load_events(conv_folder: Path) -> list[dict[str, Any]]:
     """Load and parse all events from `events.jsonl`. Returns [] if absent.
 

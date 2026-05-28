@@ -18,8 +18,9 @@ Per-agent grant checks (two layers):
 2. This handler checks that the first word of the command is in the agent's
    sandbox_grants list — a defense-in-depth check.
 
-Audit: every execution attempt (including refused ones) is recorded in the
-sandbox_executions table via db.record_sandbox_execution.
+Audit: every execution attempt (including refused ones) is appended to the
+cross-conversation `~/.jean-michel/sandbox_audit.jsonl` log via
+`persistence.append_sandbox_audit`.
 """
 
 from __future__ import annotations
@@ -30,8 +31,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ..db import connect as db_connect
-from ..db import record_sandbox_execution
+from ..persistence import append_sandbox_audit
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
 from ._workspace import workspace_root_for
@@ -109,8 +109,7 @@ def make_spec(
         # Check that the first word of the command is in the granted list.
         first_word = command.strip().split()[0] if command.strip() else ""
         if first_word not in sandbox_grants:
-            with db_connect() as conn:
-                record_sandbox_execution(conn, request_id, command, None, 0)
+            append_sandbox_audit(request_id, command, None, 0)
             return tool_error(
                 "command_not_allowed",
                 (
@@ -150,16 +149,14 @@ def make_spec(
             exit_code = result.returncode
         except subprocess.TimeoutExpired:
             duration_ms = _SANDBOX_TIMEOUT_S * 1000
-            with db_connect() as conn:
-                record_sandbox_execution(conn, request_id, command, None, duration_ms)
+            append_sandbox_audit(request_id, command, None, duration_ms)
             return tool_error(
                 "sandbox_timeout",
                 f"Command timed out after {_SANDBOX_TIMEOUT_S}s.",
                 exit_code=None,
             )
 
-        with db_connect() as conn:
-            record_sandbox_execution(conn, request_id, command, exit_code, duration_ms)
+        append_sandbox_audit(request_id, command, exit_code, duration_ms)
 
         return tool_ok(
             f"{first_word!r} exit={exit_code} ({duration_ms}ms)"
