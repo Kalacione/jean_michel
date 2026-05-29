@@ -29,6 +29,12 @@ DB_PATH="${PROJECT_ROOT}/jeanmichel.db"
 SCHEMA_PATH="${PROJECT_ROOT}/db/schema.sql"
 PYTHON_BIN="${PYTHON_BIN:-python3.14}"
 
+# Anchor the Python config layer (config.REPO_ROOT reads JEANMICHEL_HOME, else
+# falls back to the caller's CWD). Exported ONCE so every command — and every
+# subprocess it execs — resolves the DB / conversations/ / user_profile from
+# the repo, regardless of where ./jm.sh was invoked from.
+export JEANMICHEL_HOME="${PROJECT_ROOT}"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -41,6 +47,7 @@ Commands:
   (default)                   Launch the interactive CLI
   --install                   Create venv, install deps, initialize the DB
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
+  --serve                     Launch the web daemon (FastAPI) at http://0.0.0.0:8000
   --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
@@ -114,7 +121,7 @@ cmd_install() {
   echo "[2/3] Installing dependencies"
   pip install --upgrade pip >/dev/null
   pip cache purge >/dev/null 2>&1 || true
-  pip install -e ".[dev]"
+  pip install -e ".[dev,web]"
 
   # ---- database -----------------------------------------------------------
   echo "[3/3] Initializing SQLite database"
@@ -159,8 +166,15 @@ print('  Database created at ${DB_PATH}')
 
 cmd_cli() {
   ensure_venv
-  export JEANMICHEL_HOME="${PROJECT_ROOT}"
   exec jean-michel "$@"
+}
+
+cmd_serve() {
+  # Launch the web daemon (FastAPI + uvicorn) consumed by the Vue frontend.
+  # Runs in the foreground — "un daemon python à la main". Binds 0.0.0.0:8000
+  # by default (override via JEANMICHEL_API_HOST / JEANMICHEL_API_PORT).
+  ensure_venv
+  exec jean-michel-serve "$@"
 }
 
 cmd_export_db() {
@@ -206,7 +220,6 @@ cmd_paradigm_matrix() {
     echo "Run ./jm.sh --install first." >&2
     exit 1
   fi
-  export JEANMICHEL_HOME="${PROJECT_ROOT}"
   exec python "${PROJECT_ROOT}/debug/paradigm_matrix.py" "$@"
 }
 
@@ -217,19 +230,16 @@ cmd_inspect_conv() {
 
 cmd_admin() {
   ensure_venv
-  export JEANMICHEL_HOME="${PROJECT_ROOT}"
   exec python "${PROJECT_ROOT}/debug/admin.py" "$@"
 }
 
 cmd_test() {
   ensure_venv
-  export JEANMICHEL_HOME="${PROJECT_ROOT}"
   exec python -m pytest "${PROJECT_ROOT}/tests" -v "$@"
 }
 
 cmd_meta_analysis() {
   ensure_venv
-  export JEANMICHEL_HOME="${PROJECT_ROOT}"
   # Note (v2 update): self_inspect was split into three scoped tools in
   # migration 015 — self_inspect_config / _activity / _architecture.
   # The v1 prompt referenced a non-existent self_inspect(scope=...) tool.
@@ -331,6 +341,10 @@ case "${COMMAND}" in
   --meta-analysis)
     shift
     cmd_meta_analysis "$@"
+    ;;
+  --serve)
+    shift
+    cmd_serve "$@"
     ;;
   "")
     cmd_cli

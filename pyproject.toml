@@ -22,9 +22,6 @@ dependencies = [
   "readability-lxml>=0.8.1",
   # Neural text-to-speech for the vocal mode (Piper ONNX models)
   "piper-tts>=1.4.0",
-  # Future: web frontend
-  # "fastapi>=0.115.0",
-  # "uvicorn>=0.30.0",
   # SQLite browser (run: sqlite_web jeanmichel.db)
   "sqlite-web>=0.6.0",
 ]
@@ -34,9 +31,18 @@ dev = [
   "pytest>=8.0.0",
   "ruff>=0.5.0",
 ]
+web = [
+  # Async web daemon (./jm.sh --serve) consumed by the Vue/Vuetify frontend.
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  # Auth (S1): password hashing + signed bearer tokens.
+  "argon2-cffi>=23.1.0",
+  "itsdangerous>=2.2.0",
+]
 
 [project.scripts]
 jean-michel = "jeanmichel.cli:main"
+jean-michel-serve = "jeanmichel.api.app:run"
 
 [build-system]
 requires = ["hatchling"]

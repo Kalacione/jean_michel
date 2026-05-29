@@ -424,6 +424,24 @@ def announce_tool_call(tool_name: str) -> bool:
     return speak_async(phrase)
 
 
+def phrase_for_event(event: object) -> str | None:
+    """Map an orchestrator event to the announcement phrase to speak, or None.
+
+    The single source of the event→phrase decision, shared by the CLI emitter
+    and the web daemon (which synthesizes the phrase for the browser). Returns
+    None when the event does not warrant an announcement.
+    """
+    from .events import DelegationStarted, RequestStarted, ToolCallStarted
+
+    if isinstance(event, RequestStarted) and event.depth == 0:
+        return _THINKING_PHRASE
+    if isinstance(event, DelegationStarted):
+        return _DELEGATION_PHRASES.get(event.child_agent, _DELEGATION_DEFAULT_PHRASE)
+    if isinstance(event, ToolCallStarted):
+        return _TOOL_PHRASES.get(event.tool_name)
+    return None
+
+
 def is_available() -> bool:
     """Quick check : can vocal mode actually produce sound right now ?
 

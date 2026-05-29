@@ -13,9 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,10 +29,8 @@ from rich.text import Text
 
 from . import bootstrap as bootstrap_mod
 from . import db
-from . import dispatcher
 from . import persistence
 from .config import (
-    CONVERSATIONS_DIR,
     DISPATCH_MODEL,
     MAIN_MODEL,
     UserProfile,
@@ -54,13 +50,8 @@ from .events import (
     WorkingBudgetUpdate,
 )
 from .llm import OllamaClient
-from .orchestrator_v2 import (
-    AgentSpec,
-    load_agent_spec_v2,
-    run_main_loop,
-)
-from .prompts import render_user_memory_index
-from .tools import build_registry
+from .service import conversation as conversation_svc
+from .service import turn_runner
 
 _log = logging.getLogger(__name__)
 
@@ -221,27 +212,6 @@ def make_ask_human(console: Console, session: PromptSession) -> Callable[[str, s
 # ---- Conversation lifecycle ---------------------------------------------
 
 
-def _make_conv_folder(conv_id: str) -> Path:
-    name = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M") + f"_{conv_id}"
-    folder = CONVERSATIONS_DIR / name
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
-
-
-def _create_new_conversation(mode: str) -> tuple[str, Path]:
-    conv_id = uuid.uuid4().hex
-    conv_folder = _make_conv_folder(conv_id)
-    with db.connect() as conn:
-        db.create_conversation(
-            conn,
-            conv_id=conv_id,
-            folder_path=str(conv_folder),
-            user_language=None,
-            mode=mode,
-        )
-    return conv_id, conv_folder
-
-
 def _resolve_resume(
     resume_arg: str, console: Console
 ) -> tuple[str, Path, str] | tuple[None, None, None]:
@@ -288,55 +258,67 @@ def run_one_turn(
 
     Returns the final user-facing answer (also printed as a Panel here).
     """
-    user_lang = dispatcher.detect_language(user_text)
+    # Spinner managed by hand so we can pause it during event rendering,
+    # dispatch routing display and ask_human prompts. The orchestrator is
+    # driven by ``turn_runner.run_turn`` ; here we only present its output.
+    status = console.status("[dim]thinking…[/]", spinner="dots")
+    status.start()
 
-    # Update conversation language opportunistically.
-    if user_lang and user_lang != "und":
+    def emitter(event: Any) -> None:
+        status.stop()
         try:
-            with db.connect() as conn:
-                db.update_conversation_language(conn, conv_id, user_lang)
-        except Exception as exc:  # noqa: BLE001
-            _log.debug("update_conversation_language failed: %s", exc)
+            render_event(console, event, mode=mode)
+            # Vocal mode : announce thinking start, delegations and direct
+            # research tool calls via async TTS so the user hears progress
+            # while the LLM works.
+            if mode == "vocal":
+                from . import voice
+                phrase = voice.phrase_for_event(event)
+                if phrase:
+                    voice.speak_async(phrase)
+        finally:
+            status.start()
 
-    # --- Tier 0 : dispatch (under spinner) ---
-    # In chat / vocal modes we pass the conversation history so the small
-    # dispatcher LLM can resolve follow-ups ("et pour demain ?" → still
-    # weather, with the previous location). In analyse mode each question
-    # is treated standalone — that's the documented contract.
-    dispatcher_history = initial_messages if mode in ("chat", "vocal") else None
-    with console.status("[dim]thinking…[/]", spinner="dots"):
-        decision = dispatcher.classify(
-            user_text, dispatch_llm, history=dispatcher_history
-        )
+    # Pause the spinner while waiting on a human answer.
+    def ask_human_with_pause(question: str, why: str) -> str:
+        status.stop()
+        try:
+            return ask_human_cb(question, why)
+        finally:
+            status.start()
 
-    if decision.intent == "alexa":
-        console.print(
-            f"[dim]→ tier 0 alexa · tool={decision.tool} · "
-            f"confidence={decision.confidence}[/]"
-        )
-        with console.status("[dim]thinking…[/]", spinner="dots"):
-            answer = dispatcher.execute_alexa(
-                decision,
-                dispatch_llm,
-                user_lang=user_lang,
-                user_profile=profile,
-            )
-    else:
-        console.print(
-            f"[dim]→ tier 1 deep · confidence={decision.confidence}[/]"
-        )
-        answer = _run_deep_turn(
+    # Print the Tier-0 routing line once the dispatch decision is known.
+    def on_dispatch(decision: Any) -> None:
+        status.stop()
+        try:
+            if decision.intent == "alexa":
+                console.print(
+                    f"[dim]→ tier 0 alexa · tool={decision.tool} · "
+                    f"confidence={decision.confidence}[/]"
+                )
+            else:
+                console.print(
+                    f"[dim]→ tier 1 deep · confidence={decision.confidence}[/]"
+                )
+        finally:
+            status.start()
+
+    try:
+        answer = turn_runner.run_turn(
             user_text=user_text,
             conv_folder=conv_folder,
             conv_id=conv_id,
+            mode=mode,
+            dispatch_llm=dispatch_llm,
             main_llm=main_llm,
             profile=profile,
-            mode=mode,
-            user_lang=user_lang,
-            console=console,
-            ask_human_cb=ask_human_cb,
             initial_messages=initial_messages,
+            event_emitter=emitter,
+            ask_human_callback=ask_human_with_pause,
+            on_dispatch=on_dispatch,
         )
+    finally:
+        status.stop()
 
     # Final answer panel.
     console.print()
@@ -365,153 +347,6 @@ def run_one_turn(
                 "paplay/aplay/ffplay is installed (see voice_models/README.md).[/]"
             )
 
-    return answer
-
-
-def _run_deep_turn(
-    *,
-    user_text: str,
-    conv_folder: Path,
-    conv_id: str,
-    main_llm: OllamaClient,
-    profile: UserProfile,
-    mode: str,
-    user_lang: str,
-    console: Console,
-    ask_human_cb: Callable[[str, str], str],
-    initial_messages: list[dict] | None,
-) -> str:
-    """Engage Tier 1 : load jean-michel spec, build registry, run the main loop.
-
-    Manages a "thinking…" spinner that pauses for event rendering and
-    ``ask_human`` prompts — so the user always knows whether the system is
-    waiting on the LLM or on them.
-    """
-    with db.connect() as conn:
-        user_memory_block, count = render_user_memory_index(conn)
-        if count >= 90:  # cf. USER_MEMORY_WARN_AT
-            render_event(
-                console,
-                MemoryNearCapacity(current_count=count, limit=100),
-                mode=mode,
-            )
-        main_agent = load_agent_spec_v2(
-            conn,
-            "jean-michel",
-            mode=mode,
-            user_profile_text=profile.render(),
-            user_memory_block=user_memory_block,
-            user_language=user_lang,
-        )
-
-    def agent_resolver(code: str) -> AgentSpec | None:
-        try:
-            with db.connect() as conn:
-                u_mem, _ = render_user_memory_index(conn)
-                return load_agent_spec_v2(
-                    conn,
-                    code,
-                    mode=mode,
-                    user_profile_text=profile.render(),
-                    user_memory_block=u_mem,
-                    user_language=user_lang,
-                )
-        except (KeyError, Exception) as exc:  # noqa: BLE001
-            _log.warning("agent_resolver(%r) failed: %s", code, exc)
-            return None
-
-    # Tools registry — built once per turn. Permissive grants ; per-agent
-    # filtering is enforced by the PreToolUse hook via AgentSpec.tool_grants.
-    #
-    # For bash_sandbox specifically, we load the UNION of `agent_sandbox_grants`
-    # commands across all active agents and pass it as the sandbox whitelist.
-    # The bash_sandbox tool spec then exists in the registry (otherwise it
-    # would be silently absent for agents that have it in their `agent_tools`,
-    # causing the LLM to fail at runtime). Per-agent command restriction is
-    # currently best-effort — see TODO below.
-    #
-    # TODO (deferred) : a single agent can today execute any command from the
-    # union (not strictly its own subset) because the bash_sandbox handler
-    # captures the superset in a closure. Acceptable while ONLY `code-runner`
-    # has sandbox grants ; revisit when a second agent gets sandbox access.
-    with db.connect() as _grants_conn:
-        sandbox_grants = sorted({
-            r["command"]
-            for r in _grants_conn.execute(
-                "SELECT DISTINCT command FROM agent_sandbox_grants"
-            )
-        })
-
-    tools_registry = build_registry(
-        conv_folder=conv_folder,
-        has_workspace_write=True,
-        conv_id=conv_id,
-        request_id_provider=lambda: "main",
-        sandbox_grants=sandbox_grants,
-        sandbox_image=None,
-        agent_role="router",
-    )
-
-    # Spinner managed by hand so we can pause it during event rendering
-    # and ask_human prompts. The legacy CLI used `with console.status()` +
-    # generator yielding ; v2 uses a callback so we drive start/stop ourselves.
-    status = console.status("[dim]thinking…[/]", spinner="dots")
-    status.start()
-
-    def emitter(event: Any) -> None:
-        status.stop()
-        try:
-            render_event(console, event, mode=mode)
-            # Vocal mode : announce thinking start, delegations, and direct
-            # research tool calls via async TTS so the user hears progress
-            # while the LLM works.
-            if mode == "vocal":
-                from . import voice
-                if isinstance(event, RequestStarted) and event.depth == 0:
-                    # Start of a DEEP turn — no ALEXA shortcut. Tell the
-                    # user we're thinking so they don't stare at silence
-                    # during a long generation with no tool calls.
-                    voice.announce_thinking()
-                elif isinstance(event, DelegationStarted):
-                    voice.announce_delegation(event.child_agent)
-                elif isinstance(event, ToolCallStarted):
-                    voice.announce_tool_call(event.tool_name)
-        finally:
-            status.start()
-
-    # Pause the spinner while waiting on a human answer.
-    def ask_human_with_pause(question: str, why: str) -> str:
-        status.stop()
-        try:
-            return ask_human_cb(question, why)
-        finally:
-            status.start()
-
-    # If we're resuming, replace messages[0] with a freshly rendered
-    # system prompt to pick up user_memory updates.
-    seeded_messages: list[dict] | None = None
-    if initial_messages:
-        seeded_messages = list(initial_messages)
-        if seeded_messages and seeded_messages[0].get("role") == "system":
-            seeded_messages[0] = {
-                "role": "system",
-                "content": main_agent.system_prompt,
-            }
-
-    try:
-        answer = run_main_loop(
-            conv_folder=conv_folder,
-            agent=main_agent,
-            tools_registry=tools_registry,
-            llm_client=main_llm,
-            user_text=user_text,
-            initial_messages=seeded_messages,
-            ask_human_callback=ask_human_with_pause,
-            agent_resolver=agent_resolver,
-            event_emitter=emitter,
-        )
-    finally:
-        status.stop()
     return answer
 
 
@@ -660,7 +495,7 @@ def main(argv: list[str] | None = None) -> int:
         initial_messages = persistence.load_messages(conv_folder)
         console.print(f"[dim]Resumed conversation {conv_id[:12]} (mode: {conv_mode})[/]\n")
     else:
-        conv_id, conv_folder = _create_new_conversation(args.mode)
+        conv_id, conv_folder = conversation_svc.create_conversation(args.mode)
 
     render_splash(console, args.main_model, args.dispatch_model, args.mode)
 

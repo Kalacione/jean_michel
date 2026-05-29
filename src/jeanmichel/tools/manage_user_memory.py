@@ -1,8 +1,9 @@
 """Tool : manage_user_memory — long-term cross-conversation memory.
 
-A single multi-action tool (cf. §10 doc 06). Operates on the `user_memory`
-table created by `migrate_101_user_memory.sql`. Stateless : no conv_folder,
-no per-agent context — the table is global to the user.
+A single multi-action tool (cf. §10 doc 06). The actual CRUD + validation
+lives in ``jeanmichel.service.memory`` (shared with the web API) ; this module
+is the LLM-facing wrapper that turns data / errors into tool_ok/tool_error
+strings.
 
 Actions :
 
@@ -26,339 +27,13 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import UTC, datetime
-from typing import Any
 
 from ..db import connect as db_connect
+from ..service import memory
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
 
 _log = logging.getLogger(__name__)
-
-
-# ---- Constants -----------------------------------------------------------
-
-_VALID_TYPES: frozenset[str] = frozenset({"user", "feedback", "project", "reference"})
-_VALID_ACTIONS: frozenset[str] = frozenset({"save", "recall", "list", "update", "delete"})
-
-# Hard caps mentioned in §10 doc 06 — defensive limits the tool enforces.
-_MAX_TITLE_CHARS = 60
-_MAX_DESCRIPTION_CHARS = 150
-_MAX_CONTENT_CHARS = 1_000
-
-
-def _now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-# ---- Action implementations ----------------------------------------------
-
-
-def _action_save(
-    conn: sqlite3.Connection,
-    *,
-    type_: str,
-    code: str,
-    title: str,
-    description: str,
-    content: str,
-) -> str:
-    err = _validate_save_args(type_, code, title, description, content)
-    if err is not None:
-        return err
-
-    existing = conn.execute(
-        "SELECT id, type FROM user_memory WHERE type=? AND code=?",
-        (type_, code),
-    ).fetchone()
-    if existing is not None:
-        return tool_error(
-            "already_exists",
-            (
-                f"An entry with type='{type_}' and code='{code}' already exists. "
-                "Use action='update' to modify it."
-            ),
-            entry_type=type_,
-            entry_code=code,
-        )
-
-    now = _now()
-    conn.execute(
-        "INSERT INTO user_memory "
-        "(type, code, title, description, content, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (type_, code, title, description, content, now, now),
-    )
-    return tool_ok(
-        f"Saved {type_}/{code}: {title}",
-        action="save",
-        entry_type=type_,
-        entry_code=code,
-    )
-
-
-def _action_recall(conn: sqlite3.Connection, *, code: str) -> str:
-    if not code or not code.strip():
-        return tool_error("invalid_args", "code is required for recall.")
-
-    rows = conn.execute(
-        "SELECT id, type, code, title, description, content, created_at, modified_at "
-        "FROM user_memory WHERE code=? "
-        "ORDER BY modified_at DESC",
-        (code,),
-    ).fetchall()
-    if not rows:
-        return tool_error("not_found", f"No entry with code='{code}'.", entry_code=code)
-
-    if len(rows) == 1:
-        r = rows[0]
-        return tool_ok(
-            f"Recalled {r['type']}/{r['code']}: {r['title']}",
-            entry={
-                "id": r["id"],
-                "type": r["type"],
-                "code": r["code"],
-                "title": r["title"],
-                "description": r["description"],
-                "content": r["content"],
-                "created_at": r["created_at"],
-                "modified_at": r["modified_at"],
-            },
-        )
-
-    # Multiple types share this code — return the most recent and report all.
-    primary = rows[0]
-    others = [
-        {"type": r["type"], "modified_at": r["modified_at"]}
-        for r in rows[1:]
-    ]
-    return tool_ok(
-        (
-            f"Multiple entries share code='{code}' (across types: "
-            f"{[r['type'] for r in rows]}). Returning most recent."
-        ),
-        entry={
-            "id": primary["id"],
-            "type": primary["type"],
-            "code": primary["code"],
-            "title": primary["title"],
-            "description": primary["description"],
-            "content": primary["content"],
-            "created_at": primary["created_at"],
-            "modified_at": primary["modified_at"],
-        },
-        other_matches=others,
-    )
-
-
-def _action_list(conn: sqlite3.Connection, *, type_filter: str | None = None) -> str:
-    if type_filter is not None and type_filter not in _VALID_TYPES:
-        return tool_error(
-            "invalid_type",
-            f"type must be one of {sorted(_VALID_TYPES)}",
-            received=type_filter,
-        )
-
-    if type_filter:
-        rows = conn.execute(
-            "SELECT id, type, code, title, description, modified_at "
-            "FROM user_memory WHERE type=? "
-            "ORDER BY modified_at DESC",
-            (type_filter,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, type, code, title, description, modified_at "
-            "FROM user_memory "
-            "ORDER BY modified_at DESC",
-        ).fetchall()
-
-    entries = [
-        {
-            "id": r["id"],
-            "type": r["type"],
-            "code": r["code"],
-            "title": r["title"],
-            "description": r["description"],
-            "modified_at": r["modified_at"],
-        }
-        for r in rows
-    ]
-    summary = (
-        f"{len(entries)} entries"
-        + (f" of type='{type_filter}'" if type_filter else "")
-    )
-    return tool_ok(summary, count=len(entries), entries=entries)
-
-
-def _action_update(
-    conn: sqlite3.Connection,
-    *,
-    code: str,
-    title: str | None,
-    description: str | None,
-    content: str | None,
-    type_: str | None = None,
-) -> str:
-    if not code or not code.strip():
-        return tool_error("invalid_args", "code is required for update.")
-    if title is None and description is None and content is None:
-        return tool_error(
-            "invalid_args",
-            "update requires at least one of: title, description, content.",
-        )
-
-    # Validate sizes if provided.
-    if title is not None and len(title) > _MAX_TITLE_CHARS:
-        return tool_error(
-            "title_too_long",
-            f"title must be <= {_MAX_TITLE_CHARS} chars.",
-            received=len(title),
-        )
-    if description is not None and len(description) > _MAX_DESCRIPTION_CHARS:
-        return tool_error(
-            "description_too_long",
-            f"description must be <= {_MAX_DESCRIPTION_CHARS} chars.",
-            received=len(description),
-        )
-    if content is not None and len(content) > _MAX_CONTENT_CHARS:
-        return tool_error(
-            "content_too_long",
-            f"content must be <= {_MAX_CONTENT_CHARS} chars.",
-            received=len(content),
-        )
-
-    # Resolve target row(s) by code (+ optional type disambiguation).
-    if type_ is not None:
-        existing = conn.execute(
-            "SELECT id, type, code FROM user_memory WHERE type=? AND code=?",
-            (type_, code),
-        ).fetchall()
-    else:
-        existing = conn.execute(
-            "SELECT id, type, code FROM user_memory WHERE code=?",
-            (code,),
-        ).fetchall()
-    if not existing:
-        return tool_error("not_found", f"No entry with code='{code}'.", entry_code=code)
-    if len(existing) > 1 and type_ is None:
-        return tool_error(
-            "ambiguous",
-            (
-                f"Multiple entries share code='{code}'. "
-                "Specify type to disambiguate."
-            ),
-            matches=[{"type": r["type"], "id": r["id"]} for r in existing],
-        )
-
-    target_id = existing[0]["id"]
-    sets: list[str] = []
-    params: list[Any] = []
-    if title is not None:
-        sets.append("title=?")
-        params.append(title)
-    if description is not None:
-        sets.append("description=?")
-        params.append(description)
-    if content is not None:
-        sets.append("content=?")
-        params.append(content)
-    sets.append("modified_at=?")
-    params.append(_now())
-    params.append(target_id)
-
-    conn.execute(
-        f"UPDATE user_memory SET {', '.join(sets)} WHERE id=?",
-        params,
-    )
-    return tool_ok(
-        f"Updated entry id={target_id} (code='{code}').",
-        id=target_id,
-        code=code,
-    )
-
-
-def _action_delete(
-    conn: sqlite3.Connection,
-    *,
-    code: str,
-    type_: str | None = None,
-) -> str:
-    if not code or not code.strip():
-        return tool_error("invalid_args", "code is required for delete.")
-
-    if type_ is not None:
-        existing = conn.execute(
-            "SELECT id FROM user_memory WHERE type=? AND code=?",
-            (type_, code),
-        ).fetchall()
-    else:
-        existing = conn.execute(
-            "SELECT id, type FROM user_memory WHERE code=?",
-            (code,),
-        ).fetchall()
-    if not existing:
-        return tool_error("not_found", f"No entry with code='{code}'.", entry_code=code)
-    if len(existing) > 1 and type_ is None:
-        return tool_error(
-            "ambiguous",
-            f"Multiple entries share code='{code}'. Specify type to disambiguate.",
-            matches=[{"type": r["type"], "id": r["id"]} for r in existing],
-        )
-
-    target_id = existing[0]["id"]
-    conn.execute("DELETE FROM user_memory WHERE id=?", (target_id,))
-    return tool_ok(
-        f"Deleted entry id={target_id} (code='{code}').",
-        id=target_id,
-        code=code,
-    )
-
-
-# ---- Validation helpers --------------------------------------------------
-
-
-def _validate_save_args(
-    type_: str, code: str, title: str, description: str, content: str
-) -> str | None:
-    if type_ not in _VALID_TYPES:
-        return tool_error(
-            "invalid_type",
-            f"type must be one of {sorted(_VALID_TYPES)}.",
-            received=type_,
-        )
-    if not code or not code.strip():
-        return tool_error("invalid_args", "code is required.")
-    if " " in code:
-        return tool_error(
-            "invalid_code",
-            "code must not contain spaces. Use kebab-case (e.g. 'unity-montreal').",
-        )
-    if not title or not title.strip():
-        return tool_error("invalid_args", "title is required.")
-    if not description or not description.strip():
-        return tool_error("invalid_args", "description is required.")
-    if not content or not content.strip():
-        return tool_error("invalid_args", "content is required.")
-    if len(title) > _MAX_TITLE_CHARS:
-        return tool_error(
-            "title_too_long",
-            f"title must be <= {_MAX_TITLE_CHARS} chars.",
-            received=len(title),
-        )
-    if len(description) > _MAX_DESCRIPTION_CHARS:
-        return tool_error(
-            "description_too_long",
-            f"description must be <= {_MAX_DESCRIPTION_CHARS} chars.",
-            received=len(description),
-        )
-    if len(content) > _MAX_CONTENT_CHARS:
-        return tool_error(
-            "content_too_long",
-            f"content must be <= {_MAX_CONTENT_CHARS} chars.",
-            received=len(content),
-        )
-    return None
 
 
 # ---- Handler -------------------------------------------------------------
@@ -373,17 +48,17 @@ def _handler(
     content: str | None = None,
 ) -> str:
     """Dispatch on ``action`` and run the SQL within a single transaction."""
-    if action not in _VALID_ACTIONS:
+    if action not in memory.VALID_ACTIONS:
         return tool_error(
             "invalid_action",
-            f"action must be one of {sorted(_VALID_ACTIONS)}.",
+            f"action must be one of {sorted(memory.VALID_ACTIONS)}.",
             received=action,
         )
 
     try:
         with db_connect() as conn:
             if action == "save":
-                return _action_save(
+                saved = memory.save(
                     conn,
                     type_=type or "",
                     code=code or "",
@@ -391,12 +66,46 @@ def _handler(
                     description=description or "",
                     content=content or "",
                 )
+                return tool_ok(
+                    f"Saved {saved['type']}/{saved['code']}: {saved['title']}",
+                    action="save",
+                    entry_type=saved["type"],
+                    entry_code=saved["code"],
+                )
             if action == "recall":
-                return _action_recall(conn, code=code or "")
+                rows = memory.recall(conn, code=code or "")
+                if not rows:
+                    return tool_error(
+                        "not_found",
+                        f"No entry with code='{code or ''}'.",
+                        entry_code=code or "",
+                    )
+                if len(rows) == 1:
+                    r = rows[0]
+                    return tool_ok(
+                        f"Recalled {r['type']}/{r['code']}: {r['title']}",
+                        entry=r,
+                    )
+                primary = rows[0]
+                others = [
+                    {"type": r["type"], "modified_at": r["modified_at"]} for r in rows[1:]
+                ]
+                return tool_ok(
+                    (
+                        f"Multiple entries share code='{code}' (across types: "
+                        f"{[r['type'] for r in rows]}). Returning most recent."
+                    ),
+                    entry=primary,
+                    other_matches=others,
+                )
             if action == "list":
-                return _action_list(conn, type_filter=type)
+                entries = memory.list_(conn, type_filter=type)
+                summary = (
+                    f"{len(entries)} entries" + (f" of type='{type}'" if type else "")
+                )
+                return tool_ok(summary, count=len(entries), entries=entries)
             if action == "update":
-                return _action_update(
+                target_id = memory.update(
                     conn,
                     code=code or "",
                     title=title,
@@ -404,8 +113,20 @@ def _handler(
                     content=content,
                     type_=type,
                 )
+                return tool_ok(
+                    f"Updated entry id={target_id} (code='{code}').",
+                    id=target_id,
+                    code=code,
+                )
             if action == "delete":
-                return _action_delete(conn, code=code or "", type_=type)
+                target_id = memory.delete(conn, code=code or "", type_=type)
+                return tool_ok(
+                    f"Deleted entry id={target_id} (code='{code}').",
+                    id=target_id,
+                    code=code,
+                )
+    except memory.MemoryOpError as exc:
+        return tool_error(exc.code, exc.message, **exc.extra)
     except sqlite3.IntegrityError as exc:
         return tool_error("integrity_error", str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -437,12 +158,12 @@ SPEC = ToolSpec(
         "properties": {
             "action": {
                 "type": "string",
-                "enum": sorted(_VALID_ACTIONS),
+                "enum": sorted(memory.VALID_ACTIONS),
                 "description": "Which operation to perform.",
             },
             "type": {
                 "type": "string",
-                "enum": sorted(_VALID_TYPES),
+                "enum": sorted(memory.VALID_TYPES),
                 "description": (
                     "Entry category. Required for save. Optional for list "
                     "(filter), update/delete (disambiguation)."
@@ -457,19 +178,21 @@ SPEC = ToolSpec(
             },
             "title": {
                 "type": "string",
-                "description": f"Short title (<= {_MAX_TITLE_CHARS} chars). Required for save.",
+                "description": (
+                    f"Short title (<= {memory.MAX_TITLE_CHARS} chars). Required for save."
+                ),
             },
             "description": {
                 "type": "string",
                 "description": (
                     f"One-line hook injected into the prompt index "
-                    f"(<= {_MAX_DESCRIPTION_CHARS} chars). Required for save."
+                    f"(<= {memory.MAX_DESCRIPTION_CHARS} chars). Required for save."
                 ),
             },
             "content": {
                 "type": "string",
                 "description": (
-                    f"Full markdown body (<= {_MAX_CONTENT_CHARS} chars). "
+                    f"Full markdown body (<= {memory.MAX_CONTENT_CHARS} chars). "
                     "Required for save. Loaded on demand via recall."
                 ),
             },
