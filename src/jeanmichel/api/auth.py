@@ -118,14 +118,19 @@ def current_user(authorization: str | None = Header(default=None)) -> dict[str, 
 
 def require_conversation_owner(
     conversation_id: str, user: dict[str, Any] = Depends(current_user)
-) -> str:
-    """Guard : 404 if the conversation is unknown, 403 if not owned by the user."""
+) -> Any:
+    """Guard : return the conversation row. 404 if unknown, 403 if not owned.
+
+    Returning the row (with ``folder_path``) lets read endpoints avoid a second
+    lookup. sqlite3.Row keeps its values after the connection closes.
+    """
     with db.connect() as conn:
-        if db.get_conversation(conn, conversation_id) is None:
+        row = db.get_conversation(conn, conversation_id)
+        if row is None:
             raise HTTPException(status_code=404, detail="conversation not found")
-        if not db.user_owns_conversation(conn, user["id"], conversation_id):
+        if not db.user_owns_conversation(conn, user["id"], row["id"]):
             raise HTTPException(status_code=403, detail="not your conversation")
-    return conversation_id
+    return row
 
 
 # ---- User-creation CLI ----------------------------------------------------

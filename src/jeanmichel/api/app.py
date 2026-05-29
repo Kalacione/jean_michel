@@ -23,11 +23,15 @@ DEFAULT_PORT = 8000
 
 def create_app() -> Any:
     """Build the FastAPI app. Imports web deps lazily (optional dependency)."""
+    from pathlib import Path
+
     from fastapi import Depends, FastAPI, HTTPException
     from pydantic import BaseModel
 
-    from .. import db
+    from .. import db, persistence
     from ..service import conversation as conversation_svc
+    from ..service import memory as memory_svc
+    from ..service import workspace as workspace_svc
     from . import auth
 
     app = FastAPI(title="Jean-Michel API", version="0.1.0")
@@ -78,18 +82,70 @@ def create_app() -> Any:
         return {"conversations": [dict(r) for r in rows]}
 
     @app.get("/api/conversations/{conversation_id}")
-    def get_conversation(
-        conversation_id: str = Depends(auth.require_conversation_owner),
+    def get_conversation(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {
+            "id": conv["id"],
+            "mode": conv["mode"],
+            "status": conv["status"],
+            "user_language": conv["user_language"],
+        }
+
+    @app.get("/api/conversations/{conversation_id}/messages")
+    def get_messages(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"messages": persistence.load_messages(Path(conv["folder_path"]))}
+
+    @app.get("/api/conversations/{conversation_id}/events")
+    def get_events(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"events": persistence.load_events(Path(conv["folder_path"]))}
+
+    @app.get("/api/conversations/{conversation_id}/state")
+    def get_state(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"state": persistence.load_state(Path(conv["folder_path"]))}
+
+    @app.get("/api/conversations/{conversation_id}/workspace")
+    def get_workspace(
+        sub_path: str = "", conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        try:
+            return workspace_svc.list_tree(Path(conv["folder_path"]), sub_path)
+        except workspace_svc.WorkspaceError as exc:
+            raise HTTPException(
+                status_code=404 if exc.code == "not_found" else 400, detail=exc.message
+            ) from exc
+
+    @app.get("/api/conversations/{conversation_id}/workspace/file")
+    def get_workspace_file(
+        path: str, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        try:
+            return workspace_svc.read_file(Path(conv["folder_path"]), path)
+        except workspace_svc.WorkspaceError as exc:
+            status = {"not_found": 404, "not_utf8": 415}.get(exc.code, 400)
+            raise HTTPException(status_code=status, detail=exc.message) from exc
+
+    # ---- user memory (read ; global, but auth-gated) ---------------------
+
+    @app.get("/api/memory")
+    def list_memory(
+        type: str | None = None, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                entries = memory_svc.list_(conn, type_filter=type)
+        except memory_svc.MemoryOpError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+        return {"entries": entries}
+
+    @app.get("/api/memory/{type}/{code}")
+    def recall_memory(
+        type: str, code: str, user: dict = Depends(auth.current_user)
     ) -> dict[str, Any]:
         with db.connect() as conn:
-            row = db.get_conversation(conn, conversation_id)
-        # require_conversation_owner already 404s on unknown, so row is set.
-        return {
-            "id": row["id"],
-            "mode": row["mode"],
-            "status": row["status"],
-            "user_language": row["user_language"],
-        }
+            rows = memory_svc.recall(conn, code=code)
+        match = next((r for r in rows if r["type"] == type), None)
+        if match is None:
+            raise HTTPException(status_code=404, detail=f"no {type}/{code} entry")
+        return {"entry": match}
 
     return app
 
