@@ -48,6 +48,7 @@ Commands:
   --install                   Create venv, install deps, initialize the DB
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
   --serve                     Launch the web daemon (FastAPI) at http://0.0.0.0:8000
+  --create-user <username>    Create a web frontend user (prompts for password)
   --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
@@ -175,6 +176,13 @@ cmd_serve() {
   # by default (override via JEANMICHEL_API_HOST / JEANMICHEL_API_PORT).
   ensure_venv
   exec jean-michel-serve "$@"
+}
+
+cmd_create_user() {
+  # Create a web frontend user (prompts for a password). Usage:
+  #   ./jm.sh --create-user <username>
+  ensure_venv
+  exec python -m jeanmichel.api.auth create-user "$@"
 }
 
 cmd_export_db() {
@@ -345,6 +353,10 @@ case "${COMMAND}" in
   --serve)
     shift
     cmd_serve "$@"
+    ;;
+  --create-user)
+    shift
+    cmd_create_user "$@"
     ;;
   "")
     cmd_cli

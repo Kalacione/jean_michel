@@ -186,6 +186,63 @@ def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite
     return row
 
 
+# ---- Web users + conversation ownership (web frontend, migrate_112) -------
+
+def create_web_user(conn: sqlite3.Connection, username: str, password_hash: str) -> int:
+    """Insert a web user. Returns the new id. Raises IntegrityError on dup username."""
+    cur = conn.execute(
+        "INSERT INTO web_users (username, password_hash, created_at) VALUES (?, ?, ?)",
+        (username, password_hash, _now()),
+    )
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+def get_web_user_by_username(conn: sqlite3.Connection, username: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT id, username, password_hash, created_at FROM web_users WHERE username=?",
+        (username,),
+    ).fetchone()
+
+
+def associate_conversation_user(
+    conn: sqlite3.Connection, user_id: int, conversation_id: str
+) -> None:
+    """Link a conversation to its owner. Idempotent. The CLI never calls this."""
+    conn.execute(
+        "INSERT OR IGNORE INTO conversation_users (user_id, conversation_id, created_at) "
+        "VALUES (?, ?, ?)",
+        (user_id, conversation_id, _now()),
+    )
+
+
+def list_conversations_for_user(
+    conn: sqlite3.Connection, user_id: int, limit: int = 50
+) -> list[sqlite3.Row]:
+    """Conversations owned by ``user_id`` (all statuses), newest first.
+
+    Web-scoped : only conversations associated to this user are returned, so
+    Alice never sees Bob's — and CLI conversations (no association) are absent.
+    """
+    return conn.execute(
+        "SELECT c.id, c.mode, c.status, c.user_language, c.created_at, c.modified_at "
+        "FROM conversations c "
+        "JOIN conversation_users cu ON cu.conversation_id = c.id "
+        "WHERE cu.user_id = ? "
+        "ORDER BY c.modified_at DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+
+
+def user_owns_conversation(
+    conn: sqlite3.Connection, user_id: int, conversation_id: str
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM conversation_users WHERE user_id=? AND conversation_id=?",
+        (user_id, conversation_id),
+    ).fetchone()
+    return row is not None
+
+
 # ---- Requests -------------------------------------------------------------
 
 def create_request(conn: sqlite3.Connection, *, req_id: str, conv_id: str,

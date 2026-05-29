@@ -425,11 +425,15 @@ Migrations v2 sous `db/migrations/` :
 - `migrate_111_code_runner_to_reasoner.sql` — `code-runner` rejoint
   les reasoners (`model_override='gemma4:26b'`). L'écriture de code
   est du raisonnement, pas du lookup.
+- `migrate_112_web_users.sql` — support multi-utilisateur du frontal web
+  (additif) : tables `web_users` + `conversation_users` (association
+  user ↔ conversation). Le CLI ne crée pas d'association ; ses conversations
+  restent invisibles au frontal web. Cf. `DevNotes/WEBUI/01_audit_api_async_webui.md`.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108 109 110 111; do
+for m in 100 101 102 103 104 105 106 107 108 109 110 111 112; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```

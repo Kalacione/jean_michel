@@ -48,6 +48,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_109_code_runner_routing_and_sandbox.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_110_syntax_check_before_run.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_111_code_runner_to_reasoner.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
     yield conn
     conn.close()
 
@@ -251,6 +252,34 @@ def test_migrate_102_drops_are_idempotent(tmp_path):
     }
     assert "requests" not in tables
     assert "artifacts" not in tables
+    conn.close()
+
+
+# ---- migrate_112 : web users + conversation ownership --------------------
+
+
+def test_web_users_tables_present(v2_migrated_db):
+    """migrate_112 adds the multi-user web tables."""
+    tables = {
+        r["name"]
+        for r in v2_migrated_db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    assert "web_users" in tables
+    assert "conversation_users" in tables
+
+
+def test_migrate_112_idempotent(tmp_path):
+    """migrate_112 (CREATE ... IF NOT EXISTS) can be applied twice."""
+    db_path = tmp_path / "idem112.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _apply_sql(conn, _ROOT / "db" / "schema_v1_baseline.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
+    row = conn.execute("SELECT COUNT(*) AS c FROM web_users").fetchone()
+    assert row["c"] == 0
     conn.close()
 
 
