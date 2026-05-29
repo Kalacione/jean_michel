@@ -1,0 +1,1 @@
+Dis simplement, avec le ton desinvolte de glados que l'intelligence est l'avenir de l'humanite
