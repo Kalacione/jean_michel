@@ -25,14 +25,15 @@ def create_app() -> Any:
     """Build the FastAPI app. Imports web deps lazily (optional dependency)."""
     from pathlib import Path
 
-    from fastapi import Depends, FastAPI, HTTPException
+    from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
     from pydantic import BaseModel
 
     from .. import db, persistence
+    from ..config import UserProfile
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
     from ..service import workspace as workspace_svc
-    from . import auth
+    from . import auth, executor
 
     app = FastAPI(title="Jean-Michel API", version="0.1.0")
 
@@ -146,6 +147,59 @@ def create_app() -> Any:
         if match is None:
             raise HTTPException(status_code=404, detail=f"no {type}/{code} entry")
         return {"entry": match}
+
+    # ---- turn WebSocket (live event stream) ------------------------------
+
+    @app.websocket("/ws/conversations/{conversation_id}")
+    async def ws_turn(
+        websocket: WebSocket, conversation_id: str, token: str = ""
+    ) -> None:
+        # Auth + ownership happen BEFORE accept() so a failure rejects the
+        # handshake (the client sees a refused connection).
+        user = auth.verify_token(token)
+        if user is None:
+            await websocket.close(code=4401)
+            return
+        with db.connect() as conn:
+            row = db.get_conversation(conn, conversation_id)
+            owned = row is not None and db.user_owns_conversation(
+                conn, user["id"], row["id"]
+            )
+        if row is None:
+            await websocket.close(code=4404)
+            return
+        if not owned:
+            await websocket.close(code=4403)
+            return
+
+        await websocket.accept()
+        folder = Path(row["folder_path"])
+        mode = row["mode"]
+        profile = UserProfile.load()
+        dispatch_llm, main_llm = executor.get_llm_clients()
+        try:
+            while True:
+                data = await websocket.receive_json()
+                if data.get("type") != "turn":
+                    await websocket.send_json(
+                        {"type": "error", "detail": "expected {type:'turn', text:...}"}
+                    )
+                    continue
+                if executor.turn_lock.locked():
+                    await websocket.send_json({"type": "queued"})
+                async with executor.turn_lock:
+                    await executor.run_turn_streaming(
+                        websocket,
+                        conv_id=conversation_id,
+                        folder=folder,
+                        user_text=data.get("text", ""),
+                        mode=mode,
+                        profile=profile,
+                        dispatch_llm=dispatch_llm,
+                        main_llm=main_llm,
+                    )
+        except WebSocketDisconnect:
+            return
 
     return app
 
