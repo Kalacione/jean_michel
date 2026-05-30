@@ -10,7 +10,13 @@
               :variant="m.role === 'user' ? 'flat' : 'tonal'"
             >
               <!-- eslint-disable-next-line vue/no-v-html -->
-              <div v-if="m.role === 'assistant'" class="md" v-html="render(m.content)" />
+              <div
+                v-if="m.role === 'assistant'"
+                class="md"
+                @click="onMdClick"
+                @error.capture="onImgError"
+                v-html="render(m.content)"
+              />
               <div v-else class="user-text">{{ m.content }}</div>
             </v-card>
 
@@ -128,6 +134,10 @@
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="4000">
       {{ snackbar.text }}
     </v-snackbar>
+
+    <v-dialog v-model="lightbox.open" max-width="92vw">
+      <v-img contain max-height="86vh" :src="lightbox.src" @click="lightbox.open = false" />
+    </v-dialog>
   </div>
 </template>
 
@@ -158,6 +168,18 @@
 
   function render (text) {
     return md.render(text || '')
+  }
+
+  // Inline images the agent embeds (Markdown `![](url)`) → clickable thumbnails
+  // (lightbox) ; broken hotlinked images are hidden rather than shown busted.
+  const lightbox = ref({ open: false, src: '' })
+  function onMdClick (e) {
+    if (e.target && e.target.tagName === 'IMG') {
+      lightbox.value = { open: true, src: e.target.currentSrc || e.target.src }
+    }
+  }
+  function onImgError (e) {
+    if (e.target && e.target.tagName === 'IMG') e.target.classList.add('img-broken')
   }
 
   function basename (p) {
@@ -252,4 +274,13 @@
 }
 .md :deep(code) { font-family: monospace; }
 .md :deep(ul), .md :deep(ol) { padding-left: 1.2em; }
+.md :deep(img) {
+  max-width: 260px;
+  max-height: 220px;
+  border-radius: 6px;
+  cursor: zoom-in;
+  margin: 3px 6px 3px 0;
+  vertical-align: top;
+}
+.md :deep(img.img-broken) { display: none; }
 </style>

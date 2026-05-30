@@ -40,3 +40,26 @@ def test_image_search_searxng_unavailable(monkeypatch):
 
 def test_image_search_in_registry():
     assert "image_search" in build_registry(Path("/tmp/jm-img-test"), conv_id="c1")
+
+
+def test_image_search_filters_off_topic(monkeypatch):
+    """An obviously off-topic hit (art portrait for 'capybara') is dropped."""
+    monkeypatch.setattr(image_search._ws, "_ensure_running", lambda: None)
+    raw = [
+        {"title": "Capybara in the wild", "img_src": "https://x/capy.jpg",
+         "url": "https://x/capy", "source": "x"},
+        {"title": "Self-Portrait (1878) // Walter Shirlaw", "img_src": "https://art/sp.jpg",
+         "url": "https://artic.edu/artworks/11", "source": "artic"},
+    ]
+    monkeypatch.setattr(image_search, "_do_image_search", lambda q, lang, n: raw)
+    out = json.loads(image_search._handler("capybara", results=5))
+    assert [h["image_url"] for h in out["results"]] == ["https://x/capy.jpg"]
+
+
+def test_image_search_relevance_fallback(monkeypatch):
+    """If the filter would drop everything, return unfiltered (never empty)."""
+    monkeypatch.setattr(image_search._ws, "_ensure_running", lambda: None)
+    raw = [{"title": "abc", "img_src": "https://x/1.jpg", "url": "https://x/1", "source": "x"}]
+    monkeypatch.setattr(image_search, "_do_image_search", lambda q, lang, n: raw)
+    out = json.loads(image_search._handler("zzzzqueryyy", results=5))
+    assert len(out["results"]) == 1
