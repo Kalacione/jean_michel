@@ -37,6 +37,7 @@ from ..orchestrator_v2 import (
 )
 from ..prompts import render_user_memory_index
 from ..tools import build_registry
+from .workspace import is_image
 
 _log = logging.getLogger(__name__)
 
@@ -63,7 +64,10 @@ def _attachment_note(attachments: list[str] | None) -> str:
     if not attachments:
         return ""
     listed = ", ".join(f"`{p}`" for p in attachments)
-    return f"\n\nFichiers joints du workspace : {listed}."
+    note = f"\n\nFichiers joints du workspace : {listed}."
+    if any(is_image(p) for p in attachments):
+        note += " Pour analyser une image, utilise l'outil analyze_image(path, question)."
+    return note
 
 
 def run_turn(
@@ -113,7 +117,11 @@ def run_turn(
     if on_dispatch is not None:
         on_dispatch(decision)
 
-    if decision.intent == "alexa":
+    # An attached image needs the multimodal main agent (the granite dispatcher
+    # is text-only) → never take the ALEXA shortcut when one is present.
+    has_image = any(is_image(p) for p in (attachments or []))
+
+    if decision.intent == "alexa" and not has_image:
         answer = dispatcher.execute_alexa(
             decision,
             dispatch_llm,
@@ -211,6 +219,7 @@ def _run_deep_turn(
         sandbox_image=None,
         agent_role="router",
         memory_user_id=memory_user_id,
+        vision_client=main_llm,
     )
 
     # On resume, re-render messages[0] with a fresh system prompt to pick up

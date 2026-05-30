@@ -52,6 +52,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_113_user_memory_isolation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_114_conversation_cascade.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_115_image_search.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_116_vision_tools.sql")
     yield conn
     conn.close()
 
@@ -399,3 +400,18 @@ def test_image_search_granted(v2_migrated_db, v2_consolidated_db):
             )
         }
         assert {"jean-michel", "web-search-specialist"} <= codes
+
+
+def test_vision_tools_granted(v2_migrated_db, v2_consolidated_db):
+    """migrate_116 + schema.sql grant analyze_image + image_fetch to the same agents."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        for tool in ("analyze_image", "image_fetch"):
+            codes = {
+                r["code"]
+                for r in db.execute(
+                    "SELECT a.code FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
+                    "WHERE at.tool_code = ?",
+                    (tool,),
+                )
+            }
+            assert {"jean-michel", "web-search-specialist"} <= codes, tool

@@ -66,3 +66,26 @@ Source: <https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4> (last v
    application appends the response.
 4. Thinking mode is conversation-level (set once in the consolidated system
    block), not per turn.
+
+## Vision / multimodal (images)
+
+Gemma 4 is multimodal on **every** variant (Text+Image ; E2B/E4B also audio).
+
+| Aspect | Value |
+|---|---|
+| Image token budget | configurable 70/140/280/560/1120 → ~64/121/**256**/529 image tokens |
+| Native resolution | encoder ~896×896 ; Ollama auto-resizes any larger input down |
+| Placement | put the image **before** the text in the message |
+| Multi-image | supported (several images per prompt) |
+
+- **Ollama transport.** `/api/chat` takes images as a per-message base64 array
+  (`message.images = ["<b64>", …]`) — there is no path-based API, so base64 is
+  required **at call time**. `OllamaClient.chat_messages` forwards messages
+  verbatim, so an `images` field reaches the model with no LLM-layer change.
+  Accepted formats: JPEG/PNG/WebP (BMP/TIFF too) — **not SVG**.
+- **Project doctrine (cf. `DevNotes/WEBUI/03`).** Images live in the workspace ;
+  we never persist base64 in `messages.json`. We feed a **normalized ≤1024px
+  WebP derivative** (lower bandwidth + format-safe). An attached image forces the
+  **DEEP** verdict (the granite dispatcher is text-only). Two paths :
+  `analyze_image(path, question)` (chat/vocal — transient isolated call → text)
+  and ephemeral in-context base64 on the user turn (`analyse` mode only).

@@ -634,6 +634,10 @@ INSERT INTO agent_tools VALUES(17,'workspace_str_replace');
 INSERT INTO agent_tools VALUES(17,'workspace_view');
 INSERT INTO agent_tools VALUES(1,'image_search');
 INSERT INTO agent_tools VALUES(13,'image_search');
+INSERT INTO agent_tools VALUES(1,'analyze_image');
+INSERT INTO agent_tools VALUES(13,'analyze_image');
+INSERT INTO agent_tools VALUES(1,'image_fetch');
+INSERT INTO agent_tools VALUES(13,'image_fetch');
 CREATE TABLE agent_workspace_grants (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   PRIMARY KEY (agent_id)

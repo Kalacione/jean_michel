@@ -13,12 +13,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+from . import analyze_image as _analyze_image_mod
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_status as _conv_status_mod
 from . import github as _github_mod
+from . import image_fetch as _image_fetch_mod
 from . import image_search as _image_search_mod
 from . import manage_user_memory as _manage_user_memory_mod
 from . import news as _news_mod
@@ -56,6 +59,7 @@ def build_registry(
     sandbox_image: str | None = None,
     agent_role: str = "",
     memory_user_id: int | None = None,
+    vision_client: Any = None,
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context.
 
@@ -72,12 +76,19 @@ def build_registry(
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
     # Bind user_memory to the current owner (None → reserved cli user).
     mum_spec = _manage_user_memory_mod.make_spec(memory_user_id)
+    # Workspace-bound image tools : analyze_image reads the normalized derivative
+    # and talks to a vision client (reuses the turn's main_llm when injected) ;
+    # image_fetch downloads a web image into the workspace.
+    analyze_image_spec = _analyze_image_mod.make_spec(conv_folder, vision_client)
+    image_fetch_spec = _image_fetch_mod.make_spec(conv_folder)
 
     registry: dict[str, ToolSpec] = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
         _web_search_mod.SPEC.name: _web_search_mod.SPEC,
         _image_search_mod.SPEC.name: _image_search_mod.SPEC,
+        analyze_image_spec.name: analyze_image_spec,
+        image_fetch_spec.name: image_fetch_spec,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
         _si_config_mod.SPEC.name: _si_config_mod.SPEC,
