@@ -241,6 +241,7 @@ Puis régénérer `db/schema.sql` via le dump (process documenté dans l'en-têt
   - une fois la phase de reflexion terminee, le bloc de reflexion doit etre "replie" et une icone permet de le deplier/replier
   - possibilite de supprimer des conversations
   - permettre de donner un titre a la conversation (le LLM pourrait en deduire un par defaut et le user pourrait l'editer)
+- injection date/heure et info user systematiques ?
 
 ## Vérification
 
