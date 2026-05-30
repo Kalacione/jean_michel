@@ -21,9 +21,11 @@
 - suppression fichier workspace ?
 - joindre fichier workspace a conversation
   - petites chips avec le nom du fichier et une croix pour l'enlever du contexte (exactement comme les chips in select de vuetify 4 https://vuetifyjs.com/en/components/chips/#in-selects)
-  - choix dans la liste des fichiers du workspace: analyser quelle est la maniere la plus simple et ergonomique de selectionner un fichier a ajouter au message; necessite analyse
-  - lors d'un upload depuis  la zone message, ajouter directement le fichier
-  - lien vers preview/download d'un (ou plusieurs) fichiers du workspace dans la reponse
+  - choix dans la liste des fichiers du workspace: analyser quelle est la maniere la plus simple et ergonomique de selectionner un fichier a ajouter au message; necessite analyse (peut etre le bouton attachement du message devrait ouvrir une liste de choix de fichier existant et avoir en derniere option "envoyer un fichier" avec une icone `(+)` https://vuetifyjs.com/en/components/combobox/#usage)
+  - lors d'un upload depuis  la zone message, ajouter directement le fichier en reference au mesage
+  - les fichiers "joints" au message doivent etre automatiquement references dans le payload envoye au LLM
+  - ajouter des liens vers preview/download d'un (ou plusieurs) fichiers du workspace dans la reponse
+  - bonus: possibilite de telecharger tous les fichiers du workspace en zip ?
 - personna + vocal associe
   - creation de personna assistant (ex glados, ton desinvolte, ironique)
   - association d'un model vocal
