@@ -11,6 +11,9 @@ Errors are signalled by raising ``WorkspaceError(code, message)``.
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import mimetypes
 import os
 import tempfile
 import zipfile
@@ -18,11 +21,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import WORKSPACE_UPLOAD_MAX_BYTES
+from ..config import IMAGE_MAX_PX, WORKSPACE_UPLOAD_MAX_BYTES
 from ..tools._workspace import quota_remaining, safe_resolve, workspace_root_for
+
+_log = logging.getLogger(__name__)
 
 _MAX_TREE_DEPTH = 2
 DEFAULT_MAX_BYTES = 100_000
+
+# Raster image types Pillow can thumbnail. SVG is vector → served as-is.
+_RASTER_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
+_IMAGE_EXTS = _RASTER_EXTS | {".svg"}
+_THUMBS_DIR = ".thumbs"
 
 
 class WorkspaceError(Exception):
@@ -47,7 +57,9 @@ def _entry(p: Path, depth: int) -> dict[str, Any]:
     if p.is_file():
         node["size_bytes"] = stat.st_size
     if p.is_dir() and depth < _MAX_TREE_DEPTH:
-        node["children"] = [_entry(c, depth + 1) for c in sorted(p.iterdir())]
+        node["children"] = [
+            _entry(c, depth + 1) for c in sorted(p.iterdir()) if not c.name.startswith(".")
+        ]
     return node
 
 
@@ -63,7 +75,7 @@ def list_tree(conv_folder: Path, sub_path: str = "") -> dict[str, Any]:
             raise WorkspaceError("not_found", f"Not a directory: {sub_path}")
     else:
         start = ws_root
-    entries = [_entry(p, 1) for p in sorted(start.iterdir())]
+    entries = [_entry(p, 1) for p in sorted(start.iterdir()) if not p.name.startswith(".")]
     return {"workspace": sub_path, "entries": entries}
 
 
@@ -101,6 +113,59 @@ def resolve_download(conv_folder: Path, relative_path: str) -> Path:
     if not target.is_file():
         raise WorkspaceError("not_found", f"Not found: {relative_path}")
     return target
+
+
+def is_image(relative_path: str) -> bool:
+    """True if the path looks like an image we can show inline (incl. SVG)."""
+    return Path(relative_path).suffix.lower() in _IMAGE_EXTS
+
+
+def _thumb_cache_path(ws_root: Path, target: Path) -> Path:
+    digest = hashlib.sha1(target.relative_to(ws_root).as_posix().encode("utf-8")).hexdigest()
+    return ws_root / _THUMBS_DIR / f"{digest[:16]}.webp"
+
+
+def _generate_thumb(src: Path, dest: Path, max_px: int) -> bool:
+    """Normalize ``src`` → a ≤max_px WebP at ``dest`` (EXIF-corrected, first GIF
+    frame). Returns False if Pillow can't handle it (caller serves the original)."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(src) as img:
+            img = ImageOps.exif_transpose(img)  # honour phone orientation
+            if img.mode not in ("RGB", "RGBA", "L"):
+                img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+            img.thumbnail((max_px, max_px))  # preserves ratio, never upscales
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            img.save(dest, "WEBP", quality=82, method=4)
+        return True
+    except Exception as exc:  # noqa: BLE001 — corrupt/unsupported → serve original
+        _log.warning("thumbnail generation failed for %s: %s", src, exc)
+        return False
+
+
+def resolve_image(conv_folder: Path, relative_path: str, thumb: bool) -> tuple[Path, str]:
+    """Resolve a workspace image for serving. Returns ``(path, media_type)``.
+
+    With ``thumb`` and a rasterizable image, returns a cached ≤IMAGE_MAX_PX WebP
+    derivative (generated/refreshed on demand, reused by vision later). Otherwise
+    (SVG, non-image, thumb off, or Pillow failure) returns the original with its
+    guessed MIME. Raises ``WorkspaceError(invalid_path | not_found)``.
+    """
+    ws_root = workspace_root_for(conv_folder)
+    try:
+        target = safe_resolve(ws_root, relative_path)
+    except ValueError as exc:
+        raise WorkspaceError("invalid_path", str(exc)) from exc
+    if not target.is_file():
+        raise WorkspaceError("not_found", f"Not found: {relative_path}")
+    if thumb and target.suffix.lower() in _RASTER_EXTS:
+        cache = _thumb_cache_path(ws_root, target)
+        fresh = cache.is_file() and cache.stat().st_mtime >= target.stat().st_mtime
+        if fresh or _generate_thumb(target, cache, IMAGE_MAX_PX):
+            return cache, "image/webp"
+    mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return target, mime
 
 
 def save_upload(conv_folder: Path, filename: str, data: bytes) -> dict[str, Any]:
@@ -158,7 +223,11 @@ def zip_workspace(conv_folder: Path) -> Path | None:
     """Zip the whole workspace into a temp ``.zip``. Returns its path (the caller
     deletes it after streaming) or None when the workspace has no files."""
     ws_root = workspace_root_for(conv_folder)
-    files = [p for p in sorted(ws_root.rglob("*")) if p.is_file()]
+    files = [
+        p
+        for p in sorted(ws_root.rglob("*"))
+        if p.is_file() and not any(part.startswith(".") for part in p.relative_to(ws_root).parts)
+    ]
     if not files:
         return None
     fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="jm_workspace_")

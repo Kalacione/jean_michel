@@ -230,6 +230,24 @@ def create_app() -> Any:
             background=BackgroundTask(lambda: zip_path.unlink(missing_ok=True)),
         )
 
+    @app.get("/api/conversations/{conversation_id}/workspace/image")
+    def get_workspace_image(
+        path: str,
+        thumb: bool = False,
+        conv: Any = Depends(auth.require_conversation_owner),
+    ) -> Any:
+        # Serves an image with its real MIME ; with thumb=1, a cached ≤IMAGE_MAX_PX
+        # WebP derivative (SVG / non-raster fall back to the original).
+        try:
+            target, media_type = workspace_svc.resolve_image(
+                Path(conv["folder_path"]), path, thumb=thumb
+            )
+        except workspace_svc.WorkspaceError as exc:
+            raise HTTPException(
+                status_code=404 if exc.code == "not_found" else 400, detail=exc.message
+            ) from exc
+        return FileResponse(target, media_type=media_type)
+
     # ---- user memory (read ; global, but auth-gated) ---------------------
 
     @app.get("/api/memory")

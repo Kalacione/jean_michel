@@ -100,6 +100,17 @@ export const api = {
     return res.ok ? res.blob() : null
   },
 
+  // Auth-gated image fetch → Blob the caller turns into an objectURL for <img>.
+  // thumb=true asks for the normalized ≤1024 WebP derivative.
+  async workspaceImage (id, path, { thumb = false } = {}) {
+    const token = getToken()
+    const q = `path=${encodeURIComponent(path)}${thumb ? '&thumb=1' : ''}`
+    const res = await fetch(`/api/conversations/${id}/workspace/image?${q}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    return res.ok ? res.blob() : null
+  },
+
   listMemory: type => request('GET', `/memory${type ? `?type=${encodeURIComponent(type)}` : ''}`),
   recallMemory: (type, code) => request('GET', `/memory/${type}/${code}`),
   saveMemory: entry => request('POST', '/memory', entry),

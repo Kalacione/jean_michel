@@ -135,6 +135,11 @@ WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 # WORKSPACE_QUOTA_BYTES still caps the cumulative total.
 WORKSPACE_UPLOAD_MAX_BYTES = _int_env("JEANMICHEL_UPLOAD_MAX_BYTES", 22 * 1024 * 1024)  # 22 MB
 
+# Longest-side cap (px) for the normalized image derivative — used BOTH for the
+# inline thumbnail and as the format-safe, bandwidth-bounded input fed to Gemma
+# vision. One size, one derivative (cf. DevNotes/WEBUI/03). Env-overridable.
+IMAGE_MAX_PX = _int_env("JEANMICHEL_IMAGE_MAX_PX", 1024)
+
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",

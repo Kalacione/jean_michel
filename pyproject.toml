@@ -40,6 +40,8 @@ web = [
   "itsdangerous>=2.2.0",
   # Multipart form parsing — required by FastAPI for workspace file uploads.
   "python-multipart>=0.0.9",
+  # Image normalization : inline thumbnails + format-safe input for Gemma vision.
+  "Pillow>=10.0.0",
 ]
 
 [project.scripts]

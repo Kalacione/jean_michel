@@ -14,20 +14,23 @@
               <div v-else class="user-text">{{ m.content }}</div>
             </v-card>
 
-            <!-- Workspace files attached to / referenced by this message. -->
-            <div v-if="messageFiles(m).length" class="d-flex flex-wrap ga-1 mt-1">
-              <v-chip
-                v-for="p in messageFiles(m)"
-                :key="p"
-                size="small"
-                title="Aperçu"
-                variant="tonal"
-                @click="conv.openWorkspace(p)"
-              >
-                <v-icon icon="mdi-file-document-outline" size="14" start />
-                {{ basename(p) }}
-                <v-icon end icon="mdi-download" size="14" title="Télécharger" @click.stop="downloadFile(p)" />
-              </v-chip>
+            <!-- Workspace files attached to / referenced by this message :
+                 images render as thumbnails, everything else as a chip. -->
+            <div v-if="messageFiles(m).length" class="d-flex flex-wrap ga-2 mt-1">
+              <template v-for="p in messageFiles(m)" :key="p">
+                <WorkspaceImage v-if="isImage(p)" :path="p" />
+                <v-chip
+                  v-else
+                  size="small"
+                  title="Aperçu"
+                  variant="tonal"
+                  @click="conv.openWorkspace(p)"
+                >
+                  <v-icon icon="mdi-file-document-outline" size="14" start />
+                  {{ basename(p) }}
+                  <v-icon end icon="mdi-download" size="14" title="Télécharger" @click.stop="downloadFile(p)" />
+                </v-chip>
+              </template>
             </div>
           </div>
         </div>
@@ -133,6 +136,7 @@
   import { computed, nextTick, ref, watch } from 'vue'
   import { api } from '@/api'
   import EventTrace from '@/components/EventTrace.vue'
+  import WorkspaceImage from '@/components/WorkspaceImage.vue'
   import { saveBlob } from '@/download'
   import { useConvStore } from '@/stores/conversations'
 
@@ -158,6 +162,11 @@
 
   function basename (p) {
     return p.split('/').pop()
+  }
+
+  const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'tif', 'tiff', 'webp', 'svg'])
+  function isImage (p) {
+    return IMG_EXT.has((p.split('.').pop() || '').toLowerCase())
   }
 
   // Files shown as preview/download chips under a message : the ones explicitly

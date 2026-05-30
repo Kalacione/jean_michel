@@ -293,6 +293,87 @@ def test_workspace_zip_owner_scoped(client, alice_conv):
     assert client.get(f"/api/conversations/{conv_id}/workspace/zip").status_code == 401
 
 
+# ---- Workspace images (I1) ------------------------------------------------
+
+
+def _make_png(path: Path, size: tuple[int, int] = (40, 30)) -> None:
+    from PIL import Image
+
+    Image.new("RGB", size, (200, 100, 50)).save(path, "PNG")
+
+
+def test_workspace_image_original_mime(client, alice_conv):
+    token, conv_id, folder = alice_conv
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    _make_png(workspace_root_for(folder) / "pic.png")
+    r = client.get(
+        f"/api/conversations/{conv_id}/workspace/image",
+        params={"path": "pic.png"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"  # real MIME, not octet-stream
+
+
+def test_workspace_image_thumb_is_downscaled_webp(client, alice_conv):
+    import io
+
+    from PIL import Image
+
+    token, conv_id, folder = alice_conv
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    _make_png(workspace_root_for(folder) / "pic.png", size=(2000, 1500))
+    r = client.get(
+        f"/api/conversations/{conv_id}/workspace/image",
+        params={"path": "pic.png", "thumb": "1"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/webp"
+    assert max(Image.open(io.BytesIO(r.content)).size) <= 1024  # fit in 1024
+
+    # The cache lives in a hidden .thumbs that must NOT show in the listing.
+    names = {
+        e["name"]
+        for e in client.get(
+            f"/api/conversations/{conv_id}/workspace", headers=_auth(token)
+        ).json()["entries"]
+    }
+    assert ".thumbs" not in names
+
+
+def test_workspace_image_svg_served_as_is(client, alice_conv):
+    token, conv_id, folder = alice_conv
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    (workspace_root_for(folder) / "logo.svg").write_text(
+        "<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8"
+    )
+    # thumb=1 but SVG isn't rasterizable → original svg, not webp.
+    r = client.get(
+        f"/api/conversations/{conv_id}/workspace/image",
+        params={"path": "logo.svg", "thumb": "1"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    assert "svg" in r.headers["content-type"]
+
+
+def test_workspace_image_owner_scoped(client, alice_conv):
+    token_a, conv_id, folder = alice_conv
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    _make_png(workspace_root_for(folder) / "pic.png")
+    _make_user("bob", "pw")
+    token_b = _login(client, "bob", "pw")
+    base = f"/api/conversations/{conv_id}/workspace/image"
+    assert client.get(base, params={"path": "pic.png"}, headers=_auth(token_b)).status_code == 403
+    assert client.get(base, params={"path": "pic.png"}).status_code == 401
+    assert client.get(base, params={"path": "ghost.png"}, headers=_auth(token_a)).status_code == 404
+
+
 # ---- Owner scoping on reads -----------------------------------------------
 
 
