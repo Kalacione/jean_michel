@@ -6,7 +6,6 @@ import pytest
 
 from jeanmichel.config import MAX_DEPTH, MAX_SEARCH_CALLS_PER_TURN
 from jeanmichel.hooks import (
-    Decision,
     HookRegistry,
     OnDelegateReturn,
     PostToolUse,
@@ -16,8 +15,7 @@ from jeanmichel.hooks import (
     build_hook_registry,
 )
 from jeanmichel.llm import MockClient
-from jeanmichel.models import ConversationState, LLMResponse, ToolCall
-
+from jeanmichel.models import ConversationState, ToolCall
 
 # ---- Helpers --------------------------------------------------------------
 

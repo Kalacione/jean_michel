@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from jeanmichel.compaction import (
     _MICROCOMPACTABLE_TOOLS,
     compact_autocompact,
@@ -16,7 +14,6 @@ from jeanmichel.compaction import (
 from jeanmichel.config import COMPACTION_THRESHOLDS
 from jeanmichel.llm import MockClient
 from jeanmichel.models import ConversationState, LLMResponse
-
 
 # ---- Helpers --------------------------------------------------------------
 

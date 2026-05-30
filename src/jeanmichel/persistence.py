@@ -14,6 +14,7 @@ the previous valid version on disk.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import fcntl
 import json
@@ -105,10 +106,8 @@ def _atomic_write_text(path: Path, content: str) -> None:
         os.replace(tmp_path, path)
     except Exception:
         # Best effort cleanup if rename failed.
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 

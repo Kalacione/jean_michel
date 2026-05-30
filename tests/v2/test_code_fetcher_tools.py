@@ -6,15 +6,11 @@ input validation + at least one error path.
 """
 from __future__ import annotations
 
-import io
 import json
 import urllib.error
 from unittest.mock import patch
 
-import pytest
-
 from jeanmichel.tools import github, pypi, stackoverflow
-
 
 # ---- urlopen stub --------------------------------------------------------
 

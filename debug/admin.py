@@ -260,7 +260,7 @@ def _show_convs(db_path: Path) -> None:
 
 def _exec_purge_orphans(
     db_path: Path,
-    session: "PromptSession | None" = None,
+    session: PromptSession | None = None,
 ) -> None:
     """Remove DB records for conversations whose on-disk folder no longer exists."""
     with sqlite3.connect(db_path) as conn:

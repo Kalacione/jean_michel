@@ -5,14 +5,10 @@ return a canned JSON payload so the tests run offline and deterministically.
 """
 from __future__ import annotations
 
-import io
 import json
 from unittest.mock import patch
 
-import pytest
-
 from jeanmichel.tools import news
-
 
 # ---- canned response -----------------------------------------------------
 

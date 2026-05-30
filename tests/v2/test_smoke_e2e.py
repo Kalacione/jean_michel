@@ -130,7 +130,6 @@ def test_smoke_deep_simple_question(v2_db_for_smoke, tmp_path):
     from jeanmichel.prompts import render_user_memory_index
     from jeanmichel.tools import build_registry
 
-    dispatch_llm = OllamaClient()
     main_llm = OllamaClient()
 
     user_text = "Explique en deux phrases ce qu'est la photosynthèse."

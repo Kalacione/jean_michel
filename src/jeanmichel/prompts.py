@@ -123,7 +123,7 @@ def render_user_memory_index(
 # =============================================================================
 
 
-def render_directives(paradigms: list["Paradigm"]) -> str:
+def render_directives(paradigms: list[Paradigm]) -> str:
     """Group paradigms by category and render their contents as Markdown.
 
     Each category becomes a ``## <Category title>`` header, followed by the
@@ -225,7 +225,7 @@ def render_system_prompt_v2(
     agent_name: str,
     agent_role: str,
     agent_mission: str,
-    paradigms: list["Paradigm"],
+    paradigms: list[Paradigm],
     user_profile_text: str = "",
     user_memory_block: str = "",
     user_language: str = "und",

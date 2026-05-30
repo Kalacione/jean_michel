@@ -184,9 +184,11 @@ class PreToolUse:
                 )
 
         # 3. Search budget (turn-wide, counted across all depths)
-        if ctx.call.name in _SEARCH_TOOLS:
-            if state.search_calls_total >= MAX_SEARCH_CALLS_PER_TURN:
-                return Decision(
+        if (
+            ctx.call.name in _SEARCH_TOOLS
+            and state.search_calls_total >= MAX_SEARCH_CALLS_PER_TURN
+        ):
+            return Decision(
                     deny=True,
                     reason=(
                         f"MAX_SEARCH_CALLS_PER_TURN "

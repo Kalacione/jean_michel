@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
-
-import pytest
 
 from jeanmichel.bootstrap import bootstrap_user_memory_from_profile
 from jeanmichel.config import UserProfile
@@ -14,7 +11,6 @@ from jeanmichel.db import connect as db_connect
 from jeanmichel.prompts import render_user_memory_index
 from jeanmichel.tools.manage_user_memory import SPEC as USER_MEMORY_SPEC
 from jeanmichel.tools.manage_user_memory import _handler
-
 
 # ---- Tool spec ------------------------------------------------------------
 

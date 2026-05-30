@@ -22,6 +22,7 @@ Falls back to a "no v2 artefacts found" message for pre-v2 conversations.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -30,9 +31,7 @@ HERE = Path(__file__).parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from jeanmichel import config  # noqa: E402
-from jeanmichel import db  # noqa: E402
-
+from jeanmichel import config, db  # noqa: E402
 
 # ---- ANSI helpers --------------------------------------------------------
 
@@ -159,19 +158,13 @@ def _print_events(events: list[dict], filter_types: set[str] | None = None) -> N
         # Specific renderers per event type.
         if ev_type in ("RequestStarted", "RequestCompleted"):
             color = "blue"
-        elif ev_type == "DelegationStarted":
-            color = "magenta"
-        elif ev_type == "DelegationCompleted":
+        elif ev_type == "DelegationStarted" or ev_type == "DelegationCompleted":
             color = "magenta"
         elif ev_type in ("ToolCallStarted", "ToolCallCompleted"):
             color = "yellow"
         elif ev_type in ("LLMCallStarted", "LLMCallCompleted"):
             color = "dim"
-        elif ev_type == "HookFired":
-            color = "red"
-        elif ev_type == "WorkingBudgetUpdate":
-            color = "red"
-        elif ev_type == "MemoryNearCapacity":
+        elif ev_type == "HookFired" or ev_type == "WorkingBudgetUpdate" or ev_type == "MemoryNearCapacity":
             color = "red"
         else:
             color = "dim"
@@ -308,10 +301,8 @@ def main() -> int:
             line = line.strip()
             if not line:
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 events.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
         filter_set = set(args.filter_event) if args.filter_event else None
         _print_events(events, filter_set)
 

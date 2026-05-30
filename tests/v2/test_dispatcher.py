@@ -16,7 +16,6 @@ from jeanmichel.dispatcher import (
 from jeanmichel.llm import MockClient
 from jeanmichel.models import LLMResponse
 
-
 # ---- classify : JSON parsing + schema validation -------------------------
 
 
@@ -567,7 +566,7 @@ def test_e2e_french_time_question_routes_to_clock_and_formats_french():
 
 def test_alexa_tools_set_matches_doc_spec():
     """The ALEXA tool set is exactly what §3 doc 06 declares — no drift."""
-    assert _ALEXA_TOOLS == {"clock", "weather", "wikipedia_search"}
+    assert {"clock", "weather", "wikipedia_search"} == _ALEXA_TOOLS
 
 
 # ---- profile-driven default location for clock --------------------------

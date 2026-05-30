@@ -7,7 +7,6 @@ stays focused on the behaviour under test.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from jeanmichel.models import LLMResponse, ToolCall
 from jeanmichel.orchestrator_v2 import AgentSpec

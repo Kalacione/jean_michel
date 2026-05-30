@@ -18,6 +18,7 @@ Configuration :
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import shutil
@@ -279,10 +280,8 @@ def speak(text: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         _log.warning("Piper streaming synthesis failed: %s", exc)
         # Close stdin so the player drains and exits, then fail.
-        try:
+        with contextlib.suppress(Exception):
             proc.stdin.close()
-        except Exception:  # noqa: BLE001
-            pass
         proc.wait(timeout=_PLAYBACK_TIMEOUT_S)
         return False
 
@@ -306,10 +305,8 @@ def _speak_via_wav(text: str) -> bool:
             return False
         return play_wav(wav_path)
     finally:
-        try:
+        with contextlib.suppress(OSError):
             wav_path.unlink(missing_ok=True)
-        except OSError:
-            pass
 
 
 # ---- async announcement helpers ------------------------------------------

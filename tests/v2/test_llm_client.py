@@ -7,7 +7,6 @@ import pytest
 from jeanmichel.llm import MockClient
 from jeanmichel.models import LLMResponse
 
-
 # ---- chat_messages basic behavior ----------------------------------------
 
 

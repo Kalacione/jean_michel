@@ -10,7 +10,6 @@ from jeanmichel.prompts import (
     render_system_prompt_v2,
 )
 
-
 # ---- render_delegation_targets_block ------------------------------------
 
 

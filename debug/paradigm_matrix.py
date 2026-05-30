@@ -728,7 +728,7 @@ def main() -> None:
         print("Run ./jm.sh --install first.", file=sys.stderr)
         sys.exit(1)
 
-    HandlerClass = type("_H", (_Handler,), {"db_path": db_path})
+    HandlerClass = type("_H", (_Handler,), {"db_path": db_path})  # noqa: N806
     url = f"http://localhost:{args.port}"
     print(f"Paradigm Matrix → {url}  (Ctrl+C to quit)")
     webbrowser.open(url)

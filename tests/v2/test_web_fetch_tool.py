@@ -6,14 +6,10 @@ extracted text is validated to ensure markup is stripped.
 """
 from __future__ import annotations
 
-import io
 import json
 from unittest.mock import patch
 
-import pytest
-
 from jeanmichel.tools import web_fetch
-
 
 # ---- canned HTTP response helpers ---------------------------------------
 
@@ -68,7 +64,7 @@ _GOOD_HTML = """
     <script>console.log("tracking");</script>
   </body>
 </html>
-""".encode("utf-8")
+""".encode()
 
 
 # ---- happy path ---------------------------------------------------------

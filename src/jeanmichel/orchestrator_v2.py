@@ -364,7 +364,7 @@ def _run_agent_loop(
     # giving up.
     empty_main_turns = 0
 
-    for iteration in range(max_iterations):
+    for _iteration in range(max_iterations):
         # PreLLMCall : compaction escalation (may mutate messages).
         level = hooks.pre_llm_call(messages, state)
         if level > 0:

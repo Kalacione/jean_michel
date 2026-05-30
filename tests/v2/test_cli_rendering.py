@@ -8,10 +8,6 @@ the load-bearing identifiers.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
-import pytest
 from rich.console import Console
 
 from jeanmichel.cli import (
@@ -31,7 +27,6 @@ from jeanmichel.events import (
     ToolCallStarted,
     WorkingBudgetUpdate,
 )
-
 
 # ---- Helper ---------------------------------------------------------------
 

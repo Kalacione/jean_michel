@@ -5,17 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from jeanmichel.events import (
-    DelegationCompleted,
-    DelegationStarted,
-    HookFired,
-    LLMCallStarted,
-    RequestCompleted,
-    RequestStarted,
-)
 from jeanmichel.llm import MockClient
+from jeanmichel.models import ConversationState
 from jeanmichel.orchestrator_v2 import (
     AgentSpec,
     SubResult,
@@ -24,16 +15,13 @@ from jeanmichel.orchestrator_v2 import (
     run_main_loop,
     spawn_subagent,
 )
-from jeanmichel.models import ConversationState
 
 from ._orchestrator_helpers import (
     assistant_response,
     make_agent,
     make_echo_tool,
-    make_tool_spec,
     tool_call,
 )
-
 
 # =============================================================================
 # Section 1 : helpers / state initialization

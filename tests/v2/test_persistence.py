@@ -21,7 +21,6 @@ from jeanmichel.persistence import (
     save_sub_messages,
 )
 
-
 # ---- messages.json -------------------------------------------------------
 
 

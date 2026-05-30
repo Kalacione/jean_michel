@@ -241,7 +241,6 @@ def compact_collapse(
     if len(messages) <= _COLLAPSE_TAIL_KEEP + 2:
         return
 
-    n = len(messages)
     head = messages[0]
     tail = messages[-_COLLAPSE_TAIL_KEEP:]
     middle = messages[1:-_COLLAPSE_TAIL_KEEP]
