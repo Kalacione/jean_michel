@@ -15,14 +15,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..tools._workspace import safe_resolve, workspace_root_for
+from ..config import WORKSPACE_UPLOAD_MAX_BYTES
+from ..tools._workspace import quota_remaining, safe_resolve, workspace_root_for
 
 _MAX_TREE_DEPTH = 2
 DEFAULT_MAX_BYTES = 100_000
 
 
 class WorkspaceError(Exception):
-    """A workspace read failed. ``code`` ∈ {invalid_path, not_found, not_utf8}."""
+    """A workspace op failed. ``code`` ∈ {invalid_path, not_found, not_utf8,
+    too_large, quota_exceeded, exists}."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -80,3 +82,49 @@ def read_file(
     except UnicodeDecodeError as exc:
         raise WorkspaceError("not_utf8", "File is not valid UTF-8.") from exc
     return {"path": relative_path, "content": content, "truncated": truncated}
+
+
+def resolve_download(conv_folder: Path, relative_path: str) -> Path:
+    """Resolve a workspace file for raw (binary-safe) download. Workspace-scoped.
+
+    Unlike ``read_file``, this neither decodes nor truncates — the endpoint
+    streams the file as-is. Raises ``WorkspaceError(invalid_path | not_found)``.
+    """
+    ws_root = workspace_root_for(conv_folder)
+    try:
+        target = safe_resolve(ws_root, relative_path)
+    except ValueError as exc:
+        raise WorkspaceError("invalid_path", str(exc)) from exc
+    if not target.is_file():
+        raise WorkspaceError("not_found", f"Not found: {relative_path}")
+    return target
+
+
+def save_upload(conv_folder: Path, filename: str, data: bytes) -> dict[str, Any]:
+    """Write one uploaded file at the workspace root. Single source of upload truth.
+
+    The client-supplied ``filename`` is reduced to its basename (any directory
+    component is dropped) then validated by ``safe_resolve``. Guards, in order :
+    per-file size (``WORKSPACE_UPLOAD_MAX_BYTES``), no silent overwrite, then the
+    cumulative workspace quota. Raises ``WorkspaceError`` with code ∈
+    {invalid_path, too_large, exists, quota_exceeded}.
+    """
+    name = Path(filename).name.strip()
+    if not name:
+        raise WorkspaceError("invalid_path", "Empty filename.")
+    if len(data) > WORKSPACE_UPLOAD_MAX_BYTES:
+        limit_mb = WORKSPACE_UPLOAD_MAX_BYTES / (1024 * 1024)
+        raise WorkspaceError(
+            "too_large", f"{name} exceeds the {limit_mb:.0f} MB per-file limit."
+        )
+    ws_root = workspace_root_for(conv_folder)
+    try:
+        target = safe_resolve(ws_root, name)
+    except ValueError as exc:
+        raise WorkspaceError("invalid_path", str(exc)) from exc
+    if target.exists():
+        raise WorkspaceError("exists", f"File already exists: {name}")
+    if len(data) > quota_remaining(ws_root):
+        raise WorkspaceError("quota_exceeded", "Workspace quota exceeded.")
+    target.write_bytes(data)
+    return {"name": name, "size_bytes": len(data)}

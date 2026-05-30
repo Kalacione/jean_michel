@@ -152,6 +152,110 @@ def test_workspace_path_traversal_blocked(client, alice_conv):
     assert resp.status_code == 400
 
 
+# ---- Workspace upload / download ------------------------------------------
+
+
+def test_workspace_upload_and_download_roundtrip(client, alice_conv):
+    token, conv_id, _ = alice_conv
+    up = client.post(
+        f"/api/conversations/{conv_id}/workspace/upload",
+        files=[("files", ("hello.txt", b"hello bytes", "text/plain"))],
+        headers=_auth(token),
+    )
+    assert up.status_code == 200, up.text
+    result = up.json()["results"][0]
+    assert result == {"status": "ok", "name": "hello.txt", "size_bytes": len(b"hello bytes")}
+
+    dl = client.get(
+        f"/api/conversations/{conv_id}/workspace/download",
+        params={"path": "hello.txt"},
+        headers=_auth(token),
+    )
+    assert dl.status_code == 200
+    assert dl.content == b"hello bytes"
+    assert "attachment" in dl.headers.get("content-disposition", "")
+
+
+def test_workspace_upload_multiple_partial_conflict(client, alice_conv):
+    # 'notes.md' is seeded by the fixture → conflict ; 'fresh.txt' is new → ok.
+    token, conv_id, _ = alice_conv
+    up = client.post(
+        f"/api/conversations/{conv_id}/workspace/upload",
+        files=[
+            ("files", ("notes.md", b"x", "text/plain")),
+            ("files", ("fresh.txt", b"y", "text/plain")),
+        ],
+        headers=_auth(token),
+    )
+    assert up.status_code == 200
+    by_name = {r["name"]: r for r in up.json()["results"]}
+    assert by_name["notes.md"]["status"] == "error"
+    assert by_name["notes.md"]["code"] == "exists"
+    assert by_name["fresh.txt"]["status"] == "ok"
+
+
+def test_workspace_upload_too_large(client, alice_conv, monkeypatch):
+    monkeypatch.setattr("jeanmichel.service.workspace.WORKSPACE_UPLOAD_MAX_BYTES", 4)
+    token, conv_id, _ = alice_conv
+    up = client.post(
+        f"/api/conversations/{conv_id}/workspace/upload",
+        files=[("files", ("big.bin", b"12345", "application/octet-stream"))],
+        headers=_auth(token),
+    )
+    assert up.status_code == 200
+    assert up.json()["results"][0]["code"] == "too_large"
+
+
+def test_workspace_upload_sanitizes_filename(client, alice_conv):
+    """A traversal-y filename is reduced to its basename — it can't escape."""
+    token, conv_id, _ = alice_conv
+    up = client.post(
+        f"/api/conversations/{conv_id}/workspace/upload",
+        files=[("files", ("../../escape.txt", b"z", "text/plain"))],
+        headers=_auth(token),
+    )
+    assert up.status_code == 200
+    assert up.json()["results"][0] == {"status": "ok", "name": "escape.txt", "size_bytes": 1}
+    assert client.get(
+        f"/api/conversations/{conv_id}/workspace/download",
+        params={"path": "escape.txt"},
+        headers=_auth(token),
+    ).status_code == 200
+
+
+def test_workspace_download_not_found(client, alice_conv):
+    token, conv_id, _ = alice_conv
+    resp = client.get(
+        f"/api/conversations/{conv_id}/workspace/download",
+        params={"path": "ghost.bin"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 404
+
+
+def test_workspace_upload_download_owner_scoped(client, alice_conv):
+    token_a, conv_id, _ = alice_conv
+    _make_user("bob", "pw")
+    token_b = _login(client, "bob", "pw")
+    files = [("files", ("x.txt", b"x", "text/plain"))]
+    # Bob can neither push to nor pull from Alice's workspace.
+    assert client.post(
+        f"/api/conversations/{conv_id}/workspace/upload", files=files, headers=_auth(token_b)
+    ).status_code == 403
+    assert client.get(
+        f"/api/conversations/{conv_id}/workspace/download",
+        params={"path": "notes.md"},
+        headers=_auth(token_b),
+    ).status_code == 403
+    # Auth required.
+    assert client.post(
+        f"/api/conversations/{conv_id}/workspace/upload", files=files
+    ).status_code == 401
+    assert client.get(
+        f"/api/conversations/{conv_id}/workspace/download", params={"path": "notes.md"}
+    ).status_code == 401
+
+
 # ---- Owner scoping on reads -----------------------------------------------
 
 

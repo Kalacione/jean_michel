@@ -130,6 +130,11 @@ SOFT_DEADLINE_RATIO = float(os.environ.get("JEANMICHEL_SOFT_DEADLINE_RATIO", "0.
 # Workspace soft quota per conversation, in bytes.
 WORKSPACE_QUOTA_BYTES = 256 * 1024 * 1024  # 256 MB
 
+# Max size of a single file uploaded through the web workspace, in bytes.
+# Overridable with JEANMICHEL_UPLOAD_MAX_BYTES (raw bytes). The per-conversation
+# WORKSPACE_QUOTA_BYTES still caps the cumulative total.
+WORKSPACE_UPLOAD_MAX_BYTES = _int_env("JEANMICHEL_UPLOAD_MAX_BYTES", 22 * 1024 * 1024)  # 22 MB
+
 MODES = ("analyse", "chat", "vocal")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",

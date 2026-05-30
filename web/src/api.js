@@ -60,6 +60,36 @@ export const api = {
   workspaceFile: (id, path) =>
     request('GET', `/conversations/${id}/workspace/file?path=${encodeURIComponent(path)}`),
 
+  // Upload is multipart (not JSON) → can't use request() ; build FormData and
+  // let the browser set the boundary. Returns {results:[{name,status,...}]}.
+  async uploadWorkspace (id, fileList) {
+    const token = getToken()
+    const form = new FormData()
+    for (const f of fileList) form.append('files', f)
+    const res = await fetch(`/api/conversations/${id}/workspace/upload`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try { detail = (await res.json()).detail ?? detail } catch { /* non-JSON */ }
+      throw new ApiError(res.status, detail)
+    }
+    return res.json()
+  },
+
+  // Download is auth-gated (no token in a bare <a href>) → fetch with the
+  // header and hand back a Blob the caller saves.
+  async downloadWorkspace (id, path) {
+    const token = getToken()
+    const res = await fetch(
+      `/api/conversations/${id}/workspace/download?path=${encodeURIComponent(path)}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+    )
+    return res.ok ? res.blob() : null
+  },
+
   listMemory: type => request('GET', `/memory${type ? `?type=${encodeURIComponent(type)}` : ''}`),
   recallMemory: (type, code) => request('GET', `/memory/${type}/${code}`),
   saveMemory: entry => request('POST', '/memory', entry),

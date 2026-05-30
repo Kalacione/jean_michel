@@ -38,6 +38,8 @@ web = [
   # Auth (S1): password hashing + signed bearer tokens.
   "argon2-cffi>=23.1.0",
   "itsdangerous>=2.2.0",
+  # Multipart form parsing — required by FastAPI for workspace file uploads.
+  "python-multipart>=0.0.9",
 ]
 
 [project.scripts]

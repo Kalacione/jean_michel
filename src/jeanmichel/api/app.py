@@ -28,11 +28,14 @@ def create_app() -> Any:
     from fastapi import (
         Depends,
         FastAPI,
+        File,
         HTTPException,
         Response,
+        UploadFile,
         WebSocket,
         WebSocketDisconnect,
     )
+    from fastapi.responses import FileResponse
     from pydantic import BaseModel
 
     from .. import db, persistence
@@ -151,6 +154,45 @@ def create_app() -> Any:
         except workspace_svc.WorkspaceError as exc:
             status = {"not_found": 404, "not_utf8": 415}.get(exc.code, 400)
             raise HTTPException(status_code=status, detail=exc.message) from exc
+
+    @app.get("/api/conversations/{conversation_id}/workspace/download")
+    def download_workspace_file(
+        path: str, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> Any:
+        try:
+            target = workspace_svc.resolve_download(Path(conv["folder_path"]), path)
+        except workspace_svc.WorkspaceError as exc:
+            raise HTTPException(
+                status_code=404 if exc.code == "not_found" else 400, detail=exc.message
+            ) from exc
+        return FileResponse(
+            target, filename=target.name, media_type="application/octet-stream"
+        )
+
+    @app.post("/api/conversations/{conversation_id}/workspace/upload")
+    async def upload_workspace_files(
+        files: list[UploadFile] = File(...),
+        conv: Any = Depends(auth.require_conversation_owner),
+    ) -> dict[str, Any]:
+        # Per-file verdicts : a batch may partially succeed (some saved, some
+        # rejected for size / conflict / quota). The whole call still returns 200.
+        folder = Path(conv["folder_path"])
+        results: list[dict[str, Any]] = []
+        for f in files:
+            data = await f.read()
+            try:
+                saved = workspace_svc.save_upload(folder, f.filename or "", data)
+                results.append({"status": "ok", **saved})
+            except workspace_svc.WorkspaceError as exc:
+                results.append(
+                    {
+                        "status": "error",
+                        "name": f.filename,
+                        "code": exc.code,
+                        "detail": exc.message,
+                    }
+                )
+        return {"results": results}
 
     # ---- user memory (read ; global, but auth-gated) ---------------------
 
