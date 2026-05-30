@@ -51,6 +51,7 @@ Commands:
   --create-user <username>    Create a web frontend user (prompts for password)
   --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
+                              (alias: --backup-db)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
   --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
@@ -314,7 +315,7 @@ case "${COMMAND}" in
     shift
     cmd_install "$@"
     ;;
-  --export-db)
+  --export-db | --backup-db)
     shift
     cmd_export_db "$@"
     ;;
