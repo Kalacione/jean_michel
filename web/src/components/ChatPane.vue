@@ -275,12 +275,19 @@
 .md :deep(code) { font-family: monospace; }
 .md :deep(ul), .md :deep(ol) { padding-left: 1.2em; }
 .md :deep(img) {
-  max-width: 260px;
-  max-height: 220px;
+  display: inline-block;
+  max-width: 256px;
+  max-height: 256px;
   border-radius: 6px;
   cursor: zoom-in;
-  margin: 3px 6px 3px 0;
+  margin: 0 8px 8px 0;
   vertical-align: top;
 }
 .md :deep(img.img-broken) { display: none; }
+/* Inline image results tile horizontally and wrap instead of stacking,
+   whatever block wrapper Markdown produced (paragraphs, list items, <br>). */
+.md :deep(p:has(> img)) { display: inline-block; margin: 0; }
+.md :deep(li:has(> img)) { display: inline-block; list-style: none; }
+.md :deep(ul:has(img)), .md :deep(ol:has(img)) { padding-left: 0; margin: 0.25em 0; }
+.md :deep(p:has(> img) br) { display: none; }
 </style>
