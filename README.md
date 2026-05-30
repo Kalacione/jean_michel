@@ -1,7 +1,10 @@
 # Jean-Michel
 
 Assistant IA local à agents spécialisés, orchestration Python déterministe avec
-hooks, et boucle multi-turn native Ollama. **Version 2** (branche `revolucion`).
+hooks, et boucle multi-turn native Ollama. **Version 2** — CLI Rich pour
+l'usage local mono-utilisateur, **API daemon FastAPI** + **frontal web Vue 3 /
+Vuetify** pour l'usage multi-utilisateur. Les deux surfaces partagent le même
+orchestrateur, les mêmes agents et la même BDD.
 
 ## Concept
 
@@ -36,6 +39,22 @@ turn assistant **sans tool_calls** : le `content` EST la réponse.
 
 Voir `DevNotes/REVOLUCION/06_proposition_v2.md` pour le détail
 architectural complet.
+
+## Surfaces
+
+Le même cœur (orchestrateur Python + agents + BDD SQLite) sert **deux
+surfaces utilisateur** parallèles :
+
+| Surface | Comment | Public | Mémoire utilisateur |
+|---|---|---|---|
+| **CLI** (`./jm.sh`) | terminal Rich, prompt_toolkit, modes `analyse`/`chat`/`vocal` | mono-utilisateur local | profil dans `cli_profile.toml`, user `cli` en BDD |
+| **Web** (`./jm.sh --serve` + frontend Vite/Vuetify) | API REST + WebSocket → Vue 3, multi-comptes auth | multi-utilisateur LAN | un compte par user (`web_users` en BDD), `user_memory` isolée par user_id |
+
+Aucune duplication : la couche **service** (`src/jeanmichel/service/`)
+contient la logique métier (conversation lifecycle, user_memory CRUD,
+workspace, turn execution streaming), appelée à la fois par le CLI et par
+l'API. Le CLI reste 100 % fonctionnel pour les usages locaux où on ne
+veut pas lancer un daemon.
 
 ## Agents v2 — le mille-feuille cognitif
 
@@ -106,6 +125,133 @@ traitée isolée par le dispatcher).
 Le mode est porté par la conversation et apparaît dans le bloc
 `## Conversation` du prompt système. Les paradigmes peuvent être restreints
 à un mode via la table `paradigm_modes`.
+
+**TTS sanitization** : avant d'être envoyée à Piper en mode vocal, la
+réponse passe par un nettoyage Markdown (drop des blocs code, listes
+remises à plat, liens → texte seul, ponctuations adoucies pour la
+prosodie). La voix lit du texte naturel, pas du markdown brut.
+
+## API daemon (`./jm.sh --serve`)
+
+Daemon FastAPI lancé à la main sur l'hôte, point d'entrée
+`jean-michel-serve`. Bind par défaut `0.0.0.0:8000` (override via
+`JEANMICHEL_API_HOST` / `JEANMICHEL_API_PORT`). Auth par **bearer token
+signé** (`itsdangerous`), mot de passe stocké en `argon2`. Le daemon
+n'est PAS conteneurisé — il vit sur l'hôte pour avoir accès direct à
+Ollama, au sandbox Docker et au modèle Piper.
+
+Surface REST (sélection — détails dans `src/jeanmichel/api/app.py`) :
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| `POST` | `/api/auth/login` | bearer token contre username + password |
+| `GET`/`POST` | `/api/conversations` | liste / création (user-scoped) |
+| `GET`/`PATCH`/`DELETE` | `/api/conversations/{id}` | détails / rename / suppression cascade |
+| `GET` | `/api/conversations/{id}/{messages,events,state}` | lecture des artefacts |
+| `GET`/`POST` | `/api/conversations/{id}/workspace[/file,upload,download,zip]` | inspection + upload + download (zip ou fichier unitaire) |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/memory[/{type}/{code}]` | CRUD `user_memory` (par user) |
+| `GET`/`PATCH` | `/api/profile` | profil du compte web courant |
+| `GET` | `/api/tts` | synthèse Piper streamée (consommée comme blob côté front) |
+| `WebSocket` | `/ws/conversations/{id}` | tour d'orchestration streamé live (events typés en JSON) |
+
+Toutes les routes (sauf `/api/health` et `/api/auth/login`) passent par
+`require_conversation_owner` ou `current_user` : un user ne peut JAMAIS
+voir les conversations / la mémoire / le workspace d'un autre. Anti-traversal
+via `safe_resolve` sur tous les paths workspace.
+
+Voir [DevNotes/WEBUI/01_audit_api_async_webui.md](DevNotes/WEBUI/01_audit_api_async_webui.md)
+pour le cadrage et [DevNotes/WEBUI/02_audit_user_memory_isolation.md](DevNotes/WEBUI/02_audit_user_memory_isolation.md)
+pour le passage du `user_memory` global à l'isolation par utilisateur.
+
+## Frontal web (Vue 3 + Vuetify)
+
+Le dossier [web/](web/) est une SPA Vite + Vue 3 + Vuetify 4 + Pinia.
+Buildée puis servie par nginx dans un container Docker — c'est la SEULE
+brique conteneurisée (l'API reste sur l'hôte).
+
+Composants principaux :
+
+- `LoginView.vue` — auth.
+- `MainLayout.vue` — drawer gauche (conversations) + barre du haut +
+  zone de chat.
+- `ConversationsDrawer.vue` — liste + reprise, badge utilisateur.
+- `ChatPane.vue` — fenêtre de chat, **stream WebSocket** des events
+  d'orchestration (réflexion / délégation / appels d'outils visibles
+  en live), upload d'attachements (drag & drop), Markdown rendu via
+  `markdown-it`.
+- `EventTrace.vue` — déroulé chronologique des events typés (mêmes 11
+  classes que le CLI : `RequestStarted`, `DelegationStarted/Completed`,
+  `ToolCall*`, `HookFired`, `WorkingBudgetUpdate`…).
+- `AskHumanDialog.vue` — aller-retour humain en cours de turn (le
+  router peut demander une clarification, le UI met le turn en pause).
+- `MemoryDialog.vue` — CRUD `user_memory` côté UI (save / recall /
+  list / update / delete).
+- `WorkspaceDialog.vue` — arbre du workspace, lecture, download
+  individuel ou zip, upload.
+- `ProfileDialog.vue` — édition du profil du compte web (nom, ville,
+  pays, langue, intérêts, notes — mêmes champs que `cli_profile.toml`).
+- `ConversationDetailsDialog.vue` — métadonnées + titre éditable + delete
+  avec confirmation.
+
+Le TTS est rendu côté navigateur via `/api/tts` : le frontend récupère
+le WAV synthétisé par Piper en blob, et le joue via la Web Audio API.
+Pas de dépendance audio sur le navigateur (ni `speechSynthesis`).
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:5173 (HMR)
+# OU container :
+docker compose -f web/compose.yml up --build   # → http://localhost:3000
+```
+
+Voir [web/README.md](web/README.md) pour les détails de stack.
+
+## Multi-utilisateur
+
+Mode mono-utilisateur côté CLI, multi-comptes côté web. Concrètement :
+
+- Table `web_users` (migrate_112) : `id`, `username`, `password_hash`
+  (argon2), `created_at`, plus les champs profil (`display_name`,
+  `city`, `country`, `language`, `interests`, `notes`) remplis à la
+  création du compte.
+- Table `conversation_users` : association `conversation_id ↔ user_id`,
+  matérialise l'ownership. Le CLI utilise un user système `cli`
+  (`user_id=1`), invisible du frontal.
+- `user_memory.user_id` (migrate_113) : la mémoire long-terme est
+  scopée par user. Les facts d'Alice n'apparaissent jamais dans les
+  prompts de Bob, ni vice-versa. Le CLI charge le user `cli` par défaut
+  et garde ses propres entrées.
+- `migrate_114_conversation_cascade.sql` : suppression d'une
+  conversation cascade ses messages / events / state / workspace et
+  l'association `conversation_users`.
+
+Création d'un compte web :
+
+```bash
+./jm.sh --create-user alice           # prompt pour le password
+```
+
+## Capacités image (en cours, branche `picture_feature`)
+
+Sprint en cours, audit complet dans
+[DevNotes/WEBUI/03_audit_image_capabilities.md](DevNotes/WEBUI/03_audit_image_capabilities.md).
+Cibles décidées :
+
+1. **Affichage** : endpoint authed `GET …/workspace/image?path=…`
+   (vrai MIME), pattern blob → objectURL côté front (même mécanique que
+   le TTS), lightbox `v-dialog` pour le clic.
+2. **Recherche** : nouvel outil `image_search` (catégorie SearXNG)
+   qui retourne URLs + miniatures sans télécharger (zéro SSRF/quota).
+3. **Vision** : nouvel outil `analyze_image(path, question)` qui encode
+   l'image du workspace en base64 **transitoire** vers gemma4
+   multimodal — JAMAIS de base64 persisté dans `messages.json`. Image
+   ⇒ DEEP forcé (granite ne classifie pas d'image).
+4. **Listing** : masquer les dotfiles (`if not name.startswith(".")`)
+   pour cacher un futur `.thumbs/` éventuel.
+
+Pas encore implémenté — l'audit décrit l'état des lieux, les options
+et la voie K.I.S.S. pour chaque décision avant qu'on écrive du code.
 
 ## Modèles configurables
 
@@ -294,12 +440,22 @@ de la purge initiale.
 
 ## Stack
 
+**Cœur (toujours requis)** :
 - Python 3.14 dans un venv local.
-- SQLite (configuration + user_memory cross-conv ; **plus de tables runtime**).
-- Ollama 0.21+ (thinking + multi-turn natif).
-- CLI : `rich`, `prompt_toolkit`.
-- Docker (optionnel, sandbox).
-- `langdetect` pour la détection de langue côté dispatcher.
+- SQLite (config + `user_memory` user-scoped + ownership conversations).
+- Ollama 0.21+ (thinking + multi-turn natif, multimodal pour gemma4).
+- `langdetect` côté dispatcher pour la détection de langue.
+
+**CLI** :
+- `rich`, `prompt_toolkit`.
+- Docker (optionnel) pour `bash_sandbox` + le méta-moteur SearXNG local.
+- `piper-tts` (mode vocal), `paplay`/`aplay`/`ffplay` (lecture).
+
+**Surface web** (extra `[web]`) :
+- `fastapi` + `uvicorn[standard]` — daemon REST + WebSocket.
+- `argon2-cffi` + `itsdangerous` — hash + bearer signé.
+- `python-multipart` — uploads workspace.
+- Côté front : Vue 3.5, Vuetify 4, Pinia 3, markdown-it, Vite 8.
 
 ## Installation
 
@@ -315,6 +471,21 @@ de la purge initiale.
 ./jm.sh --build-docker node-alpine  # builde l'image Node Alpine
 ./jm.sh --build-docker all          # builde toutes les images sandbox
 ```
+
+### Surface web
+
+```bash
+./jm.sh --create-user alice          # crée un compte web (prompt password)
+./jm.sh --serve                      # lance l'API daemon sur 0.0.0.0:8000
+# dans un autre terminal — choisir UN des deux :
+cd web && npm install && npm run dev                      # dev (HMR), :5173
+docker compose -f web/compose.yml up --build              # prod nginx, :3000
+```
+
+L'API et le frontend partagent la même BDD que le CLI. Les conversations
+créées via le CLI restent invisibles du web (associées au user système
+`cli`), celles créées via le web restent invisibles au CLI sauf si tu
+forces son `cli_profile.toml`.
 
 Override modèles :
 
@@ -429,11 +600,19 @@ Migrations v2 sous `db/migrations/` :
   (additif) : tables `web_users` + `conversation_users` (association
   user ↔ conversation). Le CLI ne crée pas d'association ; ses conversations
   restent invisibles au frontal web. Cf. `DevNotes/WEBUI/01_audit_api_async_webui.md`.
+- `migrate_113_user_memory_isolation.sql` — `user_memory.user_id` ajouté,
+  toutes les rows existantes reattribuées au user système `cli`. Lecture
+  et CRUD désormais filtrés par `user_id`. Plus de fuite cross-user.
+  Cf. `DevNotes/WEBUI/02_audit_user_memory_isolation.md`.
+- `migrate_114_conversation_cascade.sql` — `ON DELETE CASCADE` sur les
+  FK pour que la suppression d'une conversation (depuis le web) emporte
+  proprement ses messages, events, state et association
+  `conversation_users`. Le workspace sur disque est nettoyé côté service.
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108 109 110 111 112; do
+for m in 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114; do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -457,38 +636,41 @@ notes = "Dev senior, préfère les réponses directes sans préambule."
 ```
 jeanmichel/
 ├── README.md
-├── jm.sh                     # point d'entrée unifié
-├── pyproject.toml
-├── cli_profile.toml
+├── jm.sh                     # point d'entrée unifié (CLI + --serve + --create-user)
+├── pyproject.toml            # extras [dev] et [web]
+├── cli_profile.toml          # profil du user système 'cli'
+├── cli_profile.example.toml
+├── .env / .env.example       # clés d'API tools externes
 ├── db/
-│   ├── schema.sql            # schéma v2 consolidé
+│   ├── schema.sql            # schéma v2 consolidé (114 migrations appliquées)
 │   ├── schema_v1_baseline.sql # baseline v1 (tests migration)
 │   └── migrations/           # migrate_NNN_*.sql
 ├── debug/
-│   ├── inspect_conv.py       # v2 (lit messages.json + events.jsonl + state.json)
+│   ├── inspect_conv.py       # lit messages.json + events.jsonl + state.json
 │   ├── export_db.py
 │   ├── admin.py
 │   ├── clean_convs.py
 │   └── paradigm_matrix.py
-├── docker/sandbox/           # Dockerfiles bash_sandbox
+├── docker/sandbox/           # Dockerfiles bash_sandbox (py-alpine, node-alpine)
+├── docker/searxng/           # compose.yml du méta-moteur local
+├── voice_models/             # Piper .onnx + README (gitignored sauf README)
 ├── docs/
 │   ├── PROMPT_SKELETON.md
 │   ├── GEMMA4.md
 │   └── HOWTO_ADD_SPECIALIST_OR_TOOL.md
-├── DevNotes/REVOLUCION/      # plans, audits, propositions v2
-│   ├── 01_audit_orchestrateur.md
-│   ├── 02_architecture_cible.md
-│   ├── 03_retour_sur_architecture_cible.md
-│   ├── 04_audit_complementaire.md
-│   ├── 05_inspiration_claude_copilot.md
-│   ├── 06_proposition_v2.md         # référence architecturale v2
-│   ├── 07_plan_implementation.md
-│   ├── 08_paradigm_audit_table.md
-│   └── 09_phase8_completion.md
+├── DevNotes/
+│   ├── REVOLUCION/           # plans, audits, propositions v2 (01→09)
+│   ├── WEBUI/                # audits du frontal web
+│   │   ├── 01_audit_api_async_webui.md
+│   │   ├── 02_audit_user_memory_isolation.md
+│   │   └── 03_audit_image_capabilities.md
+│   ├── claude_4.7_extraction/
+│   ├── the_toolbox/
+│   └── todo.md
 ├── src/jeanmichel/
-│   ├── cli.py                # v2 CLI (Tier 0 + Tier 1)
+│   ├── cli.py                # CLI Rich (Tier 0 + Tier 1)
 │   ├── orchestrator_v2.py    # main loop + spawn_subagent
-│   ├── dispatcher.py         # Tier 0
+│   ├── dispatcher.py         # Tier 0 (granite)
 │   ├── hooks.py              # 4 hooks Python
 │   ├── compaction.py         # 4-level escalade
 │   ├── events.py             # 11 dataclasses typées
@@ -497,17 +679,47 @@ jeanmichel/
 │   ├── persistence.py        # messages.json + state.json + events.jsonl
 │   ├── bootstrap.py          # toml → user_memory
 │   ├── prompts.py            # render_system_prompt_v2 + index user_memory
-│   ├── config.py             # paramètres v2 (configurables)
-│   ├── db.py                 # accès SQLite (helpers v1+v2)
+│   ├── config.py             # paramètres v2 + loader .env
+│   ├── db.py                 # accès SQLite + helpers users / ownership
 │   ├── models.py             # dataclasses + ConversationState
+│   ├── voice.py              # Piper TTS streaming + Markdown cleanup
+│   ├── service/              # logique métier partagée CLI ↔ API
+│   │   ├── conversation.py   # create / delete (cascade)
+│   │   ├── memory.py         # user_memory CRUD (user-scoped)
+│   │   ├── workspace.py      # list_tree / read / upload / zip
+│   │   └── turn_runner.py    # run_turn(text, conv, user_id, …) streaming
+│   ├── api/                  # FastAPI daemon
+│   │   ├── app.py            # create_app(), routes REST + WebSocket
+│   │   ├── auth.py           # argon2 + bearer signé, create-user CLI
+│   │   └── executor.py       # run_turn_streaming (event → WS)
 │   └── tools/
 │       ├── delegate_to.py    # schema (control verb)
 │       ├── report_back.py    # schema + validation
 │       ├── manage_user_memory.py
-│       ├── clock.py, weather.py, wikipedia.py, web_search.py
-│       ├── workspace_*.py, conv_*.py, self_inspect_*.py
+│       ├── clock.py, weather.py, wikipedia.py, web_search.py, web_fetch.py
+│       ├── news.py, github.py, stackoverflow.py, pypi.py
+│       ├── workspace_*.py, self_inspect_*.py
 │       └── bash_sandbox.py
-└── tests/v2/                 # ~300 tests pytest contre la v2
+├── web/                      # frontal SPA Vue 3 + Vuetify
+│   ├── Dockerfile + compose.yml + nginx/   # build → image nginx
+│   ├── package.json + vite.config.mjs
+│   └── src/
+│       ├── main.js + App.vue
+│       ├── api.js + ws.js + download.js
+│       ├── stores/{auth,conversations}.js  # Pinia
+│       ├── components/
+│       │   ├── LoginView.vue
+│       │   ├── MainLayout.vue
+│       │   ├── ChatPane.vue           # chat + WS event stream
+│       │   ├── ConversationsDrawer.vue
+│       │   ├── ConversationDetailsDialog.vue
+│       │   ├── EventTrace.vue         # déroulé des events typés
+│       │   ├── AskHumanDialog.vue
+│       │   ├── MemoryDialog.vue       # CRUD user_memory
+│       │   ├── ProfileDialog.vue
+│       │   └── WorkspaceDialog.vue    # arbre, upload, download zip
+│       └── plugins/vuetify.js + styles/
+└── tests/v2/                 # ~500 tests pytest
     ├── conftest.py
     ├── test_orchestrator_v2.py
     ├── test_dispatcher.py
@@ -527,12 +739,30 @@ jeanmichel/
 
 ## État
 
-Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`).
-**15 agents actifs** (dont 5 reasoners sur gemma4:26b — strategist +
-critical-thinker + comparator + meta-analyst + code-runner — et le
-pattern fetcher/runner pour le code). ~360 tests v2 verts.
-CLI multi-tour en tous modes, `--resume`, `--list-conv`. Dispatcher Tier 0
-opérationnel via granite. Main loop Tier 1 multi-turn natif. Subagents Tier 2
-avec délégation imbriquée jusqu'à `MAX_DEPTH=5`. Mémoire long-terme
-utilisateur active. Compaction 4 niveaux. Configuration tunable sans
-recompile via `config.py` + env vars + CLI flags.
+Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`),
+mergée sur `main`. **15 agents actifs** (dont 5 reasoners sur gemma4:26b —
+strategist + critical-thinker + comparator + meta-analyst + code-runner — et
+le pattern fetcher/runner pour le code). **~500 tests v2 verts.**
+
+**Cœur stabilisé** : CLI multi-tour en tous modes, `--resume`, `--list-conv`,
+dispatcher Tier 0 opérationnel via granite, main loop Tier 1 multi-turn
+natif, subagents Tier 2 avec délégation imbriquée jusqu'à `MAX_DEPTH=5`,
+mémoire long-terme utilisateur (scopée par user), compaction 4 niveaux,
+sandbox audit JSONL, Markdown cleanup pour TTS, configuration tunable
+sans recompile via `config.py` + `.env` + CLI flags.
+
+**Frontal web livré** (sprints S0→S7 + M2→M3, cf. branche
+`voice_out` historique) : API FastAPI multi-utilisateur, WebSocket
+streaming des events orchestrateur, SPA Vue 3 / Vuetify avec
+auth + chat + drawer conversations + workspace UI + memory CRUD +
+profile + TTS navigateur. Conteneurisé côté front uniquement (nginx),
+daemon Python à la main côté hôte.
+
+**Sprint en cours** : capacités image (branche `picture_feature`).
+Audit complet validé dans
+[DevNotes/WEBUI/03_audit_image_capabilities.md](DevNotes/WEBUI/03_audit_image_capabilities.md) :
+endpoint authed `/workspace/image` (vrai MIME + blob pattern), outil
+`image_search` (SearXNG), outil `analyze_image(path, question)` vers
+gemma4 multimodal (image ⇒ DEEP forcé, jamais de base64 persisté dans
+`messages.json`). Rien encore en production, décisions arrêtées,
+implémentation à venir.
