@@ -19,6 +19,7 @@ from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
 from . import conv_status as _conv_status_mod
 from . import github as _github_mod
+from . import image_search as _image_search_mod
 from . import manage_user_memory as _manage_user_memory_mod
 from . import news as _news_mod
 from . import pypi as _pypi_mod
@@ -76,6 +77,7 @@ def build_registry(
         _clock_mod.SPEC.name: _clock_mod.SPEC,
         _weather_mod.SPEC.name: _weather_mod.SPEC,
         _web_search_mod.SPEC.name: _web_search_mod.SPEC,
+        _image_search_mod.SPEC.name: _image_search_mod.SPEC,
         _wikipedia_mod.SEARCH_SPEC.name: _wikipedia_mod.SEARCH_SPEC,
         _wikipedia_mod.GET_PAGE_SPEC.name: _wikipedia_mod.GET_PAGE_SPEC,
         _si_config_mod.SPEC.name: _si_config_mod.SPEC,

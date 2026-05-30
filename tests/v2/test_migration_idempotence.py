@@ -51,6 +51,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_113_user_memory_isolation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_114_conversation_cascade.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_115_image_search.sql")
     yield conn
     conn.close()
 
@@ -381,3 +382,20 @@ def test_conversation_users_cascade_in_consolidated_schema(v2_consolidated_db):
     }
     assert on_delete.get("conversations") == "CASCADE"
     assert on_delete.get("web_users") == "CASCADE"
+
+
+# ---- migrate_115 : image_search grant --------------------------------------
+
+
+def test_image_search_granted(v2_migrated_db, v2_consolidated_db):
+    """Both the migration chain and schema.sql grant image_search to the router
+    and the web-search-specialist."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        codes = {
+            r["code"]
+            for r in db.execute(
+                "SELECT a.code FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
+                "WHERE at.tool_code = 'image_search'"
+            )
+        }
+        assert {"jean-michel", "web-search-specialist"} <= codes
