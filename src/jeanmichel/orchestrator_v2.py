@@ -45,6 +45,7 @@ from .config import (
     model_context_window,
 )
 from .events import (
+    AgentThinking,
     DelegationCompleted,
     DelegationStarted,
     HookFired,
@@ -405,6 +406,15 @@ def _run_agent_loop(
                 tool_call_count=len(resp.tool_calls),
             ),
         )
+
+        # Surface the thinking channel (web frontend "thoughts" ; CLI shows it
+        # only with --show-thoughts). Emitted only when non-empty.
+        if (resp.thinking or "").strip():
+            _emit(
+                event_emitter,
+                conv_folder,
+                AgentThinking(agent=agent.code, text=resp.thinking),
+            )
 
         _append_assistant_turn(messages, resp)
 

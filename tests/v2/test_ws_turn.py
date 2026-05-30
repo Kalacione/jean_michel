@@ -25,7 +25,7 @@ from jeanmichel.api import app as api_app  # noqa: E402
 from jeanmichel.api import auth, executor  # noqa: E402
 from jeanmichel.db import connect as db_connect  # noqa: E402
 from jeanmichel.llm import MockClient  # noqa: E402
-from jeanmichel.models import LLMResponse  # noqa: E402
+from jeanmichel.models import LLMResponse, ToolCall  # noqa: E402
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -146,3 +146,111 @@ def test_ws_unknown_message(client, monkeypatch):
         ws.send_json({"type": "ping"})
         m = ws.receive_json()
         assert m["type"] == "error"
+
+
+# ---- ask_human round-trip + timeout (S4) ----------------------------------
+
+
+def _ask_human_clients() -> tuple[MockClient, MockClient]:
+    """Main agent asks once, then answers after the human reply is injected."""
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content="",
+                tool_calls=[
+                    ToolCall(name="ask_human", arguments={"question": "A or B?", "why": "ambiguous"})
+                ],
+            ),
+            LLMResponse(thinking="", content="Chose A."),
+        ]
+    )
+    return dispatch, main
+
+
+def test_ws_ask_human_roundtrip(client, monkeypatch):
+    monkeypatch.setattr(executor, "get_llm_clients", _ask_human_clients)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token)
+
+    msgs = []
+    final = None
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "pick one"})
+        while True:
+            m = ws.receive_json()
+            msgs.append(m)
+            if m["type"] == "ask_human":
+                ws.send_json({"type": "answer", "text": "A"})
+            if m["type"] in ("final", "error"):
+                final = m
+                break
+
+    assert any(m["type"] == "ask_human" and m["question"] == "A or B?" for m in msgs)
+    assert final == {"type": "final", "answer": "Chose A."}
+
+
+def test_ws_ask_human_timeout(client, monkeypatch):
+    monkeypatch.setattr("jeanmichel.config.ASK_HUMAN_TIMEOUT_SECONDS", 0.3)
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content="",
+                tool_calls=[ToolCall(name="ask_human", arguments={"question": "?", "why": "?"})],
+            ),
+            LLMResponse(thinking="", content="proceeded without an answer"),
+        ]
+    )
+    monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token)
+
+    msgs = []
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "x"})
+        while True:
+            m = ws.receive_json()
+            msgs.append(m)
+            if m["type"] in ("final", "error"):
+                break  # deliberately never answer — the timeout must fire
+
+    assert any(m["type"] == "ask_human" for m in msgs)
+    assert msgs[-1] == {"type": "final", "answer": "proceeded without an answer"}
+
+
+# ---- thinking channel surfaced (S4) ---------------------------------------
+
+
+def test_ws_streams_thinking(client, monkeypatch):
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(
+        script=[LLMResponse(thinking="let me reason about it", content="The answer is 42.")]
+    )
+    monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token)
+
+    msgs = []
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "q"})
+        while True:
+            m = ws.receive_json()
+            msgs.append(m)
+            if m["type"] in ("final", "error"):
+                break
+
+    thoughts = [m for m in msgs if m["type"] == "event" and m["event"]["type"] == "AgentThinking"]
+    assert thoughts, msgs
+    assert thoughts[0]["event"]["text"] == "let me reason about it"

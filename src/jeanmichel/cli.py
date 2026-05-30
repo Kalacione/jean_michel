@@ -28,8 +28,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from . import bootstrap as bootstrap_mod
-from . import db
-from . import persistence
+from . import db, persistence
 from .config import (
     DISPATCH_MODEL,
     MAIN_MODEL,
@@ -37,6 +36,7 @@ from .config import (
     ensure_dirs,
 )
 from .events import (
+    AgentThinking,
     DelegationCompleted,
     DelegationStarted,
     HookFired,
@@ -173,6 +173,11 @@ def render_event(
         # Thin marker — the final answer is printed as a Panel by the caller.
         indent = ""
         console.print(Rule(Text(f"answer from {event.agent}", style="dim"), style="dim"))
+
+    elif isinstance(event, AgentThinking):
+        # Thought channel — quiet by default ; shown only with --show-thoughts.
+        if show_thoughts:
+            console.print(f"  [{C_THOUGHT}]💭 {_truncate(event.text, 200)}[/]")
 
     else:
         # Unknown event type — log it raw.

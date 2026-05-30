@@ -34,7 +34,7 @@ def event_to_jsonl_line(event: Any) -> str:
     return json.dumps(_event_to_dict(event), ensure_ascii=False) + "\n"
 
 
-# ---- Event dataclasses (11 total, cf. §6 bis doc 06) ---------------------
+# ---- Event dataclasses (12 total, cf. §6 bis doc 06) ---------------------
 
 
 @dataclass(frozen=True)
@@ -168,6 +168,21 @@ class RequestCompleted:
         return _event_to_dict(self)
 
 
+@dataclass(frozen=True)
+class AgentThinking:
+    """Emitted after an LLM call when the model produced thinking-channel text.
+
+    Powers the web frontend's "thoughts" display. Only emitted when the
+    thinking channel is non-empty.
+    """
+    agent: str
+    text: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
 # ---- Registry for deserialization ----------------------------------------
 
 EVENT_CLASSES: dict[str, type] = {
@@ -182,6 +197,7 @@ EVENT_CLASSES: dict[str, type] = {
     "WorkingBudgetUpdate": WorkingBudgetUpdate,
     "MemoryNearCapacity": MemoryNearCapacity,
     "RequestCompleted": RequestCompleted,
+    "AgentThinking": AgentThinking,
 }
 
 

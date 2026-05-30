@@ -1,4 +1,4 @@
-"""Tests for `jeanmichel.events` — 11 typed event dataclasses + (de)serialisation."""
+"""Tests for `jeanmichel.events` — 12 typed event dataclasses + (de)serialisation."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import pytest
 
 from jeanmichel.events import (
     EVENT_CLASSES,
+    AgentThinking,
     DelegationCompleted,
     DelegationStarted,
     HookFired,
@@ -24,11 +25,10 @@ from jeanmichel.events import (
     event_to_jsonl_line,
 )
 
+# ---- 12 event types are registered ---------------------------------------
 
-# ---- 11 event types are registered ---------------------------------------
 
-
-def test_event_catalogue_has_eleven_entries():
+def test_event_catalogue_has_twelve_entries():
     expected = {
         "RequestStarted",
         "LLMCallStarted",
@@ -41,9 +41,10 @@ def test_event_catalogue_has_eleven_entries():
         "WorkingBudgetUpdate",
         "MemoryNearCapacity",
         "RequestCompleted",
+        "AgentThinking",
     }
     assert set(EVENT_CLASSES.keys()) == expected
-    assert len(EVENT_CLASSES) == 11
+    assert len(EVENT_CLASSES) == 12
 
 
 # ---- Each event has utc auto-populated -----------------------------------
@@ -111,6 +112,7 @@ def test_jsonl_line_is_valid_json_with_newline():
         WorkingBudgetUpdate(ratio=0.72, compaction_level_triggered=1),
         MemoryNearCapacity(current_count=90, limit=100),
         RequestCompleted(agent="jean-michel", final_content_summary="here is the answer"),
+        AgentThinking(agent="jean-michel", text="let me reason about this"),
     ],
 )
 def test_event_roundtrip_via_jsonl(event):

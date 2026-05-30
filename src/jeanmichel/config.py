@@ -175,6 +175,9 @@ MICROCOMPACT_TOKEN_THRESHOLD = _int_env("JEANMICHEL_MICROCOMPACT_THRESHOLD", 150
 MAX_DEPTH = _int_env("JEANMICHEL_MAX_DEPTH", 5)
 MAX_SEARCH_CALLS_PER_TURN = _int_env("JEANMICHEL_MAX_SEARCH_TURN", 10)
 WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
+# Max time the web daemon blocks a turn waiting for a human reply to an
+# ask_human prompt before giving up and letting the orchestrator conclude (S4).
+ASK_HUMAN_TIMEOUT_SECONDS = _int_env("JEANMICHEL_ASK_HUMAN_TIMEOUT", 300)
 
 # Mémoire long-terme utilisateur (cf. §10 doc 06). Limite et seuil d'alerte
 # sur l'index injecté dans le system prompt.
