@@ -55,6 +55,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_116_vision_tools.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_117_image_display_routing.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_118_paradigms_english.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_119_image_results_cap.sql")
     yield conn
     conn.close()
 

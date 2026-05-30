@@ -18,10 +18,10 @@ from . import web_search as _ws
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
 
-# Cap image results at 5 (max AND default) : "montre-moi des images" should
-# return up to 5, not a flood. Dedup/relevance may yield fewer — that's fine.
-_MAX_RESULTS = 5
-_DEFAULT_RESULTS = 5
+# Cap image results at 6 (max AND default) : the chat image grid fits 6 nicely.
+# Dedup/relevance may yield fewer — that's fine (not forced).
+_MAX_RESULTS = 6
+_DEFAULT_RESULTS = 6
 
 
 def _do_image_search(query: str, language: str, results: int) -> list[dict]:
