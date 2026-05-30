@@ -235,7 +235,7 @@ Puis régénérer `db/schema.sql` via le dump (process documenté dans l'en-têt
 - **CLI vs web** : convs CLI invisibles dans le web (par design, pas d'association) ; éviter de
   piloter la même conv via CLI et daemon en parallèle (écritures `messages.json`/`state.json`).
 - **Web UI** 
-  - le bloc de reponse de jeanmichel apparait avant le bloc de detail de reflexion, au lieu de apres.
+  - le bloc de reponse de jeanmichel apparait avant le bloc de detail de reflexion, au lieu de apres. (a revoir, le bloc reflexion est toujours en bas en fait, necessie reflexion)
   - dans la popup de workspace, ajouter un bouton pour telecharger le fichier, juste avant le nom du fichier actuellement selectionne (partie de droite de la popup)
   - possibilite d'uploader des fichiers qui vont dans le workspace (https://vuetifyjs.com/en/api/v-file-upload/)
   - une fois la phase de reflexion terminee, le bloc de reflexion doit etre "replie" et une icone permet de le deplier/replier
