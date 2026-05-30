@@ -2,21 +2,58 @@
   <div class="chat-pane d-flex flex-column">
     <div ref="scroller" class="messages flex-grow-1 overflow-y-auto pa-4">
       <template v-for="(m, i) in conv.messages" :key="i">
-        <div class="mb-3 d-flex" :class="m.role === 'user' ? 'justify-end' : 'justify-start'">
+        <div
+          v-if="renderable(m)"
+          class="mb-3 d-flex"
+          :class="m.role === 'user' ? 'justify-end' : 'justify-start'"
+        >
           <div class="msg-col d-flex flex-column" :class="m.role === 'user' ? 'align-end' : 'align-start'">
             <v-card
               class="pa-3"
               :color="m.role === 'user' ? 'primary' : undefined"
               :variant="m.role === 'user' ? 'flat' : 'tonal'"
             >
-              <!-- eslint-disable-next-line vue/no-v-html -->
-              <div
-                v-if="m.role === 'assistant'"
-                class="md"
-                @click="onMdClick"
-                @error.capture="onImgError"
-                v-html="render(m.content)"
-              />
+              <template v-if="m.role === 'assistant'">
+                <!-- eslint-disable-next-line vue/no-v-html -->
+                <div
+                  v-if="stripImages(m.content)"
+                  class="md"
+                  @click="onMdClick"
+                  @error.capture="onImgError"
+                  v-html="render(stripImages(m.content))"
+                />
+                <!-- Remote images → Vuetify image grid (tiles + wrap). -->
+                <v-row v-if="imagesOf(m.content).length" class="ma-0 mt-1" dense>
+                  <v-col
+                    v-for="(img, k) in imagesOf(m.content)"
+                    :key="k"
+                    class="pa-1"
+                    cols="6"
+                    sm="4"
+                  >
+                    <v-img
+                      :alt="img.alt"
+                      aspect-ratio="1"
+                      class="rounded clickable bg-grey-lighten-2"
+                      cover
+                      :src="img.url"
+                      width="100%"
+                      @click="openLightbox(img.url)"
+                    >
+                      <template #placeholder>
+                        <div class="d-flex align-center justify-center fill-height">
+                          <v-progress-circular color="grey-lighten-4" indeterminate size="24" />
+                        </div>
+                      </template>
+                      <template #error>
+                        <div class="d-flex align-center justify-center fill-height text-disabled">
+                          <v-icon icon="mdi-image-off-outline" />
+                        </div>
+                      </template>
+                    </v-img>
+                  </v-col>
+                </v-row>
+              </template>
               <div v-else class="user-text">{{ m.content }}</div>
             </v-card>
 
@@ -135,8 +172,8 @@
       {{ snackbar.text }}
     </v-snackbar>
 
-    <v-dialog v-model="lightbox.open" max-width="92vw">
-      <v-img contain max-height="86vh" :src="lightbox.src" @click="lightbox.open = false" />
+    <v-dialog v-model="lightbox.open" max-width="80vw">
+      <v-img contain max-height="80vh" :src="lightbox.src" @click="lightbox.open = false" />
     </v-dialog>
   </div>
 </template>
@@ -170,13 +207,31 @@
     return md.render(text || '')
   }
 
-  // Inline images the agent embeds (Markdown `![](url)`) → clickable thumbnails
-  // (lightbox) ; broken hotlinked images are hidden rather than shown busted.
+  // Remote images the agent embeds (Markdown `![](http…)`) are pulled out and
+  // shown as a Vuetify image grid ; the rest of the message renders as Markdown.
+  const IMG_MD = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+?)(?:\s+"[^"]*")?\)/g
+  function imagesOf (content) {
+    const out = []
+    IMG_MD.lastIndex = 0
+    let m
+    while ((m = IMG_MD.exec(content || '')) !== null) out.push({ alt: m[1], url: m[2] })
+    return out
+  }
+  function stripImages (content) {
+    return (content || '')
+      .replace(IMG_MD, '')
+      .replace(/^[ \t]*[-*][ \t]*$/gm, '') // drop bullets left empty by image removal
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
   const lightbox = ref({ open: false, src: '' })
+  function openLightbox (src) {
+    lightbox.value = { open: true, src }
+  }
+  // Stray non-grid images (e.g. a relative path) still render via v-html.
   function onMdClick (e) {
-    if (e.target && e.target.tagName === 'IMG') {
-      lightbox.value = { open: true, src: e.target.currentSrc || e.target.src }
-    }
+    if (e.target && e.target.tagName === 'IMG') openLightbox(e.target.currentSrc || e.target.src)
   }
   function onImgError (e) {
     if (e.target && e.target.tagName === 'IMG') e.target.classList.add('img-broken')
@@ -200,6 +255,13 @@
       p => m.content && (m.content.includes(p) || m.content.includes(basename(p))),
     )
     return [...new Set([...explicit, ...mentioned])]
+  }
+
+  // Skip empty assistant bubbles (a content-less turn, or a reloaded
+  // conversation with an empty assistant message) — they leave blank cards.
+  function renderable (m) {
+    if (m.role === 'user') return true
+    return Boolean(stripImages(m.content)) || imagesOf(m.content).length > 0 || messageFiles(m).length > 0
   }
 
   function toggleAttach (p) {
@@ -284,10 +346,5 @@
   vertical-align: top;
 }
 .md :deep(img.img-broken) { display: none; }
-/* Inline image results tile horizontally and wrap instead of stacking,
-   whatever block wrapper Markdown produced (paragraphs, list items, <br>). */
-.md :deep(p:has(> img)) { display: inline-block; margin: 0; }
-.md :deep(li:has(> img)) { display: inline-block; list-style: none; }
-.md :deep(ul:has(img)), .md :deep(ol:has(img)) { padding-left: 0; margin: 0.25em 0; }
-.md :deep(p:has(> img) br) { display: none; }
+.clickable { cursor: zoom-in; }
 </style>

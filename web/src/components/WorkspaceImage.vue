@@ -21,13 +21,13 @@
       <v-progress-circular indeterminate size="20" width="2" />
     </span>
 
-    <v-dialog v-model="open" max-width="92vw">
+    <v-dialog v-model="open" max-width="80vw">
       <v-card>
         <v-toolbar density="compact" :title="name">
           <v-btn icon="mdi-download" title="Télécharger l'original" @click="download" />
           <v-btn icon="mdi-close" @click="open = false" />
         </v-toolbar>
-        <v-img contain max-height="82vh" :src="url" />
+        <v-img contain max-height="calc(80vh - 48px)" :src="url" />
       </v-card>
     </v-dialog>
   </span>
