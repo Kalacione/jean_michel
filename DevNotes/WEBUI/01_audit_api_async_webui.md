@@ -251,6 +251,7 @@ Puis régénérer `db/schema.sql` via le dump (process documenté dans l'en-têt
   - creation de personna assistant (ex glados, ton desinvolte, ironique)
   - association d'un model vocal
 - incitation a continuer la conversation en amglais (non respect de la langue user)
+- supprimer formatage markdow avant lecture vocale
 
 ## Vérification
 
