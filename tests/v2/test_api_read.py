@@ -296,6 +296,71 @@ def test_memory_isolated_between_users(client):
     assert client.get("/api/memory/user/alice-secret", headers=_auth(tok_a)).status_code == 200
 
 
+# ---- User profile (M3) ----------------------------------------------------
+
+
+def test_profile_get_defaults_empty(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    resp = client.get("/api/profile", headers=_auth(token))
+    assert resp.status_code == 200
+    profile = resp.json()["profile"]
+    assert set(profile) == set(db.WEB_PROFILE_FIELDS)
+    assert all(v == "" for v in profile.values())
+
+
+def test_profile_get_reflects_creation_fields(client):
+    with db_connect() as conn:
+        db.create_web_user(conn, "alice", auth.hash_password("pw"), name="Alice", city="Montréal")
+    token = _login(client, "alice", "pw")
+    profile = client.get("/api/profile", headers=_auth(token)).json()["profile"]
+    assert profile["name"] == "Alice"
+    assert profile["city"] == "Montréal"
+
+
+def test_profile_patch_updates_and_persists(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    patched = client.patch(
+        "/api/profile", json={"city": "Laval", "language": "fr"}, headers=_auth(token)
+    )
+    assert patched.status_code == 200
+    assert patched.json()["profile"]["city"] == "Laval"
+    # Re-read confirms persistence ; unspecified fields stay untouched.
+    profile = client.get("/api/profile", headers=_auth(token)).json()["profile"]
+    assert profile["city"] == "Laval"
+    assert profile["language"] == "fr"
+    assert profile["name"] == ""
+
+
+def test_profile_patch_ignores_unknown_and_null(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    # Unknown keys are dropped by the model ; null values are skipped (no overwrite).
+    resp = client.patch(
+        "/api/profile",
+        json={"city": "Laval", "ghost": "x", "country": None},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["profile"]["city"] == "Laval"
+
+
+def test_profile_is_user_scoped(client):
+    _make_user("alice", "pw")
+    _make_user("bob", "pw")
+    tok_a = _login(client, "alice", "pw")
+    tok_b = _login(client, "bob", "pw")
+    client.patch("/api/profile", json={"city": "Montréal"}, headers=_auth(tok_a))
+    # Bob's profile is unaffected by Alice's update.
+    assert client.get("/api/profile", headers=_auth(tok_b)).json()["profile"]["city"] == ""
+
+
+def test_profile_requires_auth(client):
+    assert client.get("/api/profile").status_code == 401
+    assert client.patch("/api/profile", json={"city": "x"}).status_code == 401
+
+
 # ---- TTS endpoint (S6) ----------------------------------------------------
 
 

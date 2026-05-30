@@ -99,6 +99,43 @@ def test_list_conversations_for_user_is_scoped(tmp_db_v2):
     assert cli_conv not in alice_ids and cli_conv not in bob_ids
 
 
+# ---- Web user profile (M3) ------------------------------------------------
+
+
+def test_create_web_user_with_profile_fields(tmp_db_v2):
+    """Base fields are filled at creation ; the rest default to '' (never NULL)."""
+    with db_connect() as conn:
+        uid = db.create_web_user(
+            conn, "alice", auth.hash_password("pw"),
+            name="Alice", city="Montréal", country="CA", language="fr",
+        )
+        row = db.get_web_user_by_id(conn, uid)
+    assert row["name"] == "Alice"
+    assert row["city"] == "Montréal"
+    assert row["country"] == "CA"
+    assert row["language"] == "fr"
+    assert row["interests"] == "" and row["notes"] == ""
+
+
+def test_update_web_user_profile(tmp_db_v2):
+    uid = _make_user("alice", "pw")
+    with db_connect() as conn:
+        db.update_web_user_profile(conn, uid, city="Laval", notes="likes KISS")
+        row = db.get_web_user_by_id(conn, uid)
+    assert row["city"] == "Laval"
+    assert row["notes"] == "likes KISS"
+    # No known field in the patch → no-op (the row is left untouched).
+    with db_connect() as conn:
+        db.update_web_user_profile(conn, uid, bogus="x")
+        assert db.get_web_user_by_id(conn, uid)["city"] == "Laval"
+
+
+def test_cli_user_is_reserved(tmp_db_v2):
+    """The schema seeds a `cli` user ; it's the CLI identity + default memory scope."""
+    with db_connect() as conn:
+        assert db.cli_user_id(conn) == db.get_web_user_by_username(conn, "cli")["id"]
+
+
 # ---- Password hashing + tokens --------------------------------------------
 
 

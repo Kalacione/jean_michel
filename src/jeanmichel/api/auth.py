@@ -143,6 +143,9 @@ def _create_user_cli(argv: list[str]) -> int:
         print("usage: python -m jeanmichel.api.auth create-user <username>")
         return 2
     username = argv[0]
+    if username == "cli":
+        print("aborted: 'cli' is reserved for the CLI user.")
+        return 1
     password = getpass.getpass(f"password for {username!r}: ")
     if not password:
         print("aborted: empty password")
@@ -150,9 +153,22 @@ def _create_user_cli(argv: list[str]) -> int:
     if getpass.getpass("confirm: ") != password:
         print("aborted: passwords differ")
         return 1
+    print("base profile (press Enter to skip):")
+    name = input("  name: ").strip()
+    city = input("  city: ").strip()
+    country = input("  country: ").strip()
+    language = input("  language (e.g. fr): ").strip()
     try:
         with db.connect() as conn:
-            uid = db.create_web_user(conn, username, hash_password(password))
+            uid = db.create_web_user(
+                conn,
+                username,
+                hash_password(password),
+                name=name,
+                city=city,
+                country=country,
+                language=language,
+            )
     except Exception as exc:  # noqa: BLE001
         print(f"failed: {exc}")
         return 1

@@ -10,6 +10,7 @@
       @click="workspace = true"
     />
     <v-btn icon="mdi-brain" title="Mémoire" @click="memory = true" />
+    <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
     <v-btn icon="mdi-theme-light-dark" title="Thème" @click="$vuetify.theme.cycle()" />
     <v-chip class="ml-2" prepend-icon="mdi-account" variant="tonal">
       {{ auth.user?.username }}
@@ -36,6 +37,7 @@
   <AskHumanDialog />
   <WorkspaceDialog v-model="workspace" />
   <MemoryDialog v-model="memory" />
+  <ProfileDialog v-model="profile" />
 </template>
 
 <script setup>
@@ -44,6 +46,7 @@
   import ChatPane from '@/components/ChatPane.vue'
   import ConversationsDrawer from '@/components/ConversationsDrawer.vue'
   import MemoryDialog from '@/components/MemoryDialog.vue'
+  import ProfileDialog from '@/components/ProfileDialog.vue'
   import WorkspaceDialog from '@/components/WorkspaceDialog.vue'
   import { useAuthStore } from '@/stores/auth'
   import { useConvStore } from '@/stores/conversations'
@@ -53,6 +56,7 @@
   const drawer = ref(true)
   const workspace = ref(false)
   const memory = ref(false)
+  const profile = ref(false)
 
   onMounted(() => conv.refresh())
 

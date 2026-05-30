@@ -223,6 +223,20 @@ def get_web_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | 
     return conn.execute("SELECT * FROM web_users WHERE id=?", (user_id,)).fetchone()
 
 
+def update_web_user_profile(conn: sqlite3.Connection, user_id: int, **fields: str) -> None:
+    """Update the profile columns of a web user. Only known fields are written."""
+    sets: list[str] = []
+    vals: list[str] = []
+    for field in WEB_PROFILE_FIELDS:
+        if field in fields and fields[field] is not None:
+            sets.append(f"{field}=?")
+            vals.append(fields[field])
+    if not sets:
+        return
+    vals.append(user_id)  # type: ignore[arg-type]
+    conn.execute(f"UPDATE web_users SET {', '.join(sets)} WHERE id=?", vals)
+
+
 def cli_user_id(conn: sqlite3.Connection) -> int:
     """id of the reserved `cli` user — the CLI's identity + the default memory scope.
 

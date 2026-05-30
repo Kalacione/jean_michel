@@ -66,6 +66,9 @@ export const api = {
   updateMemory: (type, code, patch) => request('PATCH', `/memory/${type}/${code}`, patch),
   deleteMemory: (type, code) => request('DELETE', `/memory/${type}/${code}`),
 
+  getProfile: () => request('GET', '/profile'),
+  updateProfile: patch => request('PATCH', '/profile', patch),
+
   // TTS is auth-gated, so an <audio src> can't carry the token : fetch with the
   // header and return a Blob the caller plays via the Web Audio / Audio API.
   async tts (text) {

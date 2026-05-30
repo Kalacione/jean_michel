@@ -242,6 +242,7 @@ Puis régénérer `db/schema.sql` via le dump (process documenté dans l'en-têt
   - possibilite de supprimer des conversations
   - permettre de donner un titre a la conversation (le LLM pourrait en deduire un par defaut et le user pourrait l'editer)
 - injection date/heure et info user systematiques ?
+-  L'analyse automatique des échanges pour extraire des faits reste hors scope (trop complexe pour le gain).
 
 ## Vérification
 

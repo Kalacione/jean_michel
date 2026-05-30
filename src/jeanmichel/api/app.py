@@ -63,6 +63,15 @@ def create_app() -> Any:
         description: str | None = None
         content: str | None = None
 
+    class ProfileUpdate(BaseModel):
+        name: str | None = None
+        birthdate: str | None = None
+        city: str | None = None
+        country: str | None = None
+        language: str | None = None
+        interests: str | None = None
+        notes: str | None = None
+
     # ---- health ----------------------------------------------------------
 
     @app.get("/api/health")
@@ -227,6 +236,26 @@ def create_app() -> Any:
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"deleted_id": target_id}
+
+    # ---- user profile (structured ; filled at creation, editable by the user) -
+
+    @app.get("/api/profile")
+    def get_profile(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        with db.connect() as conn:
+            row = db.get_web_user_by_id(conn, user["id"])
+        return {
+            "profile": {f: (row[f] if row is not None else "") for f in db.WEB_PROFILE_FIELDS}
+        }
+
+    @app.patch("/api/profile")
+    def update_profile(
+        body: ProfileUpdate, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        patch = {k: v for k, v in body.model_dump().items() if v is not None}
+        with db.connect() as conn:
+            db.update_web_user_profile(conn, user["id"], **patch)
+            row = db.get_web_user_by_id(conn, user["id"])
+        return {"profile": {f: row[f] for f in db.WEB_PROFILE_FIELDS}}
 
     # ---- text-to-speech (vocal mode ; on-demand, off the turn critical path) -
 
