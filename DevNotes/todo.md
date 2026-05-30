@@ -31,3 +31,4 @@
   - association d'un model vocal
 - incitation a continuer la conversation en amglais (non respect de la langue user)
 - supprimer formatage markdow avant lecture vocale
+- les demandes "repond simplement ..." ne devraient pas etre routees vers jeanmichel
