@@ -112,3 +112,11 @@ voice_models/*.onnx
 voice_models/*.onnx.json
 voice_models/*.zip
 !voice_models/README.md
+
+# web
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
