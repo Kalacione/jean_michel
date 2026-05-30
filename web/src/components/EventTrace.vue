@@ -1,11 +1,14 @@
 <template>
-  <v-card class="trace pa-2 mb-3" max-width="80%" variant="tonal">
-    <div class="d-flex align-center ga-2 mb-1">
+  <v-card v-if="busy || queued || rows.length" class="trace pa-2 mb-3" max-width="80%" variant="tonal">
+    <div
+      class="d-flex align-center ga-2"
+      :class="{ 'mb-1': open && rows.length }"
+      :style="{ cursor: rows.length ? 'pointer' : 'default' }"
+      @click="rows.length && (open = !open)"
+    >
       <v-progress-circular v-if="busy" indeterminate size="16" width="2" />
       <v-icon v-else color="success" icon="mdi-check-circle-outline" size="16" />
-      <span class="text-caption text-medium-emphasis">
-        {{ queued ? 'En file d’attente…' : (busy ? 'Jean-Michel travaille…' : 'Terminé') }}
-      </span>
+      <span class="text-caption text-medium-emphasis">{{ headerLabel }}</span>
       <v-chip
         v-if="dispatch"
         :color="dispatch.intent === 'alexa' ? 'teal' : 'deep-purple'"
@@ -14,23 +17,33 @@
       >
         {{ dispatch.intent === 'alexa' ? `tier 0 · ${dispatch.tool || ''}` : 'tier 1 · deep' }}
       </v-chip>
+      <v-spacer />
+      <v-icon
+        v-if="rows.length"
+        :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+        size="18"
+      />
     </div>
 
-    <v-slide-y-transition group tag="div">
-      <div
-        v-for="(e, i) in rows"
-        :key="i"
-        class="trace-row d-flex align-center ga-2 text-caption"
-      >
-        <v-icon :color="color(e)" :icon="icon(e)" size="14" />
-        <span :class="{ 'font-italic text-medium-emphasis': e.type === 'AgentThinking' }">{{ label(e) }}</span>
+    <v-expand-transition>
+      <div v-show="open && rows.length">
+        <v-slide-y-transition group tag="div">
+          <div
+            v-for="(e, i) in rows"
+            :key="i"
+            class="trace-row d-flex align-center ga-2 text-caption"
+          >
+            <v-icon :color="color(e)" :icon="icon(e)" size="14" />
+            <span :class="{ 'font-italic text-medium-emphasis': e.type === 'AgentThinking' }">{{ label(e) }}</span>
+          </div>
+        </v-slide-y-transition>
       </div>
-    </v-slide-y-transition>
+    </v-expand-transition>
   </v-card>
 </template>
 
 <script setup>
-  import { computed } from 'vue'
+  import { computed, ref, watch } from 'vue'
 
   const props = defineProps({
     events: { type: Array, default: () => [] },
@@ -39,11 +52,26 @@
     queued: Boolean,
   })
 
+  // Expanded while thinking, auto-collapsed once the turn ends. The chevron
+  // lets the user override either way. No history is kept — a single live block.
+  const open = ref(props.busy)
+  watch(() => props.busy, (now, was) => {
+    if (now) open.value = true
+    else if (was) open.value = false
+  })
+
   // Unwrap the {type:'event', event:{…}} envelope ; LLM call markers stay quiet.
   const HIDDEN = new Set(['LLMCallStarted', 'LLMCallCompleted'])
   const rows = computed(() =>
     props.events.map(m => m.event).filter(e => e && !HIDDEN.has(e.type)),
   )
+
+  const headerLabel = computed(() => {
+    if (props.queued) return 'En file d’attente…'
+    if (props.busy) return 'Jean-Michel réfléchit…'
+    const n = rows.value.length
+    return `Réflexion · ${n} étape${n > 1 ? 's' : ''}`
+  })
 
   const ICONS = {
     RequestStarted: 'mdi-play-circle-outline',

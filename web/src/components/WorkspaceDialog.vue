@@ -17,11 +17,21 @@
               v-for="f in files"
               :key="f.path"
               :active="f.path === filePath"
-              prepend-icon="mdi-file-document-outline"
+              :prepend-icon="f.previewable ? 'mdi-file-document-outline' : 'mdi-file-outline'"
               :subtitle="fmtSize(f.size)"
               :title="f.path"
-              @click="openFile(f.path)"
-            />
+              @click="openFile(f)"
+            >
+              <template #append>
+                <v-btn
+                  icon="mdi-download"
+                  size="x-small"
+                  title="Télécharger"
+                  variant="text"
+                  @click.stop="downloadPath(f.path)"
+                />
+              </template>
+            </v-list-item>
           </v-list>
           <div v-if="!loading && !files.length" class="text-medium-emphasis text-caption pa-2">
             Workspace vide.
@@ -29,19 +39,13 @@
         </div>
         <v-divider vertical />
         <div class="viewer flex-grow-1 overflow-y-auto pa-3">
-          <div v-if="filePath" class="d-flex align-center ga-2 mb-2">
-            <v-btn
-              icon="mdi-download"
-              size="x-small"
-              title="Télécharger"
-              variant="tonal"
-              @click="download"
-            />
-            <span class="text-caption text-medium-emphasis text-truncate">{{ filePath }}</span>
-          </div>
+          <div v-if="filePath" class="text-caption text-medium-emphasis mb-2 text-truncate">{{ filePath }}</div>
           <div v-if="error" class="text-error text-caption">{{ error }}</div>
           <pre v-else-if="filePath" class="content">{{ fileContent }}</pre>
-          <div v-else class="text-medium-emphasis">Sélectionne un fichier.</div>
+          <div v-else class="text-medium-emphasis">
+            Clique un fichier texte pour l’aperçu — sinon télécharge-le via l’icône
+            <v-icon icon="mdi-download" size="14" />.
+          </div>
         </div>
       </div>
     </v-card>
@@ -95,6 +99,19 @@
 
   const MAX_MB = 22 // affichage seul ; la limite réelle est WORKSPACE_UPLOAD_MAX_BYTES (serveur)
 
+  // Extensions previewable as text. Anything else is download-only — clicking it
+  // must NOT trigger a read (it would surface "File is not valid UTF-8").
+  const TEXT_EXT = new Set(
+    ('txt md markdown json jsonl yaml yml toml ini cfg conf csv tsv log xml html htm '
+      + 'css scss sass js mjs cjs ts tsx jsx vue py sh bash zsh sql rs go c h cpp hpp '
+      + 'java rb php pl r lua svg env gitignore').split(' '),
+  )
+  function previewable (name) {
+    const dot = name.lastIndexOf('.')
+    if (dot <= 0) return true // dotfile or no extension → assume text
+    return TEXT_EXT.has(name.slice(dot + 1).toLowerCase())
+  }
+
   const open = defineModel({ type: Boolean })
   const conv = useConvStore()
 
@@ -117,7 +134,7 @@
     for (const e of entries || []) {
       const p = prefix ? `${prefix}/${e.name}` : e.name
       if (e.type === 'directory') out.push(...flatten(e.children, p))
-      else out.push({ path: p, size: e.size_bytes })
+      else out.push({ path: p, size: e.size_bytes, previewable: previewable(e.name) })
     }
     return out
   }
@@ -138,31 +155,26 @@
     }
   }
 
-  async function openFile (path) {
-    // Select first so the download button shows even when the text preview
-    // fails (binary / non-UTF-8 / too large) — those are still downloadable.
-    filePath.value = path
+  async function openFile (f) {
+    if (!f.previewable) return // binary / non-text : download-only, no preview
+    filePath.value = f.path
     fileContent.value = ''
     error.value = ''
     try {
-      const res = await api.workspaceFile(conv.currentId, path)
+      const res = await api.workspaceFile(conv.currentId, f.path)
       fileContent.value = res.content + (res.truncated ? '\n… (tronqué)' : '')
     } catch (e) {
       error.value = e.detail || e.message
     }
   }
 
-  async function download () {
-    if (!filePath.value) return
-    const blob = await api.downloadWorkspace(conv.currentId, filePath.value)
-    if (!blob) {
-      error.value = 'Téléchargement impossible.'
-      return
-    }
+  async function downloadPath (path) {
+    const blob = await api.downloadWorkspace(conv.currentId, path)
+    if (!blob) return
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = filePath.value.split('/').pop()
+    a.download = path.split('/').pop()
     document.body.append(a)
     a.click()
     a.remove()

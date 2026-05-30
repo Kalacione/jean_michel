@@ -235,15 +235,17 @@ Puis régénérer `db/schema.sql` via le dump (process documenté dans l'en-têt
 - **CLI vs web** : convs CLI invisibles dans le web (par design, pas d'association) ; éviter de
   piloter la même conv via CLI et daemon en parallèle (écritures `messages.json`/`state.json`).
 - **Web UI** 
-  - le bloc de reponse de jeanmichel apparait avant le bloc de detail de reflexion, au lieu de apres. (a revoir, le bloc reflexion est toujours en bas en fait, necessie reflexion); Le bloc de reflexion a l'air un ique, alors qu'il devrait rester dans le flot de la conversation
-  - une fois la phase de reflexion terminee, le bloc de reflexion doit etre "replie" automatiquement et une icone permettrai de le deplier/replier
-  - possibilite de supprimer des conversations
+  - possibilite de supprimer des conversations (bouton edit au survol > popup > bouton delete)
   - permettre de donner un titre a la conversation (le LLM pourrait en deduire un par defaut et le user pourrait l'editer)
+  - ranger les conversation par ordre chronologique inverse (normelement la derniere interraction devrait faire "remonter" la conversation en haut de la liste ??)
 - injection date/heure et info user systematiques ?
 - L'analyse automatique des échanges pour extraire des faits reste hors scope (trop complexe pour le gain).
 - creation d'un lien symbolique dans le workspace pour acceder a un repository externe a l'outil
 - gestion historique workspace git + auto commit par tour + revert + branch
 - suppression fichier workspace ?
+- personna + vocal associe
+  - creation de personna assistant (ex glados, ton desinvolte, ironique)
+  - association d'un model vocal
 
 ## Vérification
 
