@@ -7,7 +7,7 @@ wins (it's the more user-friendly input). With neither, the tool returns
 UTC.
 
 The dispatcher in ``execute_alexa`` pre-fills `location` from the
-``user_profile.toml`` (city + country) when the LLM emits ``clock`` with
+the user's profile (city + country) when the LLM emits ``clock`` with
 empty args — so a bare "quelle heure est-il ?" always returns the user's
 local time, never UTC by surprise.
 """

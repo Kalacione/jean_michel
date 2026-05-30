@@ -289,3 +289,56 @@ def test_ws_analyse_has_no_speak(client, monkeypatch):
     msgs = _run_turn_collect(client, token, conv_id)
     started = [m for m in msgs if m["type"] == "event" and m["event"]["type"] == "RequestStarted"]
     assert started and "speak" not in started[0]
+
+
+# ---- per-user memory isolation in the turn (M2) ---------------------------
+
+
+def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
+    """A web turn reads/writes the OWNER's memory — never the cli user's."""
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(
+        script=[
+            LLMResponse(
+                thinking="",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        name="manage_user_memory",
+                        arguments={
+                            "action": "save", "type": "user", "code": "fav-lang",
+                            "title": "Fav lang", "description": "likes Rust",
+                            "content": "The user likes Rust.",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(thinking="", content="Noté."),
+        ]
+    )
+    monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
+    alice_id = _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token)
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "remember I like Rust"})
+        while True:
+            if ws.receive_json()["type"] in ("final", "error"):
+                break
+
+    with db_connect() as conn:
+        alice_codes = {
+            r["code"] for r in conn.execute(
+                "SELECT code FROM user_memory WHERE user_id=?", (alice_id,)
+            )
+        }
+        cli_codes = {
+            r["code"] for r in conn.execute(
+                "SELECT code FROM user_memory WHERE user_id=?", (db.cli_user_id(conn),)
+            )
+        }
+    assert "fav-lang" in alice_codes
+    assert "fav-lang" not in cli_codes

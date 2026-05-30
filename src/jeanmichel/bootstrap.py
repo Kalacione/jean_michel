@@ -1,11 +1,11 @@
 """v2 — first-start bootstrap.
 
-Mirror the static ``user_profile.toml`` into the new ``user_memory`` table
+Mirror the static ``cli_profile.toml`` into the new ``user_memory`` table
 on the first run (cf. §11 ter A doc 06). Idempotent : if the table is
 non-empty, the function does nothing.
 
 This is a transitional helper. Once the user has saved their own entries
-via ``manage_user_memory``, ``user_profile.toml`` becomes vestigial.
+via ``manage_user_memory``, ``cli_profile.toml`` becomes vestigial.
 """
 
 from __future__ import annotations

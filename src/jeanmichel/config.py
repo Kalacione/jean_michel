@@ -1,4 +1,4 @@
-"""Configuration: paths, constants, user_profile loading."""
+"""Configuration: paths, constants, cli profile loading."""
 
 from __future__ import annotations
 
@@ -6,13 +6,16 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 # ---- Paths ----------------------------------------------------------------
 
 REPO_ROOT = Path(os.environ.get("JEANMICHEL_HOME", Path.cwd())).resolve()
 DB_PATH = REPO_ROOT / "jeanmichel.db"
 CONVERSATIONS_DIR = REPO_ROOT / "conversations"
-USER_PROFILE_PATH = REPO_ROOT / "user_profile.toml"
+# The CLI runs as the reserved `cli` user ; its profile lives in this file.
+# Web users keep their profile in the `web_users` columns (migrate_113).
+CLI_PROFILE_PATH = REPO_ROOT / "cli_profile.toml"
 ENV_FILE_PATH = REPO_ROOT / ".env"
 
 
@@ -254,7 +257,7 @@ class UserProfile:
         return "\n".join(lines) if lines else "No user profile provided."
 
     @staticmethod
-    def load(path: Path = USER_PROFILE_PATH) -> UserProfile:
+    def load(path: Path = CLI_PROFILE_PATH) -> UserProfile:
         if not path.exists():
             return UserProfile()
         with open(path, "rb") as f:
@@ -267,6 +270,31 @@ class UserProfile:
             language=data.get("language", "").strip(),
             interests=data.get("interests", "").strip(),
             notes=data.get("notes", "").strip(),
+        )
+
+    @staticmethod
+    def from_row(row: Any) -> UserProfile:
+        """Build a profile from a ``web_users`` row (sqlite3.Row / mapping).
+
+        Used for web users (their profile lives in DB columns). ``None`` → empty.
+        """
+        if row is None:
+            return UserProfile()
+
+        def _get(key: str) -> str:
+            try:
+                return (row[key] or "").strip()
+            except (KeyError, IndexError, TypeError):
+                return ""
+
+        return UserProfile(
+            name=_get("name"),
+            birthdate=_get("birthdate"),
+            city=_get("city"),
+            country=_get("country"),
+            language=_get("language"),
+            interests=_get("interests"),
+            notes=_get("notes"),
         )
 
 

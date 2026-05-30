@@ -187,7 +187,7 @@ bloc `## Human` du system prompt — le LLM voit ce dont il se souvient
 sans charger les contenus complets. Limite 100 entrées affichées,
 warning à 90.
 
-Bootstrap depuis `user_profile.toml` au premier démarrage : crée une
+Bootstrap depuis `cli_profile.toml` au premier démarrage : crée une
 entrée `user/personal-profile` si la table est vide.
 
 ## Persistance v2
@@ -440,7 +440,7 @@ done
 
 ## Profil utilisateur
 
-Édite `user_profile.toml` à la racine. Description libre injectée dans
+Édite `cli_profile.toml` à la racine. Description libre injectée dans
 le bloc `## Human` du prompt + ingérée dans `user_memory` au premier
 démarrage. Exemple :
 
@@ -459,7 +459,7 @@ jeanmichel/
 ├── README.md
 ├── jm.sh                     # point d'entrée unifié
 ├── pyproject.toml
-├── user_profile.toml
+├── cli_profile.toml
 ├── db/
 │   ├── schema.sql            # schéma v2 consolidé
 │   ├── schema_v1_baseline.sql # baseline v1 (tests migration)

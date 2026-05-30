@@ -40,7 +40,7 @@ def tmp_db_v2(tmp_path: Path, monkeypatch) -> Path:
     cfg.DB_PATH = tmp_path / "jm_v2.db"
     cfg.REPO_ROOT = tmp_path
     cfg.CONVERSATIONS_DIR = tmp_path / "conversations"
-    cfg.USER_PROFILE_PATH = tmp_path / "user_profile.toml"
+    cfg.CLI_PROFILE_PATH = tmp_path / "cli_profile.toml"
     cfg.CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     schema = (_ROOT / "db" / "schema.sql").read_text(encoding="utf-8")

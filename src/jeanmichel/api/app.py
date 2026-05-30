@@ -269,7 +269,10 @@ def create_app() -> Any:
         await websocket.accept()
         folder = Path(row["folder_path"])
         mode = row["mode"]
-        profile = UserProfile.load()
+        # Per-user : the turn runs as the conversation's owner — its profile
+        # comes from the web_users columns, its memory is scoped to its id.
+        with db.connect() as conn:
+            profile = UserProfile.from_row(db.get_web_user_by_id(conn, user["id"]))
         dispatch_llm, main_llm = executor.get_llm_clients()
         try:
             while True:
@@ -291,6 +294,7 @@ def create_app() -> Any:
                         profile=profile,
                         dispatch_llm=dispatch_llm,
                         main_llm=main_llm,
+                        memory_user_id=user["id"],
                     )
         except WebSocketDisconnect:
             return

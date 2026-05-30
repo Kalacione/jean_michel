@@ -51,7 +51,7 @@ def v2_db_for_smoke(tmp_path: Path, monkeypatch):
     cfg.REPO_ROOT = tmp_path
     cfg.DB_PATH = tmp_path / "jm_smoke.db"
     cfg.CONVERSATIONS_DIR = tmp_path / "conversations"
-    cfg.USER_PROFILE_PATH = tmp_path / "user_profile.toml"
+    cfg.CLI_PROFILE_PATH = tmp_path / "cli_profile.toml"
     cfg.CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Phase 8 consolidation : schema.sql IS the v2 final state.
