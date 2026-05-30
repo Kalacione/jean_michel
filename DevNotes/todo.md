@@ -1,11 +1,5 @@
 # Todo
 
-- outil image
-  - recherche image + save workspace
-  - analyse image
-  - edition image
-
-
 - injection date/heure et info user systematiques ?
 
 ## Memory
