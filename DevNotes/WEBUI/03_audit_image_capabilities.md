@@ -18,7 +18,7 @@
 | D5 | Recherche d'images | **`image_search` dédié** (catégorie SearXNG) |
 | D6 | `image_search` télécharge ? | **Recherche = URLs/miniatures distantes seules** ; un **`image_fetch(url)` borné 22 Mo** assure le cas « grab → workspace → analyse » |
 | D7 | Vision : où vit l'image | **Fichier workspace** ; base64 **transitoire**, jamais dans `messages.json` |
-| D8 | Vision : comment le modèle voit | **Les deux, complémentaires** : (A) outil `analyze_image` puis (B) image jointe en contexte (détail §3.3) |
+| D8 | Vision : comment le modèle voit | **Les deux, par mode** : **A** (`analyze_image`) en **chat/vocal** · **B** (image en contexte) en **analyse** (« deep ») — détail §3.3 |
 | D9 | Vision : quel modèle | **gemma4 only ; image ⇒ DEEP forcé** (granite, le dispatcher, est texte-only) |
 
 **Principes directeurs (cadrés par l'utilisateur) :**
@@ -179,8 +179,8 @@ il ne peut pas remarquer un détail hors de la `question` posée ; **deux sauts*
 poser la bonne question) ; re-questionner la même image = nouvel appel (sauf cache) ; pas de
 raisonnement « image + conversation » simultané.
 
-**Idéal pour :** OCR/lecture, décrire/extraire, inspection agentique d'un fichier, analyse
-d'une image fraîchement récupérée du web.
+**Idéal pour :** la vision en **chat/vocal** (contexte léger sur le long cours), OCR/lecture,
+décrire/extraire, inspection agentique d'un fichier, analyse d'une image récupérée du web.
 
 #### Option B — base64 éphémère attaché au tour (image dans le contexte)
 **Déroulé :** l'utilisateur **joint** `photo.jpg` (déjà dans le workspace via les pièces
@@ -205,14 +205,26 @@ le base64 (latence) ; **multimodal obligatoire** (exclut granite) ; **resume/rep
 n'étant pas persistée, un tour repris ne « revoit » pas l'image sauf à la ré-encoder depuis la
 référence workspace (logique à prévoir).
 
-**Idéal pour :** compréhension conversationnelle, « regarde ça et discutons », Q&R itératif sur
-une image déposée dans le chat.
+**Idéal pour :** le **mode analyse** (« deep ») — analyse one-shot d'une image avec raisonnement
+multimodal de qualité sur une consigne précise, coût payé une seule fois (tour autonome).
 
-#### Pourquoi les deux (complémentaires, pas redondantes)
-- **A** = inspection **agentique** + cas web-search→fetch→analyse. **Isolé, faible risque.**
-- **B** = UX **chat** « dépose une image et parles-en ». **Plus riche, plus invasif.**
-- Séquencement conseillé : **A d'abord** (brique isolée, sert déjà le cas web), **B ensuite**.
-  Si l'usage premier est « déposer une image dans le chat », on peut prioriser B.
+#### Affectation par mode (décision verrouillée)
+On garde les deux techniques, **affectées au mode où leur modèle de coût colle** :
+- **chat / vocal → option A** (`analyze_image`). Conversations **multi-tours** → convertir
+  l'image en texte **une fois** garde le contexte léger et **évite de re-payer ~256 tokens +
+  re-transmettre le base64 à chaque tour**. (Bonus vocal : image → texte court → parlé.)
+- **analyse (« deep ») → option B** (image en contexte). Tour **standalone one-shot** (en mode
+  analyse chaque question est autonome) → base64 envoyé **une seule fois**, raisonnement sur les
+  **pixels + consigne** pour une qualité max, **sans coût récurrent**.
+- **Routage** : une image jointe **force le verdict DEEP dans tous les modes** (granite =
+  texte-only) ; en `analyse` on **injecte** le base64 au message user (B), en `chat`/`vocal` on
+  **n'injecte pas** et l'agent dispose de `analyze_image` (A).
+- **Réserve honnête** : en chat/vocal le modèle principal ne voit que la **description** de
+  l'outil, et **seulement s'il appelle** `analyze_image` → la note de pièce jointe doit l'y
+  diriger explicitement. C'est le prix (assumé) de l'économie de contexte.
+- **Cache workspace** : la normalisation Pillow (1024→WebP) est faite **une fois** et cachée
+  (`.thumbs/`) → par tour, au pire un base64 d'un petit fichier déjà normalisé ; en A, plus
+  aucun encodage une fois l'image décrite.
 
 ---
 
@@ -249,11 +261,11 @@ une image déposée dans le chat.
   `ChatPane`. *Pur UX, zéro risque LLM.*
 - **I2 — `image_search`.** `_do_search`+`categories=images` (URLs + `thumbnail_src`) ; registry ;
   migration grant (+ paradigme routage) ; régén `schema.sql` ; tests + suite verte.
-- **I3 — Vision A : `analyze_image` + `image_fetch`.** `analyze_image(path, question)`
+- **I3 — Vision A (chat/vocal) : `analyze_image` + `image_fetch`.** `analyze_image(path, question)`
   (workspace-bound, réutilise la dérivée 1024 px, appel gemma4 isolé → texte) ; `image_fetch(url)` (grab →
   workspace, cap 22 Mo, gardes SSRF §4) → cas « analyser une image du web » ; grants ; règle
   image⇒gemma4 ; tests MockClient ; **compléter `docs/GEMMA4.md`** (section vision).
-- **I4 — Vision B : image jointe en contexte.** Threader `images` éphémères (non persistés,
+- **I4 — Vision B (mode analyse) : image jointe en contexte.** Threader `images` éphémères (non persistés,
   strip avant save) ; comptage tokens ; image jointe ⇒ DEEP ; encodage à la volée depuis le
   workspace ; tests.
 
@@ -263,5 +275,6 @@ lightbox in-app (D3) ; `image_search`
 URLs-only + `image_fetch` borné 22 Mo (D5/D6) ; vision workspace-centric, base64 transitoire,
 copie normalisée pour la bande passante + le format (D7) ; gemma4 + DEEP (D9) ; **tous les
 sprints sont à enclencher** (aucun bloqueur).
-**Seul résidu à confirmer :** l'ordre A→B (recommandé) ou prioriser B (chat « dépose une
-image ») — décidable après lecture du §3.3.
+**Résidu résolu (2026-05-30) :** affectation **par mode** — **A** (`analyze_image`) en
+**chat/vocal**, **B** (image en contexte) en **analyse** (« deep »). Séquencement I3 (A) puis
+I4 (B). Une image jointe **force DEEP dans tous les modes** (granite texte-only).
