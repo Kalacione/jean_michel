@@ -174,16 +174,47 @@ def list_active_conversations(conn: sqlite3.Connection, limit: int = 20) -> list
 
 def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite3.Row | None:
     """Look up a conversation by exact id or by id prefix."""
+    cols = "id, folder_path, mode, user_language, status, title, created_at, modified_at"
     row = conn.execute(
-        "SELECT id, folder_path, mode, user_language, status FROM conversations WHERE id=?",
+        f"SELECT {cols} FROM conversations WHERE id=?",
         (conv_id_or_prefix,),
     ).fetchone()
     if row is None:
         row = conn.execute(
-            "SELECT id, folder_path, mode, user_language, status FROM conversations WHERE id LIKE ?",
+            f"SELECT {cols} FROM conversations WHERE id LIKE ?",
             (conv_id_or_prefix + "%",),
         ).fetchone()
     return row
+
+
+def rename_conversation(conn: sqlite3.Connection, conv_id: str, title: str) -> None:
+    """Set a user-facing title. Metadata only — does NOT bump modified_at
+    (renaming is not an interaction ; it must not reorder the list)."""
+    conn.execute("UPDATE conversations SET title=? WHERE id=?", (title, conv_id))
+
+
+def set_title_if_empty(conn: sqlite3.Connection, conv_id: str, title: str) -> None:
+    """Seed a default title only when none exists yet (preserves user edits)."""
+    conn.execute(
+        "UPDATE conversations SET title=? WHERE id=? AND (title IS NULL OR title='')",
+        (title, conv_id),
+    )
+
+
+def touch_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
+    """Bump modified_at to now — marks the last interaction (drives list order).
+
+    Uses the same ISO format as created_at (_now) so string ordering stays
+    correct despite other writers using datetime('now')'s space format.
+    """
+    conn.execute("UPDATE conversations SET modified_at=? WHERE id=?", (_now(), conv_id))
+
+
+def delete_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
+    """Delete a conversation row. ON DELETE CASCADE (migrate_114) removes its
+    ownership links — and any future cascade-declared child rows. Requires
+    PRAGMA foreign_keys=ON (set by ``connect``)."""
+    conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
 
 
 # ---- Web users + profile + conversation ownership (web frontend) ----------
@@ -268,7 +299,7 @@ def list_conversations_for_user(
     Alice never sees Bob's — and CLI conversations (no association) are absent.
     """
     return conn.execute(
-        "SELECT c.id, c.mode, c.status, c.user_language, c.created_at, c.modified_at "
+        "SELECT c.id, c.title, c.mode, c.status, c.user_language, c.created_at, c.modified_at "
         "FROM conversations c "
         "JOIN conversation_users cu ON cu.conversation_id = c.id "
         "WHERE cu.user_id = ? "

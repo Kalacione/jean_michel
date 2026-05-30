@@ -54,6 +54,9 @@ def create_app() -> Any:
     class CreateConversationRequest(BaseModel):
         mode: str = "analyse"
 
+    class ConversationRename(BaseModel):
+        title: str
+
     class MemorySaveRequest(BaseModel):
         type: str
         code: str
@@ -117,10 +120,29 @@ def create_app() -> Any:
     def get_conversation(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         return {
             "id": conv["id"],
+            "title": conv["title"],
             "mode": conv["mode"],
             "status": conv["status"],
             "user_language": conv["user_language"],
+            "created_at": conv["created_at"],
+            "modified_at": conv["modified_at"],
         }
+
+    @app.patch("/api/conversations/{conversation_id}")
+    def rename_conversation(
+        body: ConversationRename, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        title = body.title.strip()[:120]
+        if not title:
+            raise HTTPException(status_code=422, detail="title must not be empty")
+        with db.connect() as conn:
+            db.rename_conversation(conn, conv["id"], title)
+        return {"id": conv["id"], "title": title}
+
+    @app.delete("/api/conversations/{conversation_id}", status_code=204)
+    def delete_conversation(conv: Any = Depends(auth.require_conversation_owner)) -> Response:
+        conversation_svc.delete_conversation(conv["id"])
+        return Response(status_code=204)
 
     @app.get("/api/conversations/{conversation_id}/messages")
     def get_messages(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:

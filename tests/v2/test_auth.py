@@ -9,6 +9,7 @@ Skipped entirely when the ``[web]`` extras aren't installed.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -232,3 +233,140 @@ def test_conversation_isolation_and_403(client):
 def test_conversation_endpoints_require_auth(client):
     assert client.get("/api/conversations").status_code == 401
     assert client.post("/api/conversations", json={"mode": "analyse"}).status_code == 401
+
+
+# ---- Conversation title / rename / delete + cascade ----------------------
+
+
+def test_default_title_helper():
+    from jeanmichel.service.turn_runner import _default_title
+
+    assert _default_title("  Quelle météo à Montréal ?  ") == "Quelle météo à Montréal ?"
+    assert _default_title("x" * 80) == "x" * 60 + "…"
+    assert _default_title("   ") == "Conversation"
+    assert _default_title("line one\nline two") == "line one line two"
+
+
+def test_set_title_if_empty_then_preserved(tmp_db_v2):
+    conv_id, _ = conversation_svc.create_conversation("chat")
+    with db_connect() as conn:
+        db.set_title_if_empty(conn, conv_id, "first")
+        assert db.get_conversation(conn, conv_id)["title"] == "first"
+        # A later seed must NOT overwrite (preserves an earlier default / user edit).
+        db.set_title_if_empty(conn, conv_id, "second")
+        assert db.get_conversation(conn, conv_id)["title"] == "first"
+
+
+def test_rename_does_not_bump_modified(tmp_db_v2):
+    conv_id, _ = conversation_svc.create_conversation("chat")
+    with db_connect() as conn:
+        before = db.get_conversation(conn, conv_id)["modified_at"]
+        db.rename_conversation(conn, conv_id, "My title")
+        row = db.get_conversation(conn, conv_id)
+    assert row["title"] == "My title"
+    assert row["modified_at"] == before  # rename is metadata, not an interaction
+
+
+def test_touch_bumps_modified(tmp_db_v2):
+    conv_id, _ = conversation_svc.create_conversation("chat")
+    with db_connect() as conn:
+        conn.execute(
+            "UPDATE conversations SET modified_at='2000-01-01T00:00:00Z' WHERE id=?", (conv_id,)
+        )
+    with db_connect() as conn:
+        db.touch_conversation(conn, conv_id)
+        after = db.get_conversation(conn, conv_id)["modified_at"]
+    assert after > "2000-01-01T00:00:00Z"
+
+
+def test_delete_conversation_cascades_association(tmp_db_v2):
+    """migrate_114 : deleting only the conversation row cascades to its links."""
+    alice = _make_user("alice", "pw")
+    conv_id, _ = conversation_svc.create_conversation("chat")
+    with db_connect() as conn:
+        db.associate_conversation_user(conn, alice, conv_id)
+        assert db.user_owns_conversation(conn, alice, conv_id) is True
+    with db_connect() as conn:
+        db.delete_conversation(conn, conv_id)  # no manual link delete
+    with db_connect() as conn:
+        assert db.get_conversation(conn, conv_id) is None
+        assert db.user_owns_conversation(conn, alice, conv_id) is False
+
+
+def test_list_returns_title_and_orders_by_activity(tmp_db_v2):
+    alice = _make_user("alice", "pw")
+    a, _ = conversation_svc.create_conversation("chat")
+    b, _ = conversation_svc.create_conversation("chat")
+    with db_connect() as conn:
+        db.associate_conversation_user(conn, alice, a)
+        db.associate_conversation_user(conn, alice, b)
+        db.rename_conversation(conn, a, "Alpha")
+        # Deterministic activity : a newer than b → a must come first.
+        conn.execute("UPDATE conversations SET modified_at='2026-01-01T00:00:00Z' WHERE id=?", (b,))
+        conn.execute("UPDATE conversations SET modified_at='2026-02-01T00:00:00Z' WHERE id=?", (a,))
+    with db_connect() as conn:
+        rows = db.list_conversations_for_user(conn, alice)
+    assert [r["id"] for r in rows] == [a, b]
+    assert {r["id"]: r["title"] for r in rows}[a] == "Alpha"
+
+
+def test_conversation_rename_api(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "chat"}, headers=_auth(token)
+    ).json()["id"]
+    r = client.patch(
+        f"/api/conversations/{conv_id}", json={"title": "  Mon sujet  "}, headers=_auth(token)
+    )
+    assert r.status_code == 200
+    assert r.json()["title"] == "Mon sujet"  # stripped
+    assert client.get(
+        f"/api/conversations/{conv_id}", headers=_auth(token)
+    ).json()["title"] == "Mon sujet"
+    listed = client.get("/api/conversations", headers=_auth(token)).json()["conversations"]
+    assert next(c for c in listed if c["id"] == conv_id)["title"] == "Mon sujet"
+
+
+def test_conversation_rename_empty_rejected(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "chat"}, headers=_auth(token)
+    ).json()["id"]
+    assert client.patch(
+        f"/api/conversations/{conv_id}", json={"title": "   "}, headers=_auth(token)
+    ).status_code == 422
+
+
+def test_conversation_delete_api(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "chat"}, headers=_auth(token)
+    ).json()["id"]
+    with db_connect() as conn:
+        folder = Path(db.get_conversation(conn, conv_id)["folder_path"])
+    assert folder.exists()
+    assert client.delete(f"/api/conversations/{conv_id}", headers=_auth(token)).status_code == 204
+    assert client.get("/api/conversations", headers=_auth(token)).json()["conversations"] == []
+    assert client.get(f"/api/conversations/{conv_id}", headers=_auth(token)).status_code == 404
+    assert not folder.exists()  # on-disk folder removed too
+
+
+def test_conversation_rename_delete_owner_scoped(client):
+    _make_user("alice", "pw")
+    _make_user("bob", "pw")
+    tok_a = _login(client, "alice", "pw")
+    tok_b = _login(client, "bob", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "chat"}, headers=_auth(tok_a)
+    ).json()["id"]
+    assert client.patch(
+        f"/api/conversations/{conv_id}", json={"title": "x"}, headers=_auth(tok_b)
+    ).status_code == 403
+    assert client.delete(
+        f"/api/conversations/{conv_id}", headers=_auth(tok_b)
+    ).status_code == 403
+    assert client.patch(f"/api/conversations/{conv_id}", json={"title": "x"}).status_code == 401
+    assert client.delete(f"/api/conversations/{conv_id}").status_code == 401

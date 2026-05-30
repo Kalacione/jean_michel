@@ -44,6 +44,15 @@ _log = logging.getLogger(__name__)
 _MEMORY_WARN_AT = 90
 
 
+def _default_title(text: str, limit: int = 60) -> str:
+    """Cheap default conversation title : the first user message, whitespace-
+    collapsed and truncated. No LLM call (KISS) ; the user can edit it later."""
+    line = " ".join((text or "").split())
+    if not line:
+        return "Conversation"
+    return line[:limit] + ("…" if len(line) > limit else "")
+
+
 def run_turn(
     *,
     user_text: str,
@@ -66,13 +75,15 @@ def run_turn(
     """
     user_lang = dispatcher.detect_language(user_text)
 
-    # Update conversation language opportunistically.
-    if user_lang and user_lang != "und":
-        try:
-            with db.connect() as conn:
+    # Conversation metadata : opportunistic language + a cheap default title
+    # seeded from the first user message (user-editable later).
+    try:
+        with db.connect() as conn:
+            if user_lang and user_lang != "und":
                 db.update_conversation_language(conn, conv_id, user_lang)
-        except Exception as exc:  # noqa: BLE001
-            _log.debug("update_conversation_language failed: %s", exc)
+            db.set_title_if_empty(conn, conv_id, _default_title(user_text))
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("conversation metadata update failed: %s", exc)
 
     # Tier 0 : dispatch. In chat / vocal modes the small dispatcher LLM sees
     # the conversation history to resolve follow-ups ("et pour demain ?").
@@ -84,26 +95,35 @@ def run_turn(
         on_dispatch(decision)
 
     if decision.intent == "alexa":
-        return dispatcher.execute_alexa(
+        answer = dispatcher.execute_alexa(
             decision,
             dispatch_llm,
             user_lang=user_lang,
             user_profile=profile,
         )
+    else:
+        answer = _run_deep_turn(
+            user_text=user_text,
+            conv_folder=conv_folder,
+            conv_id=conv_id,
+            main_llm=main_llm,
+            profile=profile,
+            mode=mode,
+            user_lang=user_lang,
+            initial_messages=initial_messages,
+            event_emitter=event_emitter,
+            ask_human_callback=ask_human_callback,
+            memory_user_id=memory_user_id,
+        )
 
-    return _run_deep_turn(
-        user_text=user_text,
-        conv_folder=conv_folder,
-        conv_id=conv_id,
-        main_llm=main_llm,
-        profile=profile,
-        mode=mode,
-        user_lang=user_lang,
-        initial_messages=initial_messages,
-        event_emitter=event_emitter,
-        ask_human_callback=ask_human_callback,
-        memory_user_id=memory_user_id,
-    )
+    # Mark last interaction LAST so it wins over any modified_at writes made
+    # during the turn (task_class / phase) and stays format-consistent for sort.
+    try:
+        with db.connect() as conn:
+            db.touch_conversation(conn, conv_id)
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("touch_conversation failed: %s", exc)
+    return answer
 
 
 def _run_deep_turn(

@@ -87,6 +87,7 @@ export const useConvStore = defineStore('conversations', () => {
         busy.value = false
         askHuman.value = null
         messages.value.push({ role: 'assistant', content: m.answer })
+        refresh() // re-order the list (last interaction first) + pick up auto-title
         if (vocal.value) speak(m.answer)
       },
       error: m => { busy.value = false; queued.value = false; error.value = m.detail || 'Erreur orchestrateur.' },
@@ -118,6 +119,25 @@ export const useConvStore = defineStore('conversations', () => {
     turnWs.sendAnswer((text || '').trim())
   }
 
+  async function rename (id, title) {
+    await api.renameConversation(id, title)
+    await refresh()
+  }
+
+  async function remove (id) {
+    await api.deleteConversation(id)
+    if (id === currentId.value) {
+      closeWs()
+      currentId.value = null
+      messages.value = []
+      trace.value = []
+      dispatch.value = null
+      busy.value = false
+      askHuman.value = null
+    }
+    await refresh()
+  }
+
   function reset () {
     closeWs()
     list.value = []
@@ -130,6 +150,6 @@ export const useConvStore = defineStore('conversations', () => {
 
   return {
     list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
-    refresh, create, select, sendTurn, answer, reset,
+    refresh, create, select, sendTurn, answer, rename, remove, reset,
   }
 })

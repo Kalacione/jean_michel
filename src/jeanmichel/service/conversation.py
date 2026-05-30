@@ -7,6 +7,7 @@ will scope resume by owner via the association table (S1+).
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,3 +39,14 @@ def create_conversation(
             mode=mode,
         )
     return conv_id, conv_folder
+
+
+def delete_conversation(conv_id: str) -> None:
+    """Delete a conversation entirely : DB row (+ cascaded ownership links via
+    migrate_114) and its on-disk folder (messages, events, workspace).
+    Folder removal is best-effort."""
+    with db.connect() as conn:
+        row = db.get_conversation(conn, conv_id)
+        db.delete_conversation(conn, conv_id)
+    if row is not None:
+        shutil.rmtree(Path(row["folder_path"]), ignore_errors=True)

@@ -50,6 +50,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_111_code_runner_to_reasoner.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_113_user_memory_isolation.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_114_conversation_cascade.sql")
     yield conn
     conn.close()
 
@@ -358,3 +359,25 @@ def test_web_users_has_profile_columns(v2_migrated_db):
 def test_cli_user_created(v2_migrated_db):
     row = v2_migrated_db.execute("SELECT id FROM web_users WHERE username='cli'").fetchone()
     assert row is not None
+
+
+# ---- migrate_114 : conversation deletion cascade ---------------------------
+
+
+def test_conversation_users_cascade_in_migration(v2_migrated_db):
+    on_delete = {
+        r["table"]: r["on_delete"]
+        for r in v2_migrated_db.execute("PRAGMA foreign_key_list(conversation_users)")
+    }
+    assert on_delete.get("conversations") == "CASCADE"
+    assert on_delete.get("web_users") == "CASCADE"
+
+
+def test_conversation_users_cascade_in_consolidated_schema(v2_consolidated_db):
+    """Fresh installs load schema.sql directly — it must carry the cascade too."""
+    on_delete = {
+        r["table"]: r["on_delete"]
+        for r in v2_consolidated_db.execute("PRAGMA foreign_key_list(conversation_users)")
+    }
+    assert on_delete.get("conversations") == "CASCADE"
+    assert on_delete.get("web_users") == "CASCADE"
