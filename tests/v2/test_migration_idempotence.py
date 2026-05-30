@@ -53,6 +53,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_114_conversation_cascade.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_115_image_search.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_116_vision_tools.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_117_image_display_routing.sql")
     yield conn
     conn.close()
 
@@ -173,7 +174,7 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 
 
 def test_total_active_paradigms_count(v2_migrated_db):
-    """Sanity : the migration chain produces 116 active paradigms.
+    """Sanity : the migration chain produces 117 active paradigms.
 
     104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
     + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
@@ -185,12 +186,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
                                               delegate_to_code_fetcher_on_doubt,
                                               cite_sources_in_user_facing_output)
     + 2 from migrate_109_code_runner_routing_and_sandbox
-        (code_runner_for_code_production_briefs, test_in_sandbox_when_runnable).
+        (code_runner_for_code_production_briefs, test_in_sandbox_when_runnable)
+    + 1 from migrate_117_image_display_routing (show_images_inline).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 116
+    assert row["c"] == 117
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -312,7 +314,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 116
+    assert n == 117
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -415,3 +417,15 @@ def test_vision_tools_granted(v2_migrated_db, v2_consolidated_db):
                 )
             }
             assert {"jean-michel", "web-search-specialist"} <= codes, tool
+
+
+def test_show_images_inline_paradigm(v2_migrated_db, v2_consolidated_db):
+    """migrate_117 : the router gets an active 'show_images_inline' routing paradigm."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        row = db.execute(
+            "SELECT 1 FROM agent_paradigms ap "
+            "JOIN agents a ON a.id = ap.agent_id "
+            "JOIN paradigms p ON p.id = ap.paradigm_id "
+            "WHERE a.code = 'jean-michel' AND p.code = 'show_images_inline' AND p.active = 1"
+        ).fetchone()
+        assert row is not None
