@@ -283,3 +283,32 @@ def test_memory_api_equals_tool(client):
     )
     api_entry = client.get("/api/memory/feedback/tool-side", headers=_auth(token)).json()["entry"]
     assert api_entry["content"] == "tool-written"
+
+
+# ---- TTS endpoint (S6) ----------------------------------------------------
+
+
+def test_tts_requires_auth(client):
+    assert client.get("/api/tts", params={"text": "hello"}).status_code == 401
+
+
+def test_tts_returns_wav(client, monkeypatch):
+    from jeanmichel import voice
+
+    monkeypatch.setattr(voice, "synthesize_to_bytes", lambda text: b"RIFFfakewavdata")
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    r = client.get("/api/tts", params={"text": "hello"}, headers=_auth(token))
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.content == b"RIFFfakewavdata"
+
+
+def test_tts_unavailable_returns_503(client, monkeypatch):
+    from jeanmichel import voice
+
+    monkeypatch.setattr(voice, "synthesize_to_bytes", lambda text: None)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    r = client.get("/api/tts", params={"text": "hello"}, headers=_auth(token))
+    assert r.status_code == 503

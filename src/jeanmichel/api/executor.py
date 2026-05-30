@@ -22,7 +22,7 @@ import queue
 from pathlib import Path
 from typing import Any
 
-from .. import config, persistence
+from .. import config, persistence, voice
 from ..llm import OllamaClient
 from ..service import turn_runner
 
@@ -71,9 +71,15 @@ async def run_turn_streaming(
     answer_box: queue.Queue = queue.Queue()
 
     def emit(event: Any) -> None:
-        loop.call_soon_threadsafe(
-            event_queue.put_nowait, {"type": "event", "event": event.to_dict()}
-        )
+        msg: dict[str, Any] = {"type": "event", "event": event.to_dict()}
+        # Vocal mode : annotate with the announcement phrase (reusing the CLI's
+        # event->phrase map) so the browser can voice progress without
+        # duplicating it client-side. It fetches the audio via GET /api/tts.
+        if mode == "vocal":
+            phrase = voice.phrase_for_event(event)
+            if phrase:
+                msg["speak"] = phrase
+        loop.call_soon_threadsafe(event_queue.put_nowait, msg)
 
     def on_dispatch(decision: Any) -> None:
         loop.call_soon_threadsafe(

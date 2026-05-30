@@ -5,7 +5,6 @@ offline and silent (no speakers needed in CI).
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,6 +46,42 @@ def test_load_voice_caches_singleton(tmp_path, monkeypatch):
     assert v2 is fake_voice
     # Loaded only once thanks to singleton caching
     fake_piper_voice_cls.load.assert_called_once()
+
+
+# ---- synthesize_to_bytes (web TTS) --------------------------------------
+
+
+def test_synthesize_to_bytes_missing_model_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", tmp_path / "nope.onnx")
+    assert voice.synthesize_to_bytes("hello") is None
+
+
+def test_synthesize_to_bytes_empty_text_returns_none():
+    assert voice.synthesize_to_bytes("   ") is None
+
+
+def test_synthesize_to_bytes_produces_wav(tmp_path, monkeypatch):
+    fake_model = tmp_path / "fake.onnx"
+    fake_model.write_bytes(b"x")
+    monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
+
+    chunk = MagicMock(
+        sample_rate=22050,
+        sample_channels=1,
+        sample_width=2,
+        audio_int16_bytes=b"\x01\x02" * 256,
+    )
+    fake_voice = MagicMock()
+    fake_voice.synthesize.return_value = [chunk]
+    fake_piper_voice_cls = MagicMock()
+    fake_piper_voice_cls.load.return_value = fake_voice
+
+    with patch.dict("sys.modules", {"piper": MagicMock(PiperVoice=fake_piper_voice_cls)}):
+        wav = voice.synthesize_to_bytes("hello")
+
+    assert wav is not None
+    assert wav[:4] == b"RIFF"  # WAV container magic
+    assert len(wav) > 44  # header + at least one frame
 
 
 # ---- _resolve_player ----------------------------------------------------

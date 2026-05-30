@@ -254,3 +254,38 @@ def test_ws_streams_thinking(client, monkeypatch):
     thoughts = [m for m in msgs if m["type"] == "event" and m["event"]["type"] == "AgentThinking"]
     assert thoughts, msgs
     assert thoughts[0]["event"]["text"] == "let me reason about it"
+
+
+# ---- vocal mode : speak annotation on events (S6) -------------------------
+
+
+def _run_turn_collect(client, token, conv_id):
+    msgs = []
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "q"})
+        while True:
+            m = ws.receive_json()
+            msgs.append(m)
+            if m["type"] in ("final", "error"):
+                break
+    return msgs
+
+
+def test_ws_vocal_annotates_speak(client, monkeypatch):
+    monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token, mode="vocal")
+    msgs = _run_turn_collect(client, token, conv_id)
+    started = [m for m in msgs if m["type"] == "event" and m["event"]["type"] == "RequestStarted"]
+    assert started and started[0].get("speak")  # vocal → phrase annotated for the browser
+
+
+def test_ws_analyse_has_no_speak(client, monkeypatch):
+    monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token, mode="analyse")
+    msgs = _run_turn_collect(client, token, conv_id)
+    started = [m for m in msgs if m["type"] == "event" and m["event"]["type"] == "RequestStarted"]
+    assert started and "speak" not in started[0]

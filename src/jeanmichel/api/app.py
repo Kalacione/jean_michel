@@ -25,7 +25,14 @@ def create_app() -> Any:
     """Build the FastAPI app. Imports web deps lazily (optional dependency)."""
     from pathlib import Path
 
-    from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+    from fastapi import (
+        Depends,
+        FastAPI,
+        HTTPException,
+        Response,
+        WebSocket,
+        WebSocketDisconnect,
+    )
     from pydantic import BaseModel
 
     from .. import db, persistence
@@ -218,6 +225,20 @@ def create_app() -> Any:
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"deleted_id": target_id}
+
+    # ---- text-to-speech (vocal mode ; on-demand, off the turn critical path) -
+
+    @app.get("/api/tts")
+    def tts(text: str, user: dict = Depends(auth.current_user)) -> Response:
+        from .. import voice
+
+        wav = voice.synthesize_to_bytes(text)
+        if wav is None:
+            raise HTTPException(
+                status_code=503,
+                detail="tts unavailable (no voice model or synthesis failed)",
+            )
+        return Response(content=wav, media_type="audio/wav")
 
     # ---- turn WebSocket (live event stream) ------------------------------
 

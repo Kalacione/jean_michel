@@ -18,6 +18,7 @@ Configuration :
 
 from __future__ import annotations
 
+import io
 import logging
 import shutil
 import subprocess
@@ -57,7 +58,7 @@ def _raw_player_command(rate: int, channels: int = 1) -> list[str] | None:
         if cmd == "paplay":
             return [
                 path, "--raw",
-                f"--format=s16le",
+                "--format=s16le",
                 f"--rate={rate}",
                 f"--channels={channels}",
             ]
@@ -166,6 +167,38 @@ def synthesize_to_wav(text: str, output_path: Path) -> bool:
     except Exception as exc:  # noqa: BLE001
         _log.warning("Piper synthesis failed: %s", exc)
         return False
+
+
+def synthesize_to_bytes(text: str) -> bytes | None:
+    """Render ``text`` to in-memory WAV bytes for the web frontend, or None.
+
+    Same Piper synthesis loop as ``synthesize_to_wav`` but to a ``BytesIO`` and
+    WITHOUT the silent pre-roll (a browser's Web Audio API doesn't need the sink
+    wake-up padding). Returns None on any failure — callers degrade to text.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    voice = _load_voice()
+    if voice is None:
+        return None
+    buffer = io.BytesIO()
+    try:
+        with wave.open(buffer, "wb") as wav_file:
+            first_chunk_seen = False
+            for chunk in voice.synthesize(text):
+                if not first_chunk_seen:
+                    wav_file.setnchannels(chunk.sample_channels)
+                    wav_file.setsampwidth(chunk.sample_width)
+                    wav_file.setframerate(chunk.sample_rate)
+                    first_chunk_seen = True
+                wav_file.writeframes(chunk.audio_int16_bytes)
+        if not first_chunk_seen:
+            return None
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("Piper synthesis to bytes failed: %s", exc)
+        return None
+    return buffer.getvalue()
 
 
 def play_wav(wav_path: Path) -> bool:
