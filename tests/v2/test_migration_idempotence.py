@@ -54,6 +54,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_115_image_search.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_116_vision_tools.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_117_image_display_routing.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_118_paradigms_english.sql")
     yield conn
     conn.close()
 
@@ -429,3 +430,20 @@ def test_show_images_inline_paradigm(v2_migrated_db, v2_consolidated_db):
             "WHERE a.code = 'jean-michel' AND p.code = 'show_images_inline' AND p.active = 1"
         ).fetchone()
         assert row is not None
+
+
+def test_paradigm_content_is_english(v2_migrated_db, v2_consolidated_db):
+    """migrate_118 : prompt-facing paradigm text (content + rendered category
+    titles) is English-only — the internal/inter-LLM language is English."""
+    import re
+
+    accent = re.compile(r"[àâäéèêëïîôöùûüçœ]", re.IGNORECASE)
+    fr_words = {"une", "des", "vous", "avec", "cette", "montre", "voici", "dans"}
+    for db in (v2_migrated_db, v2_consolidated_db):
+        for code, content in db.execute("SELECT code, content FROM paradigms WHERE active = 1"):
+            text = content or ""
+            assert not accent.search(text), f"{code}: accented French in content"
+            words = set(re.findall(r"[a-zà-ÿ]+", text.lower()))
+            assert not (words & fr_words), f"{code}: French words {words & fr_words}"
+        for (title,) in db.execute("SELECT title FROM categories WHERE active = 1"):
+            assert not accent.search(title or ""), f"non-English category title: {title!r}"
