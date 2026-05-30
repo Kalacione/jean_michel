@@ -92,6 +92,14 @@ export const api = {
     return res.ok ? res.blob() : null
   },
 
+  async downloadWorkspaceZip (id) {
+    const token = getToken()
+    const res = await fetch(`/api/conversations/${id}/workspace/zip`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    return res.ok ? res.blob() : null
+  },
+
   listMemory: type => request('GET', `/memory${type ? `?type=${encodeURIComponent(type)}` : ''}`),
   recallMemory: (type, code) => request('GET', `/memory/${type}/${code}`),
   saveMemory: entry => request('POST', '/memory', entry),

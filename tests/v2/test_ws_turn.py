@@ -342,3 +342,30 @@ def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
         }
     assert "fav-lang" in alice_codes
     assert "fav-lang" not in cli_codes
+
+
+# ---- message attachments fold into the LLM payload ------------------------
+
+
+def test_ws_turn_references_attachments(client, monkeypatch):
+    """Attached workspace files are folded into the (persisted) user message ;
+    a missing/invalid path is dropped by validation."""
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token)
+    folder = _conv_folder(conv_id)
+    (workspace_root_for(folder) / "data.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "résume", "files": ["data.csv", "ghost.csv"]})
+        while True:
+            if ws.receive_json()["type"] in ("final", "error"):
+                break
+
+    user_msg = next(m for m in persistence.load_messages(folder) if m["role"] == "user")
+    assert "résume" in user_msg["content"]
+    assert "`data.csv`" in user_msg["content"]  # valid attachment referenced
+    assert "ghost.csv" not in user_msg["content"]  # missing file dropped by validation

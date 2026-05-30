@@ -4,6 +4,13 @@
       <v-card-title class="d-flex align-center ga-2">
         <v-icon icon="mdi-folder-open-outline" /> Workspace
         <v-spacer />
+        <v-btn
+          :disabled="!files.length"
+          icon="mdi-folder-zip-outline"
+          title="Tout télécharger (zip)"
+          variant="text"
+          @click="downloadZip"
+        />
         <v-btn icon="mdi-upload" title="Téléverser" variant="text" @click="uploadOpen = true" />
         <v-btn icon="mdi-refresh" title="Rafraîchir" variant="text" @click="load" />
         <v-btn icon="mdi-close" variant="text" @click="open = false" />
@@ -95,6 +102,7 @@
 <script setup>
   import { computed, ref, watch } from 'vue'
   import { api } from '@/api'
+  import { saveBlob } from '@/download'
   import { useConvStore } from '@/stores/conversations'
 
   const MAX_MB = 22 // affichage seul ; la limite réelle est WORKSPACE_UPLOAD_MAX_BYTES (serveur)
@@ -113,6 +121,7 @@
   }
 
   const open = defineModel({ type: Boolean })
+  const props = defineProps({ initialPath: { type: String, default: '' } })
   const conv = useConvStore()
 
   const files = ref([])
@@ -168,17 +177,19 @@
     }
   }
 
+  function openByPath (path) {
+    const f = files.value.find(x => x.path === path)
+    if (f) openFile(f)
+  }
+
   async function downloadPath (path) {
     const blob = await api.downloadWorkspace(conv.currentId, path)
-    if (!blob) return
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = path.split('/').pop()
-    document.body.append(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
+    if (blob) saveBlob(blob, path.split('/').pop())
+  }
+
+  async function downloadZip () {
+    const blob = await api.downloadWorkspaceZip(conv.currentId)
+    if (blob) saveBlob(blob, 'workspace.zip')
   }
 
   async function doUpload () {
@@ -192,6 +203,7 @@
       const res = await api.uploadWorkspace(conv.currentId, list)
       uploadResults.value = res.results
       await load() // refresh the tree (and any newly written files)
+      conv.fetchWsFiles()
       if (res.results.every(r => r.status === 'ok')) {
         pending.value = []
         uploadOpen.value = false
@@ -208,7 +220,11 @@
     return n < 1024 ? `${n} o` : `${(n / 1024).toFixed(1)} Ko`
   }
 
-  watch(open, v => { if (v) load() })
+  watch(open, async v => {
+    if (!v) return
+    await load()
+    if (props.initialPath) openByPath(props.initialPath)
+  })
 </script>
 
 <style scoped>

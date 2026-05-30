@@ -53,6 +53,19 @@ def _default_title(text: str, limit: int = 60) -> str:
     return line[:limit] + ("…" if len(line) > limit else "")
 
 
+def _attachment_note(attachments: list[str] | None) -> str:
+    """Reference line naming workspace files the user attached to the message.
+
+    The agent reads them on demand with workspace_view — we reference (not
+    inline) so it stays binary-safe and scales to large files. Appended to the
+    user message so it is both seen by the LLM and persisted with the turn.
+    """
+    if not attachments:
+        return ""
+    listed = ", ".join(f"`{p}`" for p in attachments)
+    return f"\n\nFichiers joints du workspace : {listed}."
+
+
 def run_turn(
     *,
     user_text: str,
@@ -67,6 +80,7 @@ def run_turn(
     ask_human_callback: AskHumanCallback | None = None,
     on_dispatch: Callable[[Any], None] | None = None,
     memory_user_id: int | None = None,
+    attachments: list[str] | None = None,
 ) -> str:
     """Process one user turn end-to-end and return the user-facing answer.
 
@@ -84,6 +98,11 @@ def run_turn(
             db.set_title_if_empty(conn, conv_id, _default_title(user_text))
     except Exception as exc:  # noqa: BLE001
         _log.debug("conversation metadata update failed: %s", exc)
+
+    # Fold any attached workspace files into the message so the dispatcher, the
+    # main loop AND the persisted turn all reference them (computed after the
+    # title/metadata above, which intentionally use the clean text).
+    user_text = user_text + _attachment_note(attachments)
 
     # Tier 0 : dispatch. In chat / vocal modes the small dispatcher LLM sees
     # the conversation history to resolve follow-ups ("et pour demain ?").

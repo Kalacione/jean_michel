@@ -11,6 +11,9 @@ Errors are signalled by raising ``WorkspaceError(code, message)``.
 
 from __future__ import annotations
 
+import os
+import tempfile
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -128,3 +131,39 @@ def save_upload(conv_folder: Path, filename: str, data: bytes) -> dict[str, Any]
         raise WorkspaceError("quota_exceeded", "Workspace quota exceeded.")
     target.write_bytes(data)
     return {"name": name, "size_bytes": len(data)}
+
+
+def filter_existing(conv_folder: Path, rel_paths: list[str]) -> list[str]:
+    """Keep only workspace-relative paths that resolve to real files inside the
+    workspace (dedup, order-preserving). Validates message attachments before
+    they reach the LLM — drops anything missing or escaping the workspace.
+    """
+    ws_root = workspace_root_for(conv_folder)
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in rel_paths or []:
+        if not isinstance(p, str) or p in seen:
+            continue
+        try:
+            target = safe_resolve(ws_root, p)
+        except ValueError:
+            continue
+        if target.is_file():
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def zip_workspace(conv_folder: Path) -> Path | None:
+    """Zip the whole workspace into a temp ``.zip``. Returns its path (the caller
+    deletes it after streaming) or None when the workspace has no files."""
+    ws_root = workspace_root_for(conv_folder)
+    files = [p for p in sorted(ws_root.rglob("*")) if p.is_file()]
+    if not files:
+        return None
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="jm_workspace_")
+    os.close(fd)
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            zf.write(f, f.relative_to(ws_root).as_posix())
+    return Path(tmp)

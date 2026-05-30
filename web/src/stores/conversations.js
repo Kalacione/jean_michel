@@ -14,6 +14,9 @@ export const useConvStore = defineStore('conversations', () => {
   const askHuman = ref(null) // {question, why} | null
   const error = ref('')
   const vocal = ref(false) // current conversation is in vocal mode
+  const wsFiles = ref([]) // workspace file paths of the current conversation
+  const wsOpen = ref(false) // WorkspaceDialog open state (shared across components)
+  const wsInitialPath = ref('') // file to auto-open when the WorkspaceDialog opens
 
   let turnWs = null
 
@@ -50,6 +53,29 @@ export const useConvStore = defineStore('conversations', () => {
     list.value = (await api.listConversations()).conversations
   }
 
+  function flattenPaths (entries, prefix = '') {
+    const out = []
+    for (const e of entries || []) {
+      const p = prefix ? `${prefix}/${e.name}` : e.name
+      if (e.type === 'directory') out.push(...flattenPaths(e.children, p))
+      else out.push(p)
+    }
+    return out
+  }
+
+  async function fetchWsFiles () {
+    if (!currentId.value) { wsFiles.value = []; return }
+    try {
+      wsFiles.value = flattenPaths((await api.workspace(currentId.value)).entries)
+    } catch { wsFiles.value = [] }
+  }
+
+  // Open the WorkspaceDialog (optionally on a specific file) from anywhere.
+  function openWorkspace (path = '') {
+    wsInitialPath.value = path
+    wsOpen.value = true
+  }
+
   async function create (mode) {
     const c = await api.createConversation(mode)
     await refresh()
@@ -70,7 +96,9 @@ export const useConvStore = defineStore('conversations', () => {
     dispatch.value = null
     busy.value = false
     askHuman.value = null
+    wsFiles.value = []
     openWs(id)
+    fetchWsFiles()
   }
 
   function openWs (id) {
@@ -88,6 +116,7 @@ export const useConvStore = defineStore('conversations', () => {
         askHuman.value = null
         messages.value.push({ role: 'assistant', content: m.answer })
         refresh() // re-order the list (last interaction first) + pick up auto-title
+        fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
       },
       error: m => { busy.value = false; queued.value = false; error.value = m.detail || 'Erreur orchestrateur.' },
@@ -102,15 +131,15 @@ export const useConvStore = defineStore('conversations', () => {
     }
   }
 
-  function sendTurn (text) {
+  function sendTurn (text, files = []) {
     const clean = (text || '').trim()
-    if (!clean || !turnWs || busy.value) return
-    messages.value.push({ role: 'user', content: clean })
+    if ((!clean && !files.length) || !turnWs || busy.value) return
+    messages.value.push({ role: 'user', content: clean, files: [...files] })
     trace.value = []
     dispatch.value = null
     error.value = ''
     busy.value = true
-    turnWs.sendTurn(clean)
+    turnWs.sendTurn(clean, files)
   }
 
   function answer (text) {
@@ -150,6 +179,8 @@ export const useConvStore = defineStore('conversations', () => {
 
   return {
     list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
+    wsFiles, wsOpen, wsInitialPath,
     refresh, create, select, sendTurn, answer, rename, remove, reset,
+    fetchWsFiles, openWorkspace,
   }
 })

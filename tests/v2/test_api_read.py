@@ -256,6 +256,43 @@ def test_workspace_upload_download_owner_scoped(client, alice_conv):
     ).status_code == 401
 
 
+def test_filter_existing_validates(alice_conv):
+    from jeanmichel.service import workspace as ws_svc
+
+    _, _, folder = alice_conv  # workspace already seeded with notes.md
+    kept = ws_svc.filter_existing(folder, ["notes.md", "ghost.md", "../escape", "notes.md"])
+    assert kept == ["notes.md"]  # missing + traversal dropped, dedup, order kept
+
+
+def test_workspace_zip_download(client, alice_conv):
+    import io
+    import zipfile
+
+    token, conv_id, _ = alice_conv
+    r = client.get(f"/api/conversations/{conv_id}/workspace/zip", headers=_auth(token))
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert "attachment" in r.headers.get("content-disposition", "")
+    assert "notes.md" in zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+
+
+def test_workspace_zip_empty_is_404(client):
+    _make_user("bob", "pw")
+    token = _login(client, "bob", "pw")
+    conv_id = _create_conv(client, token)  # fresh, empty workspace
+    assert client.get(f"/api/conversations/{conv_id}/workspace/zip", headers=_auth(token)).status_code == 404
+
+
+def test_workspace_zip_owner_scoped(client, alice_conv):
+    token_a, conv_id, _ = alice_conv
+    _make_user("bob", "pw")
+    token_b = _login(client, "bob", "pw")
+    assert client.get(
+        f"/api/conversations/{conv_id}/workspace/zip", headers=_auth(token_b)
+    ).status_code == 403
+    assert client.get(f"/api/conversations/{conv_id}/workspace/zip").status_code == 401
+
+
 # ---- Owner scoping on reads -----------------------------------------------
 
 

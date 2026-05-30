@@ -7,7 +7,7 @@
       icon="mdi-folder-open-outline"
       :disabled="!conv.currentId"
       title="Workspace"
-      @click="workspace = true"
+      @click="conv.openWorkspace()"
     />
     <v-btn icon="mdi-brain" title="Mémoire" @click="memory = true" />
     <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
@@ -35,7 +35,7 @@
   </v-main>
 
   <AskHumanDialog />
-  <WorkspaceDialog v-model="workspace" />
+  <WorkspaceDialog v-model="conv.wsOpen" :initial-path="conv.wsInitialPath" />
   <MemoryDialog v-model="memory" />
   <ProfileDialog v-model="profile" />
 </template>
@@ -54,7 +54,6 @@
   const auth = useAuthStore()
   const conv = useConvStore()
   const drawer = ref(true)
-  const workspace = ref(false)
   const memory = ref(false)
   const profile = ref(false)
 

@@ -59,6 +59,7 @@ async def run_turn_streaming(
     dispatch_llm: Any,
     main_llm: Any,
     memory_user_id: int | None = None,
+    attachments: list[str] | None = None,
 ) -> None:
     """Run one turn in a worker thread, streaming events ; handle ask_human.
 
@@ -122,6 +123,7 @@ async def run_turn_streaming(
                 ask_human_callback=ask_human,
                 on_dispatch=on_dispatch,
                 memory_user_id=memory_user_id,
+                attachments=attachments,
             )
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
         except Exception as exc:  # noqa: BLE001

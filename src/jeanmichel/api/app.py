@@ -216,6 +216,20 @@ def create_app() -> Any:
                 )
         return {"results": results}
 
+    @app.get("/api/conversations/{conversation_id}/workspace/zip")
+    def download_workspace_zip(conv: Any = Depends(auth.require_conversation_owner)) -> Any:
+        from starlette.background import BackgroundTask
+
+        zip_path = workspace_svc.zip_workspace(Path(conv["folder_path"]))
+        if zip_path is None:
+            raise HTTPException(status_code=404, detail="workspace is empty")
+        return FileResponse(
+            zip_path,
+            filename="workspace.zip",
+            media_type="application/zip",
+            background=BackgroundTask(lambda: zip_path.unlink(missing_ok=True)),
+        )
+
     # ---- user memory (read ; global, but auth-gated) ---------------------
 
     @app.get("/api/memory")
@@ -388,6 +402,7 @@ def create_app() -> Any:
                         dispatch_llm=dispatch_llm,
                         main_llm=main_llm,
                         memory_user_id=user["id"],
+                        attachments=workspace_svc.filter_existing(folder, data.get("files") or []),
                     )
         except WebSocketDisconnect:
             return
