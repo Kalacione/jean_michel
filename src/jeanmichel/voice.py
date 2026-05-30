@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,32 @@ from pathlib import Path
 from . import config
 
 _log = logging.getLogger(__name__)
+
+
+def _strip_markdown_for_tts(text: str) -> str:
+    """Remove Markdown punctuation a TTS engine would read aloud literally
+    (e.g. ``**``, `` ` ``, ``#``). Keeps the words, drops the decoration.
+
+    Deliberately a simple regex cleanup, NOT a real Markdown parser (KISS). It
+    is conservative with ``_`` so snake_case identifiers survive when spoken.
+    """
+    text = text or ""
+    # Images / links : keep the visible text, drop the target URL.
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    # Line-start block markers : headings, blockquotes, horizontal rules, bullets.
+    text = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]*", "", text)   # ## Heading
+    text = re.sub(r"(?m)^[ \t]{0,3}>[ \t]?", "", text)        # > quote
+    text = re.sub(r"(?m)^[ \t]*[-*_]{3,}[ \t]*$", "", text)   # --- *** ___ rule
+    text = re.sub(r"(?m)^[ \t]*[-*+][ \t]+", "", text)        # - bullet
+    # Inline decoration.
+    text = text.replace("```", " ").replace("`", "")           # code fences / spans
+    text = text.replace("*", "")                                # *italic* / **bold**
+    text = text.replace("~~", "")                               # ~~strike~~
+    text = re.sub(r"(?<!\w)_+|_+(?!\w)", "", text)              # _italic_ ; keeps snake_case
+    # Tidy the whitespace the removals leave behind.
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
 
 # Player command + args. The WAV path is appended as the last argument.
 # Order matters : first available is picked. paplay > aplay > ffplay.
@@ -144,6 +171,7 @@ def synthesize_to_wav(text: str, output_path: Path) -> bool:
     the function returns False without raising — callers fall back to
     text-only output.
     """
+    text = _strip_markdown_for_tts(text)
     voice = _load_voice()
     if voice is None:
         return False
@@ -177,7 +205,7 @@ def synthesize_to_bytes(text: str) -> bytes | None:
     WITHOUT the silent pre-roll (a browser's Web Audio API doesn't need the sink
     wake-up padding). Returns None on any failure — callers degrade to text.
     """
-    text = (text or "").strip()
+    text = _strip_markdown_for_tts(text)
     if not text:
         return None
     voice = _load_voice()
@@ -241,7 +269,7 @@ def speak(text: str) -> bool:
     when no streaming-capable player is available, so behaviour degrades
     gracefully on exotic setups.
     """
-    text = (text or "").strip()
+    text = _strip_markdown_for_tts(text)
     if not text:
         return True
 

@@ -440,3 +440,58 @@ def test_wait_for_announcements_waits_then_clears():
 def test_wait_for_announcements_noop_when_none():
     voice._active_announcement = None
     voice.wait_for_announcements()  # must not raise
+
+
+# ---- markdown cleanup for TTS -------------------------------------------
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("**gras**", "gras"),
+    ("*italique*", "italique"),
+    ("du `code` inline", "du code inline"),
+    ("## Titre", "Titre"),
+    ("- point un", "point un"),
+    ("> citation", "citation"),
+    ("[Google](https://google.com)", "Google"),
+    ("~~barré~~", "barré"),
+    ("_emphase_", "emphase"),
+    ("garde snake_case intact", "garde snake_case intact"),  # _ inside a word survives
+    ("texte normal, sans rien", "texte normal, sans rien"),
+])
+def test_strip_markdown_for_tts(raw, expected):
+    assert voice._strip_markdown_for_tts(raw) == expected
+
+
+def test_strip_markdown_multiline_and_fences():
+    raw = "## Résumé\n\n**Point** clé : voir `main.py`.\n\n```py\nx = 1\n```\n- a\n- b"
+    out = voice._strip_markdown_for_tts(raw)
+    assert "#" not in out and "*" not in out and "`" not in out
+    assert "Résumé" in out
+    assert "Point clé" in out
+    assert "main.py" in out
+
+
+def test_strip_markdown_empty():
+    assert voice._strip_markdown_for_tts("") == ""
+    assert voice._strip_markdown_for_tts("   \n  ") == ""
+
+
+def test_synthesize_to_bytes_strips_markdown(tmp_path, monkeypatch):
+    """The web TTS path must feed Piper clean text, not raw Markdown."""
+    fake_model = tmp_path / "fake.onnx"
+    fake_model.write_bytes(b"x")
+    monkeypatch.setattr(voice.config, "VOICE_MODEL_PATH", fake_model)
+
+    seen: list[str] = []
+    chunk = MagicMock(
+        sample_rate=22050, sample_channels=1, sample_width=2,
+        audio_int16_bytes=b"\x01\x02" * 256,
+    )
+    fake_voice = MagicMock()
+    fake_voice.synthesize.side_effect = lambda t: seen.append(t) or [chunk]
+    fake_piper_voice_cls = MagicMock(load=MagicMock(return_value=fake_voice))
+
+    with patch.dict("sys.modules", {"piper": MagicMock(PiperVoice=fake_piper_voice_cls)}):
+        voice.synthesize_to_bytes("Voici **le** plan : `go`.")
+
+    assert seen == ["Voici le plan : go."]  # no ** and no backticks reach Piper
