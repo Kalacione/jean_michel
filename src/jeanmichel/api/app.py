@@ -44,6 +44,18 @@ def create_app() -> Any:
     class CreateConversationRequest(BaseModel):
         mode: str = "analyse"
 
+    class MemorySaveRequest(BaseModel):
+        type: str
+        code: str
+        title: str
+        description: str
+        content: str
+
+    class MemoryUpdateRequest(BaseModel):
+        title: str | None = None
+        description: str | None = None
+        content: str | None = None
+
     # ---- health ----------------------------------------------------------
 
     @app.get("/api/health")
@@ -147,6 +159,65 @@ def create_app() -> Any:
         if match is None:
             raise HTTPException(status_code=404, detail=f"no {type}/{code} entry")
         return {"entry": match}
+
+    # Memory mutations — auth-gated but GLOBAL in v1 (shared across web users ;
+    # documented limitation). CRUD here is equivalent to the manage_user_memory
+    # tool (same service.memory functions, same validation + caps).
+    def _memory_http(exc: memory_svc.MemoryOpError) -> HTTPException:
+        status = {"already_exists": 409, "not_found": 404, "ambiguous": 409}.get(
+            exc.code, 400
+        )
+        return HTTPException(status_code=status, detail=exc.message)
+
+    @app.post("/api/memory", status_code=201)
+    def save_memory(
+        body: MemorySaveRequest, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                saved = memory_svc.save(
+                    conn,
+                    type_=body.type,
+                    code=body.code,
+                    title=body.title,
+                    description=body.description,
+                    content=body.content,
+                )
+        except memory_svc.MemoryOpError as exc:
+            raise _memory_http(exc) from exc
+        return {"saved": saved}
+
+    @app.patch("/api/memory/{type}/{code}")
+    def update_memory(
+        type: str,
+        code: str,
+        body: MemoryUpdateRequest,
+        user: dict = Depends(auth.current_user),
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                target_id = memory_svc.update(
+                    conn,
+                    code=code,
+                    type_=type,
+                    title=body.title,
+                    description=body.description,
+                    content=body.content,
+                )
+        except memory_svc.MemoryOpError as exc:
+            raise _memory_http(exc) from exc
+        return {"updated_id": target_id}
+
+    @app.delete("/api/memory/{type}/{code}")
+    def delete_memory(
+        type: str, code: str, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                target_id = memory_svc.delete(conn, code=code, type_=type)
+        except memory_svc.MemoryOpError as exc:
+            raise _memory_http(exc) from exc
+        return {"deleted_id": target_id}
 
     # ---- turn WebSocket (live event stream) ------------------------------
 

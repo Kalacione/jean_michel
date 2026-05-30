@@ -200,3 +200,86 @@ def test_memory_filter_and_errors(client):
     assert client.get("/api/memory", params={"type": "garbage"}, headers=_auth(token)).status_code == 400
     assert client.get("/api/memory/user/ghost", headers=_auth(token)).status_code == 404
     assert client.get("/api/memory").status_code == 401  # auth required
+
+
+# ---- Memory mutations (S5) ------------------------------------------------
+
+
+def _save_via_api(client, token, **fields):
+    body = {"type": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
+    body.update(fields)
+    return client.post("/api/memory", json=body, headers=_auth(token))
+
+
+def test_memory_save_then_recall(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    resp = _save_via_api(client, token, code="unity-mtl", content="full body")
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["saved"]["code"] == "unity-mtl"
+    recalled = client.get("/api/memory/user/unity-mtl", headers=_auth(token))
+    assert recalled.status_code == 200
+    assert recalled.json()["entry"]["content"] == "full body"
+
+
+def test_memory_save_duplicate_conflict(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    assert _save_via_api(client, token, code="dup").status_code == 201
+    assert _save_via_api(client, token, code="dup").status_code == 409
+
+
+def test_memory_save_validation(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    assert _save_via_api(client, token, type="garbage").status_code == 400  # invalid_type
+    assert _save_via_api(client, token, title="x" * 61).status_code == 400  # title_too_long
+    # Pydantic rejects a missing required field before reaching the service.
+    bad = client.post("/api/memory", json={"type": "user", "code": "y"}, headers=_auth(token))
+    assert bad.status_code == 422
+
+
+def test_memory_update(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    _save_via_api(client, token, code="z", title="old", description="od", content="oc")
+    upd = client.patch("/api/memory/user/z", json={"title": "new"}, headers=_auth(token))
+    assert upd.status_code == 200
+    entry = client.get("/api/memory/user/z", headers=_auth(token)).json()["entry"]
+    assert entry["title"] == "new"
+    assert entry["description"] == "od"  # untouched
+    assert client.patch("/api/memory/user/ghost", json={"title": "n"}, headers=_auth(token)).status_code == 404
+    assert client.patch("/api/memory/user/z", json={}, headers=_auth(token)).status_code == 400  # no fields
+
+
+def test_memory_delete(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    _save_via_api(client, token, code="d1")
+    assert client.delete("/api/memory/user/d1", headers=_auth(token)).status_code == 200
+    assert client.get("/api/memory/user/d1", headers=_auth(token)).status_code == 404
+    assert client.delete("/api/memory/user/ghost", headers=_auth(token)).status_code == 404
+
+
+def test_memory_mutations_require_auth(client):
+    body = {"type": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
+    assert client.post("/api/memory", json=body).status_code == 401
+    assert client.patch("/api/memory/user/x", json={"title": "n"}).status_code == 401
+    assert client.delete("/api/memory/user/x").status_code == 401
+
+
+def test_memory_api_equals_tool(client):
+    """Acceptance : API CRUD and the manage_user_memory tool share one store."""
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    # Saved via API -> visible to the tool.
+    _save_via_api(client, token, code="shared", content="api-written")
+    recalled = json.loads(memory_handler(action="recall", code="shared"))
+    assert recalled["entry"]["content"] == "api-written"
+    # Saved via tool -> visible to the API.
+    memory_handler(
+        action="save", type="feedback", code="tool-side",
+        title="t", description="d", content="tool-written",
+    )
+    api_entry = client.get("/api/memory/feedback/tool-side", headers=_auth(token)).json()["entry"]
+    assert api_entry["content"] == "tool-written"
