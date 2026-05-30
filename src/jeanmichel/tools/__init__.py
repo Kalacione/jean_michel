@@ -54,6 +54,7 @@ def build_registry(
     sandbox_grants: list[str] | None = None,
     sandbox_image: str | None = None,
     agent_role: str = "",
+    memory_user_id: int | None = None,
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context.
 
@@ -68,6 +69,8 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
+    # Bind user_memory to the current owner (None → reserved cli user).
+    mum_spec = _manage_user_memory_mod.make_spec(memory_user_id)
 
     registry: dict[str, ToolSpec] = {
         _clock_mod.SPEC.name: _clock_mod.SPEC,
@@ -84,7 +87,7 @@ def build_registry(
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
-        _manage_user_memory_mod.SPEC.name: _manage_user_memory_mod.SPEC,
+        mum_spec.name: mum_spec,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
         _web_fetch_mod.SPEC.name: _web_fetch_mod.SPEC,

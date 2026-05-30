@@ -175,10 +175,7 @@ def test_reads_are_owner_scoped(client, alice_conv):
 def test_memory_list_and_recall(client):
     _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    memory_handler(
-        action="save", type="user", code="unity-mtl",
-        title="Dev", description="senior dev", content="full body here",
-    )
+    _save_via_api(client, token, code="unity-mtl", description="senior dev", content="full body here")
 
     listed = client.get("/api/memory", headers=_auth(token))
     assert listed.status_code == 200
@@ -194,7 +191,7 @@ def test_memory_list_and_recall(client):
 def test_memory_filter_and_errors(client):
     _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    memory_handler(action="save", type="feedback", code="kiss", title="t", description="d", content="c")
+    _save_via_api(client, token, type="feedback", code="kiss")
 
     assert client.get("/api/memory", params={"type": "feedback"}, headers=_auth(token)).status_code == 200
     assert client.get("/api/memory", params={"type": "garbage"}, headers=_auth(token)).status_code == 400
@@ -269,20 +266,34 @@ def test_memory_mutations_require_auth(client):
 
 
 def test_memory_api_equals_tool(client):
-    """Acceptance : API CRUD and the manage_user_memory tool share one store."""
-    _make_user("alice", "pw")
+    """Acceptance : API CRUD and the tool share one store — scoped to the SAME user."""
+    alice_id = _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    # Saved via API -> visible to the tool.
+    # API write (alice) -> visible to the tool when scoped to alice.
     _save_via_api(client, token, code="shared", content="api-written")
-    recalled = json.loads(memory_handler(action="recall", code="shared"))
+    recalled = json.loads(memory_handler(action="recall", code="shared", user_id=alice_id))
     assert recalled["entry"]["content"] == "api-written"
-    # Saved via tool -> visible to the API.
+    # Tool write (alice) -> visible to the API.
     memory_handler(
         action="save", type="feedback", code="tool-side",
-        title="t", description="d", content="tool-written",
+        title="t", description="d", content="tool-written", user_id=alice_id,
     )
     api_entry = client.get("/api/memory/feedback/tool-side", headers=_auth(token)).json()["entry"]
     assert api_entry["content"] == "tool-written"
+
+
+def test_memory_isolated_between_users(client):
+    """The whole point : Alice's memory is invisible to Bob."""
+    _make_user("alice", "pw")
+    _make_user("bob", "pw")
+    tok_a = _login(client, "alice", "pw")
+    tok_b = _login(client, "bob", "pw")
+    _save_via_api(client, tok_a, code="alice-secret", content="private")
+
+    bob_codes = {e["code"] for e in client.get("/api/memory", headers=_auth(tok_b)).json()["entries"]}
+    assert "alice-secret" not in bob_codes
+    assert client.get("/api/memory/user/alice-secret", headers=_auth(tok_b)).status_code == 404
+    assert client.get("/api/memory/user/alice-secret", headers=_auth(tok_a)).status_code == 200
 
 
 # ---- TTS endpoint (S6) ----------------------------------------------------

@@ -186,22 +186,52 @@ def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite
     return row
 
 
-# ---- Web users + conversation ownership (web frontend, migrate_112) -------
+# ---- Web users + profile + conversation ownership (web frontend) ----------
 
-def create_web_user(conn: sqlite3.Connection, username: str, password_hash: str) -> int:
-    """Insert a web user. Returns the new id. Raises IntegrityError on dup username."""
+# Structured profile fields (the cli_profile.toml structure, reprise en BDD ;
+# migrate_113). Filled at creation for web users.
+WEB_PROFILE_FIELDS = ("name", "birthdate", "city", "country", "language", "interests", "notes")
+
+
+def create_web_user(
+    conn: sqlite3.Connection, username: str, password_hash: str, **profile: str
+) -> int:
+    """Insert a web user (+ optional profile fields). Returns the new id.
+
+    Profile kwargs (name/birthdate/city/country/language/interests/notes) default
+    to '' in the schema ; only the ones provided are written. Raises
+    IntegrityError on a duplicate username.
+    """
+    cols = ["username", "password_hash", "created_at"]
+    vals: list[str] = [username, password_hash, _now()]
+    for field in WEB_PROFILE_FIELDS:
+        if field in profile:
+            cols.append(field)
+            vals.append(profile[field])
+    placeholders = ", ".join("?" for _ in cols)
     cur = conn.execute(
-        "INSERT INTO web_users (username, password_hash, created_at) VALUES (?, ?, ?)",
-        (username, password_hash, _now()),
+        f"INSERT INTO web_users ({', '.join(cols)}) VALUES ({placeholders})", vals
     )
     return cur.lastrowid  # type: ignore[return-value]
 
 
 def get_web_user_by_username(conn: sqlite3.Connection, username: str) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT id, username, password_hash, created_at FROM web_users WHERE username=?",
-        (username,),
-    ).fetchone()
+    return conn.execute("SELECT * FROM web_users WHERE username=?", (username,)).fetchone()
+
+
+def get_web_user_by_id(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM web_users WHERE id=?", (user_id,)).fetchone()
+
+
+def cli_user_id(conn: sqlite3.Connection) -> int:
+    """id of the reserved `cli` user — the CLI's identity + the default memory scope.
+
+    Raises KeyError if migrate_113 hasn't been applied (no `cli` user yet).
+    """
+    row = conn.execute("SELECT id FROM web_users WHERE username='cli'").fetchone()
+    if row is None:
+        raise KeyError("reserved 'cli' user missing (migrate_113 not applied)")
+    return row["id"]
 
 
 def associate_conversation_user(

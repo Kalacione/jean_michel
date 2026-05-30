@@ -1,8 +1,8 @@
-"""user_memory CRUD — pure data layer, single SQL source.
+"""user_memory CRUD — pure data layer, single SQL source, **scoped per user**.
 
-Shared by the ``manage_user_memory`` tool (LLM-facing, formats results as
-tool_ok/tool_error strings) and the web API (S2/S5, returns JSON). Validation
-and SQL live here once ; transports only translate the result.
+Shared by the ``manage_user_memory`` tool (LLM-facing) and the web API. Every
+operation is scoped by ``user_id`` (FK ``web_users.id`` ; migrate_113) so a
+user only ever sees / writes their own memory. Validation + SQL live here once.
 
 Errors are signalled by raising ``MemoryOpError(code, message, **extra)``.
 Success returns plain data (dicts / ids).
@@ -78,16 +78,18 @@ def _validate_save(
 def save(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     type_: str,
     code: str,
     title: str,
     description: str,
     content: str,
 ) -> dict[str, Any]:
-    """Insert a new entry. Raises on validation error or (type, code) conflict."""
+    """Insert a new entry for ``user_id``. Raises on validation / (type,code) conflict."""
     _validate_save(type_, code, title, description, content)
     existing = conn.execute(
-        "SELECT id, type FROM user_memory WHERE type=? AND code=?", (type_, code)
+        "SELECT id FROM user_memory WHERE user_id=? AND type=? AND code=?",
+        (user_id, type_, code),
     ).fetchone()
     if existing is not None:
         raise MemoryOpError(
@@ -102,30 +104,30 @@ def save(
     now = _now()
     conn.execute(
         "INSERT INTO user_memory "
-        "(type, code, title, description, content, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (type_, code, title, description, content, now, now),
+        "(user_id, type, code, title, description, content, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, type_, code, title, description, content, now, now),
     )
     return {"type": type_, "code": code, "title": title}
 
 
-def recall(conn: sqlite3.Connection, *, code: str) -> list[dict[str, Any]]:
-    """Return all full entries matching ``code`` (most recent first). May be []."""
+def recall(conn: sqlite3.Connection, *, user_id: int, code: str) -> list[dict[str, Any]]:
+    """Return the user's full entries matching ``code`` (most recent first). May be []."""
     if not code or not code.strip():
         raise MemoryOpError("invalid_args", "code is required for recall.")
     rows = conn.execute(
         "SELECT id, type, code, title, description, content, created_at, modified_at "
-        "FROM user_memory WHERE code=? "
+        "FROM user_memory WHERE user_id=? AND code=? "
         "ORDER BY modified_at DESC",
-        (code,),
+        (user_id, code),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
 def list_(
-    conn: sqlite3.Connection, *, type_filter: str | None = None
+    conn: sqlite3.Connection, *, user_id: int, type_filter: str | None = None
 ) -> list[dict[str, Any]]:
-    """Return index entries (no content), optionally filtered by type."""
+    """Return the user's index entries (no content), optionally filtered by type."""
     if type_filter is not None and type_filter not in VALID_TYPES:
         raise MemoryOpError(
             "invalid_type",
@@ -135,15 +137,16 @@ def list_(
     if type_filter:
         rows = conn.execute(
             "SELECT id, type, code, title, description, modified_at "
-            "FROM user_memory WHERE type=? "
+            "FROM user_memory WHERE user_id=? AND type=? "
             "ORDER BY modified_at DESC",
-            (type_filter,),
+            (user_id, type_filter),
         ).fetchall()
     else:
         rows = conn.execute(
             "SELECT id, type, code, title, description, modified_at "
-            "FROM user_memory "
+            "FROM user_memory WHERE user_id=? "
             "ORDER BY modified_at DESC",
+            (user_id,),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -151,13 +154,14 @@ def list_(
 def update(
     conn: sqlite3.Connection,
     *,
+    user_id: int,
     code: str,
     title: str | None = None,
     description: str | None = None,
     content: str | None = None,
     type_: str | None = None,
 ) -> int:
-    """Update one entry. Returns the affected id. Raises on not_found/ambiguous."""
+    """Update one of the user's entries. Returns the affected id."""
     if not code or not code.strip():
         raise MemoryOpError("invalid_args", "code is required for update.")
     if title is None and description is None and content is None:
@@ -182,7 +186,7 @@ def update(
             received=len(content),
         )
 
-    target_id = _resolve_single(conn, code=code, type_=type_)
+    target_id = _resolve_single(conn, user_id=user_id, code=code, type_=type_)
     sets: list[str] = []
     params: list[Any] = []
     if title is not None:
@@ -201,26 +205,30 @@ def update(
     return target_id
 
 
-def delete(conn: sqlite3.Connection, *, code: str, type_: str | None = None) -> int:
-    """Delete one entry. Returns the deleted id. Raises on not_found/ambiguous."""
+def delete(
+    conn: sqlite3.Connection, *, user_id: int, code: str, type_: str | None = None
+) -> int:
+    """Delete one of the user's entries. Returns the deleted id."""
     if not code or not code.strip():
         raise MemoryOpError("invalid_args", "code is required for delete.")
-    target_id = _resolve_single(conn, code=code, type_=type_)
+    target_id = _resolve_single(conn, user_id=user_id, code=code, type_=type_)
     conn.execute("DELETE FROM user_memory WHERE id=?", (target_id,))
     return target_id
 
 
 def _resolve_single(
-    conn: sqlite3.Connection, *, code: str, type_: str | None
+    conn: sqlite3.Connection, *, user_id: int, code: str, type_: str | None
 ) -> int:
-    """Resolve a unique row id by code (+ optional type). Raises if 0 or ambiguous."""
+    """Resolve a unique row id (within the user) by code (+ optional type)."""
     if type_ is not None:
         existing = conn.execute(
-            "SELECT id, type FROM user_memory WHERE type=? AND code=?", (type_, code)
+            "SELECT id, type FROM user_memory WHERE user_id=? AND type=? AND code=?",
+            (user_id, type_, code),
         ).fetchall()
     else:
         existing = conn.execute(
-            "SELECT id, type FROM user_memory WHERE code=?", (code,)
+            "SELECT id, type FROM user_memory WHERE user_id=? AND code=?",
+            (user_id, code),
         ).fetchall()
     if not existing:
         raise MemoryOpError("not_found", f"No entry with code='{code}'.", entry_code=code)

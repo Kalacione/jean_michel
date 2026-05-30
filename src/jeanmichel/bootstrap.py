@@ -30,25 +30,28 @@ def _now() -> str:
 def bootstrap_user_memory_from_profile(
     conn: sqlite3.Connection,
     profile: UserProfile,
+    user_id: int | None = None,
 ) -> bool:
-    """Create a `user/personal-profile` entry from ``user_profile.toml``.
+    """Create a `user/personal-profile` entry for a user, from a profile.
 
-    No-op when :
-    - the ``user_memory`` table is missing (migration 101 not applied yet),
-    - the table already holds at least one entry,
-    - the user profile is empty (default `UserProfile()` with no fields set).
+    Scoped to ``user_id`` (``None`` → the reserved ``cli`` user). No-op when :
+    - the ``user_memory`` table / ``cli`` user is missing (migrations not applied),
+    - this user already holds at least one entry,
+    - the profile is empty (default `UserProfile()` with no fields set).
 
     Returns ``True`` when a new entry was inserted, ``False`` otherwise.
     """
-    # Defensive : if the migration hasn't run, the table doesn't exist.
+    from .db import cli_user_id
+
+    # Defensive : if the migrations haven't run, the table / cli user don't exist.
     try:
+        uid = user_id if user_id is not None else cli_user_id(conn)
         existing = conn.execute(
-            "SELECT COUNT(*) AS c FROM user_memory"
+            "SELECT COUNT(*) AS c FROM user_memory WHERE user_id=?", (uid,)
         ).fetchone()
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, KeyError):
         _log.info(
-            "bootstrap skipped : user_memory table missing "
-            "(migration 101 not applied)"
+            "bootstrap skipped : user_memory/web_users missing (migrations not applied)"
         )
         return False
 
@@ -81,9 +84,9 @@ def bootstrap_user_memory_from_profile(
     now = _now()
     conn.execute(
         "INSERT INTO user_memory "
-        "(type, code, title, description, content, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (_BOOTSTRAP_TYPE, _BOOTSTRAP_CODE, title, description, content, now, now),
+        "(user_id, type, code, title, description, content, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (uid, _BOOTSTRAP_TYPE, _BOOTSTRAP_CODE, title, description, content, now, now),
     )
     return True
 

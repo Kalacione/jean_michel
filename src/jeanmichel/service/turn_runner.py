@@ -57,6 +57,7 @@ def run_turn(
     event_emitter: EventEmitter | None = None,
     ask_human_callback: AskHumanCallback | None = None,
     on_dispatch: Callable[[Any], None] | None = None,
+    memory_user_id: int | None = None,
 ) -> str:
     """Process one user turn end-to-end and return the user-facing answer.
 
@@ -101,6 +102,7 @@ def run_turn(
         initial_messages=initial_messages,
         event_emitter=event_emitter,
         ask_human_callback=ask_human_callback,
+        memory_user_id=memory_user_id,
     )
 
 
@@ -116,10 +118,11 @@ def _run_deep_turn(
     initial_messages: list[dict] | None,
     event_emitter: EventEmitter | None,
     ask_human_callback: AskHumanCallback | None,
+    memory_user_id: int | None,
 ) -> str:
     """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
     with db.connect() as conn:
-        user_memory_block, count = render_user_memory_index(conn)
+        user_memory_block, count = render_user_memory_index(conn, memory_user_id)
         if count >= _MEMORY_WARN_AT and event_emitter is not None:
             event_emitter(MemoryNearCapacity(current_count=count, limit=100))
         main_agent = load_agent_spec_v2(
@@ -134,7 +137,7 @@ def _run_deep_turn(
     def agent_resolver(code: str) -> AgentSpec | None:
         try:
             with db.connect() as conn:
-                u_mem, _ = render_user_memory_index(conn)
+                u_mem, _ = render_user_memory_index(conn, memory_user_id)
                 return load_agent_spec_v2(
                     conn,
                     code,
@@ -168,6 +171,7 @@ def _run_deep_turn(
         sandbox_grants=sandbox_grants,
         sandbox_image=None,
         agent_role="router",
+        memory_user_id=memory_user_id,
     )
 
     # On resume, re-render messages[0] with a fresh system prompt to pick up

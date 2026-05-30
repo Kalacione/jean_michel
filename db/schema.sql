@@ -695,6 +695,7 @@ INSERT INTO agent_delegation_targets VALUES(1,'code-fetcher','2026-05-28 20:17:1
 INSERT INTO agent_delegation_targets VALUES(12,'code-fetcher','2026-05-28 20:17:15');
 CREATE TABLE user_memory (
     id           INTEGER PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES web_users(id),
     type         TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
     code         TEXT NOT NULL,
     title        TEXT NOT NULL,
@@ -702,17 +703,26 @@ CREATE TABLE user_memory (
     content      TEXT NOT NULL,  -- full markdown body, loaded on demand via recall
     created_at   TEXT NOT NULL,
     modified_at  TEXT NOT NULL,
-    UNIQUE (type, code)
+    UNIQUE (user_id, type, code)
 );
 CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
+CREATE INDEX idx_user_memory_user ON user_memory(user_id);
 CREATE INDEX idx_user_memory_type ON user_memory(type);
 CREATE INDEX idx_user_memory_modified ON user_memory(modified_at DESC);
 CREATE TABLE web_users (
   id            INTEGER PRIMARY KEY,
   username      TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
-  created_at    TEXT NOT NULL
+  created_at    TEXT NOT NULL,
+  name          TEXT NOT NULL DEFAULT '',
+  birthdate     TEXT NOT NULL DEFAULT '',
+  city          TEXT NOT NULL DEFAULT '',
+  country       TEXT NOT NULL DEFAULT '',
+  language      TEXT NOT NULL DEFAULT '',
+  interests     TEXT NOT NULL DEFAULT '',
+  notes         TEXT NOT NULL DEFAULT ''
 );
+INSERT INTO web_users (username, password_hash, created_at) VALUES ('cli', '!', '2026-05-30T00:00:00Z');
 CREATE TABLE conversation_users (
   user_id         INTEGER NOT NULL REFERENCES web_users(id),
   conversation_id TEXT    NOT NULL REFERENCES conversations(id),

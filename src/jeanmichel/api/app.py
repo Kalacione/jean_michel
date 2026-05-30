@@ -151,7 +151,7 @@ def create_app() -> Any:
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
-                entries = memory_svc.list_(conn, type_filter=type)
+                entries = memory_svc.list_(conn, user_id=user["id"], type_filter=type)
         except memory_svc.MemoryOpError as exc:
             raise HTTPException(status_code=400, detail=exc.message) from exc
         return {"entries": entries}
@@ -161,7 +161,7 @@ def create_app() -> Any:
         type: str, code: str, user: dict = Depends(auth.current_user)
     ) -> dict[str, Any]:
         with db.connect() as conn:
-            rows = memory_svc.recall(conn, code=code)
+            rows = memory_svc.recall(conn, user_id=user["id"], code=code)
         match = next((r for r in rows if r["type"] == type), None)
         if match is None:
             raise HTTPException(status_code=404, detail=f"no {type}/{code} entry")
@@ -184,6 +184,7 @@ def create_app() -> Any:
             with db.connect() as conn:
                 saved = memory_svc.save(
                     conn,
+                    user_id=user["id"],
                     type_=body.type,
                     code=body.code,
                     title=body.title,
@@ -205,6 +206,7 @@ def create_app() -> Any:
             with db.connect() as conn:
                 target_id = memory_svc.update(
                     conn,
+                    user_id=user["id"],
                     code=code,
                     type_=type,
                     title=body.title,
@@ -221,7 +223,7 @@ def create_app() -> Any:
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
-                target_id = memory_svc.delete(conn, code=code, type_=type)
+                target_id = memory_svc.delete(conn, user_id=user["id"], code=code, type_=type)
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"deleted_id": target_id}

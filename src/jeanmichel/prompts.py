@@ -74,31 +74,38 @@ the list above."""
 
 def render_user_memory_index(
     conn: sqlite3.Connection,
+    user_id: int | None = None,
     limit: int = USER_MEMORY_INDEX_LIMIT,
     warn_at: int = USER_MEMORY_WARN_AT,
 ) -> tuple[str, int]:
-    """Render the user_memory index block + return the total entry count.
+    """Render the user_memory index block + return the entry count, **for one user**.
 
-    The block lists ``[type] code : description`` of the most-recently-
-    modified entries (capped at ``limit``). Returns ``("", 0)`` when the
-    table is empty or missing — the caller decides whether to inject.
+    Scoped to ``user_id`` (``None`` → the reserved ``cli`` user). The block lists
+    ``[type] code : description`` of the most-recently-modified entries (capped at
+    ``limit``). Returns ``("", 0)`` when the user has no memory, or when the table
+    / ``cli`` user is missing (migrations not applied) — the caller decides
+    whether to inject.
     """
+    from .db import cli_user_id
+
     try:
+        uid = user_id if user_id is not None else cli_user_id(conn)
         rows = conn.execute(
             "SELECT type, code, description, modified_at "
-            "FROM user_memory "
-            "ORDER BY modified_at DESC "
-            "LIMIT ?",
-            (limit,),
+            "FROM user_memory WHERE user_id=? "
+            "ORDER BY modified_at DESC LIMIT ?",
+            (uid, limit),
         ).fetchall()
-    except sqlite3.OperationalError:
-        # Table missing (migration 101 not applied yet).
+    except (sqlite3.OperationalError, KeyError):
+        # Table or `cli` user missing (migration 101/113 not applied yet).
         return "", 0
 
     if not rows:
         return "", 0
 
-    count_row = conn.execute("SELECT COUNT(*) AS c FROM user_memory").fetchone()
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM user_memory WHERE user_id=?", (uid,)
+    ).fetchone()
     total_count = int(count_row["c"]) if count_row is not None else len(rows)
 
     lines: list[str] = ["## Known facts about the user (long-term memory)"]

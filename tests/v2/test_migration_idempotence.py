@@ -49,6 +49,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_110_syntax_check_before_run.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_111_code_runner_to_reasoner.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_112_web_users.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_113_user_memory_isolation.sql")
     yield conn
     conn.close()
 
@@ -330,6 +331,30 @@ def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated
             "agents_columns": sorted(
                 r["name"] for r in conn.execute("PRAGMA table_info(agents)").fetchall()
             ),
+            "web_users_columns": sorted(
+                r["name"] for r in conn.execute("PRAGMA table_info(web_users)").fetchall()
+            ),
+            "user_memory_columns": sorted(
+                r["name"] for r in conn.execute("PRAGMA table_info(user_memory)").fetchall()
+            ),
         }
 
     assert _shape(v2_migrated_db) == _shape(v2_consolidated_db)
+
+
+# ---- migrate_113 : user_memory isolation -----------------------------------
+
+
+def test_user_memory_has_user_id(v2_migrated_db):
+    cols = {r["name"] for r in v2_migrated_db.execute("PRAGMA table_info(user_memory)")}
+    assert "user_id" in cols
+
+
+def test_web_users_has_profile_columns(v2_migrated_db):
+    cols = {r["name"] for r in v2_migrated_db.execute("PRAGMA table_info(web_users)")}
+    assert {"name", "birthdate", "city", "country", "language", "interests", "notes"} <= cols
+
+
+def test_cli_user_created(v2_migrated_db):
+    row = v2_migrated_db.execute("SELECT id FROM web_users WHERE username='cli'").fetchone()
+    assert row is not None
