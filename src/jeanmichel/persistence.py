@@ -112,9 +112,18 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def save_messages(conv_folder: Path, messages: list[dict[str, Any]]) -> None:
-    """Atomic write of `messages.json` (main agent messages[])."""
+    """Atomic write of `messages.json` (main agent messages[]).
+
+    Strips any transient ``images`` (base64 vision input) so the conversation
+    file stays text-only — images live in the workspace, never in messages.json
+    (cf. DevNotes/WEBUI/03).
+    """
     path = conv_folder / _MESSAGES_FILE
-    _atomic_write_text(path, json.dumps(messages, ensure_ascii=False, indent=2))
+    sanitized = [
+        {k: v for k, v in m.items() if k != "images"} if "images" in m else m
+        for m in messages
+    ]
+    _atomic_write_text(path, json.dumps(sanitized, ensure_ascii=False, indent=2))
 
 
 def load_messages(conv_folder: Path) -> list[dict[str, Any]]:

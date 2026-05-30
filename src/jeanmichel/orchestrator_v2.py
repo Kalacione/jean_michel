@@ -721,6 +721,7 @@ def run_main_loop(
     tools_registry: dict[str, Any],
     llm_client: Any,
     user_text: str,
+    images: list[str] | None = None,
     initial_messages: list[dict[str, Any]] | None = None,
     ask_human_callback: AskHumanCallback | None = None,
     agent_resolver: AgentResolver | None = None,
@@ -745,7 +746,10 @@ def run_main_loop(
         messages = list(initial_messages)
     else:
         messages = [{"role": "system", "content": agent.system_prompt}]
-    messages.append({"role": "user", "content": user_text})
+    user_msg: dict[str, Any] = {"role": "user", "content": user_text}
+    if images:
+        user_msg["images"] = images  # transient vision input ; stripped on save
+    messages.append(user_msg)
 
     state = ConversationState(depth_current=0)
     hooks = build_hook_registry(llm_client=llm_client)

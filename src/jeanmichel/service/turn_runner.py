@@ -37,7 +37,7 @@ from ..orchestrator_v2 import (
 )
 from ..prompts import render_user_memory_index
 from ..tools import build_registry
-from .workspace import is_image
+from .workspace import is_image, normalized_image_b64
 
 _log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _default_title(text: str, limit: int = 60) -> str:
     return line[:limit] + ("…" if len(line) > limit else "")
 
 
-def _attachment_note(attachments: list[str] | None) -> str:
+def _attachment_note(attachments: list[str] | None, mode: str) -> str:
     """Reference line naming workspace files the user attached to the message.
 
     The agent reads them on demand with workspace_view — we reference (not
@@ -65,7 +65,9 @@ def _attachment_note(attachments: list[str] | None) -> str:
         return ""
     listed = ", ".join(f"`{p}`" for p in attachments)
     note = f"\n\nFichiers joints du workspace : {listed}."
-    if any(is_image(p) for p in attachments):
+    # chat/vocal read images via the analyze_image tool (A) ; analyse mode gets
+    # the image in-context (B) so it needs no tool hint.
+    if mode in ("chat", "vocal") and any(is_image(p) for p in attachments):
         note += " Pour analyser une image, utilise l'outil analyze_image(path, question)."
     return note
 
@@ -106,7 +108,7 @@ def run_turn(
     # Fold any attached workspace files into the message so the dispatcher, the
     # main loop AND the persisted turn all reference them (computed after the
     # title/metadata above, which intentionally use the clean text).
-    user_text = user_text + _attachment_note(attachments)
+    user_text = user_text + _attachment_note(attachments, mode)
 
     # Tier 0 : dispatch. In chat / vocal modes the small dispatcher LLM sees
     # the conversation history to resolve follow-ups ("et pour demain ?").
@@ -129,6 +131,14 @@ def run_turn(
             user_profile=profile,
         )
     else:
+        # Vision B : in `analyse` mode, feed attached images IN-CONTEXT (transient
+        # base64 from the normalized workspace derivative). chat/vocal rely on the
+        # analyze_image tool instead, to keep the conversation context light.
+        image_b64 = (
+            [b64 for p in (attachments or []) if (b64 := normalized_image_b64(conv_folder, p))]
+            if mode == "analyse" and has_image
+            else []
+        )
         answer = _run_deep_turn(
             user_text=user_text,
             conv_folder=conv_folder,
@@ -141,6 +151,7 @@ def run_turn(
             event_emitter=event_emitter,
             ask_human_callback=ask_human_callback,
             memory_user_id=memory_user_id,
+            images=image_b64,
         )
 
     # Mark last interaction LAST so it wins over any modified_at writes made
@@ -166,6 +177,7 @@ def _run_deep_turn(
     event_emitter: EventEmitter | None,
     ask_human_callback: AskHumanCallback | None,
     memory_user_id: int | None,
+    images: list[str] | None = None,
 ) -> str:
     """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
     with db.connect() as conn:
@@ -239,6 +251,7 @@ def _run_deep_turn(
         tools_registry=tools_registry,
         llm_client=main_llm,
         user_text=user_text,
+        images=images,
         initial_messages=seeded_messages,
         ask_human_callback=ask_human_callback,
         agent_resolver=agent_resolver,

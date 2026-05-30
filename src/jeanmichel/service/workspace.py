@@ -11,6 +11,7 @@ Errors are signalled by raising ``WorkspaceError(code, message)``.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import mimetypes
@@ -166,6 +167,19 @@ def resolve_image(conv_folder: Path, relative_path: str, thumb: bool) -> tuple[P
             return cache, "image/webp"
     mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return target, mime
+
+
+def normalized_image_b64(conv_folder: Path, relative_path: str) -> str | None:
+    """Base64 of the normalized ≤IMAGE_MAX_PX WebP derivative of a workspace
+    image, or None if the path isn't a rasterizable image. Feeds Gemma vision
+    in-context (transient ; never persisted)."""
+    try:
+        target, mime = resolve_image(conv_folder, relative_path, thumb=True)
+    except WorkspaceError:
+        return None
+    if mime != "image/webp":
+        return None
+    return base64.b64encode(target.read_bytes()).decode("ascii")
 
 
 def save_upload(conv_folder: Path, filename: str, data: bytes) -> dict[str, Any]:

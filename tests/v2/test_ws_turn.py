@@ -369,3 +369,64 @@ def test_ws_turn_references_attachments(client, monkeypatch):
     assert "résume" in user_msg["content"]
     assert "`data.csv`" in user_msg["content"]  # valid attachment referenced
     assert "ghost.csv" not in user_msg["content"]  # missing file dropped by validation
+
+
+# ---- vision B : attached image in-context (analyse) vs tool (chat) ---------
+
+
+def _seed_png(folder: Path, name: str = "pic.png") -> None:
+    from PIL import Image
+
+    from jeanmichel.tools._workspace import workspace_root_for
+
+    Image.new("RGB", (20, 20), (200, 0, 0)).save(workspace_root_for(folder) / name, "PNG")
+
+
+def _user_msgs(main: MockClient) -> list[dict]:
+    return [m for call in main.calls_v2 for m in call["messages"] if m.get("role") == "user"]
+
+
+def test_ws_analyse_image_in_context_not_persisted(client, monkeypatch):
+    """analyse mode (B) : the image is sent to gemma4 in-context but NEVER
+    written to messages.json (base64 is transient)."""
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(script=[LLMResponse(thinking="", content="A red square.")])
+    monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token, mode="analyse")
+    folder = _conv_folder(conv_id)
+    _seed_png(folder)
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "what is it?", "files": ["pic.png"]})
+        while True:
+            if ws.receive_json()["type"] in ("final", "error"):
+                break
+
+    assert any(m.get("images") for m in _user_msgs(main)), "image not sent in-context"
+    assert all("images" not in m for m in persistence.load_messages(folder))  # not persisted
+
+
+def test_ws_chat_image_uses_tool_not_context(client, monkeypatch):
+    """chat mode (A) : the image is NOT injected in-context (analyze_image tool)."""
+    dispatch = MockClient(
+        script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+    )
+    main = MockClient(script=[LLMResponse(thinking="", content="ok")])
+    monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    conv_id = _create_conv(client, token, mode="chat")
+    folder = _conv_folder(conv_id)
+    _seed_png(folder)
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "look", "files": ["pic.png"]})
+        while True:
+            if ws.receive_json()["type"] in ("final", "error"):
+                break
+
+    assert not any(m.get("images") for m in _user_msgs(main))  # A path : no in-context image

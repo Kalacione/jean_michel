@@ -44,6 +44,8 @@ def estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
         total += 4
         content = msg.get("content") or ""
         total += estimate_text_tokens(content)
+        # Vision images cost ~256 tokens each (gemma default visual budget).
+        total += len(msg.get("images") or []) * 256
         # Tool calls add structural tokens.
         tool_calls = msg.get("tool_calls") or []
         for tc in tool_calls:
