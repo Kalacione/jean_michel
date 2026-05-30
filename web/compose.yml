@@ -1,0 +1,18 @@
+# Frontend container. The backend stays a hand-launched daemon on the host
+# (./jm.sh --serve on :8000) — only the frontend is containerized.
+#
+#   docker compose up --build      # → http://localhost:8080
+#
+# extra_hosts maps host.docker.internal to the host gateway on Linux so nginx
+# can reach the daemon. Override DAEMON_ADDR to point at a remote daemon.
+
+services:
+  web:
+    build: .
+    ports:
+      - "3000:80"
+    environment:
+      DAEMON_ADDR: host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

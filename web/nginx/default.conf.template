@@ -1,0 +1,38 @@
+# Serves the SPA and reverse-proxies the daemon. ${DAEMON_ADDR} is filled in by
+# the nginx image's envsubst entrypoint at container start (default:
+# host.docker.internal:8000). nginx runtime vars ($uri, $host, $http_upgrade…)
+# are NOT env vars, so envsubst leaves them alone.
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA: serve the static asset if it exists, else fall back to index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # REST API → host daemon.
+    location /api/ {
+        proxy_pass http://${DAEMON_ADDR};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # A deep turn can run up to WALL_CLOCK_TURN_SECONDS (~900s).
+        proxy_read_timeout 1000s;
+        proxy_send_timeout 1000s;
+    }
+
+    # WebSocket turn stream → host daemon (needs the Upgrade handshake headers).
+    location /ws/ {
+        proxy_pass http://${DAEMON_ADDR};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 1000s;
+        proxy_send_timeout 1000s;
+    }
+}
