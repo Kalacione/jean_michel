@@ -24,6 +24,7 @@
 | D8 | Modèle orchestrateur | **`qwen3:14b`** sur le router (robuste pour codebases + révision du plan ; **deepseek v4** prendra le relais) |
 | D9 | Modèle codeur | **`qwen3-coder:latest`** sur `code-runner` (worker code) |
 | D10 | Parallélisme | **Non** — séquentiel (1 GPU). Le gain est l'hygiène de contexte, pas le parallélisme |
+| D11 | Remontée worker | Le worker **propose** des MAJ de plan via `report_back.suggested_todo_updates` ; l'orchestrateur reste **seul writer** du `todo.json` (propose / dispose) |
 
 ## 1. Contexte & exigence
 On veut un « Claude Code local » sur nos briques (Ollama, sandbox Docker, qwen-coder). Exigence
@@ -38,16 +39,26 @@ séquentiellement, petits modèles).
   `report_back` / `ask_human` interceptés. Délégation récursive mais **strictement séquentielle**
   (`spawn_subagent`, 1 enfant à la fois ; `MAX_DEPTH=5`). **Chaque enfant démarre sur un contexte
   FRAIS `messages=[system, briefing]`** et renvoie un `SubResult` structuré (summary / files /
-  confidence). ⇒ **le mécanisme anti-hallucination que l'on veut existe déjà** ; il est
-  sous-exploité.
+  confidence). **`delegate_to` prend déjà `briefing` (requis) + `support_files` (option) ;
+  `report_back` renvoie `summary` + `files_produced` + `confidence` (low/med/high).** ⇒ **les
+  primitives du PDCA existent déjà** (DO = briefing crafté + support_files ; CHECK =
+  summary/confidence) ; elles sont juste sous-exploitées, sans plan ni suivi pour les piloter.
 - **Décomposition aujourd'hui** = paradigme `plan_before_complex_action` (**plan dans le canal
   *thinking*, aucun artefact durable**) + `strategist` (actif) qui découpe les briefs
-  **exploratoires** en 3-7 axes (promet une parallélisation que l'orchestrateur ne fait jamais).
-- **Vestiges d'un planificateur explicite abandonné** : agent **`planner` (id 14) présent mais
-  INACTIF + orphelin** (mission : « analyse, décompose en étapes ordonnées, écrit
-  workspace/plan.md, n'exécute pas ») ; `plan.md` toujours réservé par les outils workspace
-  (writer disparu) ; `manage_todo_list` + `set_task_class` **supprimés** au pivot v2 ; colonnes
-  `task_class`/`current_phase` subsistantes mais jamais écrites.
+  **exploratoires de RECHERCHE** en 3-7 axes (paradigmes `strategist_first` /
+  `strategist_decomposition_discipline` ; promet une parallélisation que l'orchestrateur ne fait
+  jamais). ⚠️ **Domaine distinct** du coding : on ne surcharge PAS `strategist` ; la décompo coding
+  passe par `todo_write` + PDCA (séquentiel, pas de fausse promesse de parallélisme).
+- **Embryons TODO morts (vérifié : bancals, NON récupérables → à NETTOYER, pas à raviver)** :
+  `db.py` définit `set_task_class` / `update_conversation_phase` / `get_task_class` + un
+  `INSERT INTO conversation_phases` — mais **la table `conversation_phases` est DROPPÉE** (ce code
+  planterait) et **aucun n'est appelé** (un seul commentaire mort en `turn_runner.py:158`). Colonnes
+  `task_class`/`current_phase` (table `conversations`) **jamais écrites**. `workspace_create_file.py`
+  / `workspace_append.py` **réservent `plan.md` « voir `plan_writer.py` »** → `plan_writer.py`
+  **n'existe pas**, et le message d'erreur cite **`manage_todo_list`** (outil supprimé). Agent
+  **`planner` (id 14, INACTIF)** = même lignée bancale (mission « écrire plan.md, ne pas exécuter »).
+  → On part **propre** (`todo.json` à la racine conv, hors workspace ⇒ zéro collision avec `plan.md`)
+  et on **purge** ces fantômes (cf. §7).
 - **Substrat coding** : `code-runner` (gemma4:26b) édite via `workspace_str_replace` (édition
   ciblée à la Claude Code) + teste dans `bash_sandbox` Docker (network=none ; whitelist
   bash/cat/echo/jq/ls/python3 ; conteneur par conversation) ; capé à 3 itérations internes.
@@ -58,6 +69,14 @@ séquentiellement, petits modèles).
 - **Modèles LIVE** (`ollama list`) : **`qwen3-coder:latest` (18 Go) installé mais NON câblé** ;
   aussi `qwen3:14b`, `gemma4:26b`, `gemma4:latest`, `granite4.1:8b`. Modèle/agent via
   `agents.model_override` (résolu dans `load_agent_spec_v2`).
+- **Roster live (16 agents) & rôles dans le PDCA** : orchestrateur = **`jean-michel`** (role
+  `router` ; délègue déjà à 13 agents → **possède le TODO**, → qwen3:14b) ; worker code =
+  **`code-runner`** (gemma4:26b→**qwen3-coder** ; a `bash_sandbox` + workspace ; **peut déjà déléguer
+  à `code-fetcher`** ; pas encore `manage_user_memory`) ; lookup = **`code-fetcher`** (github / SO /
+  pypi / web_fetch + mémoire partagée) ; synthèse possible = **`synthesizer`** (role `finalizer`).
+  `strategist` (actif) → décompo RECHERCHE seulement ; `planner` (inactif) → **laissé dormant**.
+  Convention outils = snake_case verbe (`workspace_create_file`, `delegate_to`, `report_back`…) ⇒
+  **`todo_write` s'y intègre naturellement**.
 
 ## 3. Diagnostic
 Le pivot v2 a **retiré la structure** (todo, planner, phases) en pariant sur « le LLM planifie
@@ -106,11 +125,14 @@ c'est sa réécriture continue.
 - **CHECK** — le worker **vérifie son travail** (écrit + **teste dans le sandbox**) et renvoie un
   `SubResult` (résumé + fichiers + confiance ; pas le travail brut → le router reste léger).
   L'orchestrateur **évalue** : succès ? régressions ? le retour révèle-t-il une contrainte ou du
-  travail non prévu ?
-- **ACT** — **réécrire le TODO vivant** selon le retour : marquer *done*, **ou** insérer de
-  nouveaux items, **ou** re-scoper / réordonner les items restants, **ou** re-déléguer (retry) en
-  cas d'échec. Puis reboucler sur **DO** (prochain item). Le TODO révisé est **réinjecté à chaque
-  tour** dans le contexte du router (recap) pour rester méthodique sur la durée.
+  travail non prévu ? Le worker peut **remonter un besoin de plan** via le champ optionnel
+  `report_back.suggested_todo_updates` (prérequis / découpe / étape manquante / blocage), exprimé en
+  termes de *travail* — **il ne voit pas le TODO** ; c'est l'orchestrateur qui le traduit en items.
+- **ACT** — **réécrire le TODO vivant** selon le retour **et les `suggested_todo_updates` remontées** :
+  marquer *done*, **ou** insérer de nouveaux items, **ou** re-scoper / réordonner les items restants,
+  **ou** re-déléguer (retry) en cas d'échec. **L'orchestrateur reste le seul writer du `todo.json`**
+  (worker = propose, orchestrateur = dispose). Puis reboucler sur **DO** (prochain item). Le TODO
+  révisé est **réinjecté à chaque tour** dans le contexte du router (recap) pour rester méthodique.
 
 Quand tout est *done* **et vérifié** → **synthèse** (router, ou délégation à `synthesizer`).
 
@@ -133,8 +155,9 @@ Quand tout est *done* **et vérifié** → **synthèse** (router, ou délégatio
    throttle envisageable plus tard si le coût gêne.
 4. **Paradigme PDCA bindé au router** (anglais) : « **PLAN**: look at the sources, then
    `todo_write` a 3-7 step plan. **DO**: delegate ONE step to a fresh worker with a precise briefing
-   + `support_files`. **CHECK**: require the worker to test/verify; evaluate its report. **ACT**:
-   *rewrite the TODO from that feedback* (mark done, or add / modify / reorder items, or retry on
+   + `support_files`. **CHECK**: require the worker to test/verify; evaluate its report (it may
+   surface `suggested_todo_updates`). **ACT**: *rewrite the TODO from the feedback + those
+   suggestions* (mark done, or add / modify / reorder items, or retry on
    failure) before the next step. Never write code yourself. » **Pas de hard-gate** (pas de
    résurrection de `set_task_class` détesté → dégradation gracieuse). *CC fait pareil* : le
    « un seul `in_progress` » y est **prompt-only, zéro garde code** (cf. [02] §3) → on valide.
@@ -163,12 +186,22 @@ Quand tout est *done* **et vérifié** → **synthèse** (router, ou délégatio
 
 ## 7. Points d'intégration (fichiers / fonctions)
 - **Nouveau** : `tools/todo_write.py` ; `prompts.render_todo_recap` ; `tests/v2/test_todo.py`.
+- **Réutilisé** : `delegate_to(agent_code, briefing, support_files)` (DO, tel quel) ; `spawn_subagent`
+  (contexte frais, tel quel) ; **`report_back` étendu** d'un champ optionnel `suggested_todo_updates:
+  list[str]` (CHECK + remontée worker — cf. D11 ; la consigne worker vit dans sa *description*).
 - **Édités** : `tools/__init__.py` (registry) ; `hooks.py` (`PreLLMCall` + `build_hook_registry`
   gagnent `conv_folder` + un flag `is_main_agent` ; injection du recap après compaction, **main
   agent only**) ; `orchestrator_v2.py` (les 2 sites de construction des hooks passent
-  `conv_folder` + `is_main_agent` — déjà en scope) ; `workspace_create_file.py`/`workspace_append.py`
-  (corriger le texte d'erreur `plan.md` qui cite le défunt `manage_todo_list`/`plan_writer.py`) ;
+  `conv_folder` + `is_main_agent` — déjà en scope) ; `tools/report_back.py` (champ optionnel
+  `suggested_todo_updates` + `validate_report_back_args` + consigne worker dans la description) ;
   `config.py` (slot `CODER_MODEL` optionnel).
+- **Nettoyage des fantômes (S1, ménage propre — cf. §2)** : supprimer de `db.py` les helpers morts
+  `set_task_class` / `update_conversation_phase` / `get_task_class` + le `INSERT INTO
+  conversation_phases` (table droppée → code mort/cassé, zéro appelant) ; **retirer la réservation
+  `plan.md`** dans `workspace_create_file.py` / `workspace_append.py` (réf. au `plan_writer.py`
+  inexistant + message citant le défunt `manage_todo_list`) ; virer le commentaire mort
+  `turn_runner.py:158`. *(Colonnes `task_class`/`current_phase` : laissées — drop de colonne SQLite
+  coûteux/risqué ; simplement ignorées. `planner` inactif : laissé dormant.)*
 - **BDD** : `migrate_120_coding_decomposition.sql` — **`jean-michel.model_override='qwen3:14b'`** +
   grant `todo_write` à jean-michel ; paradigme `pdca_decompose_delegate_revise` bindé à
   jean-michel ; grant `manage_user_memory` à `code-runner` ;
@@ -197,11 +230,14 @@ Quand tout est *done* **et vérifié** → **synthèse** (router, ou délégatio
   n'impacte que l'E2E).
 
 ## 9. Sprints (chacun livrable + testable)
-- **S1 — Infrastructure TODO + recap (code pur, sans BDD ni modèle).** `todo_write` + registry +
-  `render_todo_recap` + hook `PreLLMCall` (recap **main-agent only**, no-op sans `todo.json`) +
-  threading `conv_folder`/`is_main_agent`. Tests : écriture / refus >1 in_progress / format recap
-  / injection + rafraîchissement / **no-op sans todo.json** / **pas de recap pour un sous-agent**.
-  *DoD : suite verte, tours non-coding inchangés.*
+- **S1 — Infrastructure TODO + recap + ménage (code pur, sans BDD ni modèle).** `todo_write` +
+  registry + `render_todo_recap` + hook `PreLLMCall` (recap **main-agent only**, no-op sans
+  `todo.json`) + threading `conv_folder`/`is_main_agent` ; **`report_back` étendu** (`suggested_todo_updates`
+  optionnel + validation + description — D11) ; **+ purge des fantômes** (db.py morts, réservation
+  `plan.md`, commentaire mort — cf. §7). Tests : écriture / refus >1 in_progress / format recap /
+  injection + rafraîchissement / **no-op sans todo.json** / **pas de recap pour un sous-agent** /
+  `report_back` accepte+valide `suggested_todo_updates`. *DoD : suite verte, tours non-coding
+  inchangés, fantômes supprimés.*
 - **S2 — Orchestration + workers (migration, comportemental).** migrate_120 :
   `jean-michel`→**qwen3:14b** + grant `todo_write` ; paradigme PDCA `pdca_decompose_delegate_revise`
   (router) ; grant `manage_user_memory` à code-runner ; `code-runner`→**qwen3-coder** ; ctx-window
