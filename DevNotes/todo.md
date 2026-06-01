@@ -22,6 +22,7 @@
 ## vocal personna
 
 - personna + vocal associe
+  - https://github.com/tjiho/French-tts-model-piper
   - https://rhasspy.github.io/piper-samples/#fr_FR-upmc-medium
   - creation de personna assistant (ex glados, ton desinvolte, ironique)
   - association d'un model vocal
