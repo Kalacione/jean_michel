@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(cp /home/kalacione/projects/jean-michel/jeanmichel.db /tmp/jm_test.db)",
-      "Bash(sqlite3 /tmp/jm_test.db)"
+      "Bash(sqlite3 /tmp/jm_test.db)",
+      "Bash(find /home/kalacione/lab/clawde/claude-code-fork -type f -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.md\" | head -50)",
+      "Read(//home/kalacione/lab/clawde/claude-code-fork/**)",
+      "Read(//home/kalacione/lab/clawde/claude-code-fork/src/hooks/toolPermission/**)",
+      "Read(//home/kalacione/lab/clawde/claude-code-fork/src/tools/FileReadTool/**)"
     ]
   }
 }
