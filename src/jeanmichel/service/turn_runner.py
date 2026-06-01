@@ -155,7 +155,7 @@ def run_turn(
         )
 
     # Mark last interaction LAST so it wins over any modified_at writes made
-    # during the turn (task_class / phase) and stays format-consistent for sort.
+    # during the turn and stays format-consistent for sort.
     try:
         with db.connect() as conn:
             db.touch_conversation(conn, conv_id)

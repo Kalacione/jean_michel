@@ -50,6 +50,18 @@ REPORT_BACK_SCHEMA: dict[str, Any] = {
                         "reasoning — just the gap."
                     ),
                 },
+                "suggested_todo_updates": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "OPTIONAL. If, while doing your sub-task, you discovered work the "
+                        "overall plan likely needs — a missing prerequisite, a step that "
+                        "should be split, an extra step, or a blocker — list those needs "
+                        "here as short phrases, in terms of the WORK (not plan item numbers; "
+                        "you don't see the plan). Your caller owns the plan and will fold "
+                        "them in. Omit when there's nothing to flag."
+                    ),
+                },
             },
             "required": ["summary", "confidence"],
         },
@@ -90,5 +102,12 @@ def validate_report_back_args(args: dict[str, Any]) -> str | None:
     files = args.get("files_produced")
     if files is not None and not isinstance(files, list):
         return "report_back 'files_produced' must be a list if provided."
+
+    suggestions = args.get("suggested_todo_updates")
+    if suggestions is not None and (
+        not isinstance(suggestions, list)
+        or not all(isinstance(s, str) for s in suggestions)
+    ):
+        return "report_back 'suggested_todo_updates' must be a list of strings if provided."
 
     return None

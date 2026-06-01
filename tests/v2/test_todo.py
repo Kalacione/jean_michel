@@ -1,0 +1,184 @@
+"""Tests for the persistent TODO (S1): `jeanmichel.todo`, the `todo_write`
+tool, the `PreLLMCall` recap re-injection, and the `report_back` extension."""
+
+from __future__ import annotations
+
+import json
+
+from jeanmichel import todo as todomod
+from jeanmichel.hooks import PreLLMCall
+from jeanmichel.models import ConversationState
+from jeanmichel.tools import build_registry, todo_write
+from jeanmichel.tools.report_back import validate_report_back_args
+
+# ---- Helpers --------------------------------------------------------------
+
+
+def _state() -> ConversationState:
+    return ConversationState(
+        system_reserve_tokens=10,
+        output_reserve_tokens=2_000,
+        working_budget=10_000,
+        depth_current=0,
+    )
+
+
+def _items(*statuses: str) -> list[dict]:
+    return [{"text": f"step {i + 1}", "status": s} for i, s in enumerate(statuses)]
+
+
+def _msgs() -> list[dict]:
+    return [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+
+
+# ---- todo_write tool ------------------------------------------------------
+
+
+def test_todo_write_in_registry(tmp_path):
+    assert "todo_write" in build_registry(tmp_path)
+
+
+def test_todo_write_persists_and_loads(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    res = json.loads(spec.handler(goal="ship feature", items=_items("in_progress", "pending")))
+    assert "error" not in res
+    todo = todomod.load_todo(tmp_path)
+    assert todo is not None
+    assert todo["goal"] == "ship feature"
+    assert [it["status"] for it in todo["items"]] == ["in_progress", "pending"]
+    assert [it["id"] for it in todo["items"]] == ["1", "2"]  # ids assigned by position
+
+
+def test_todo_write_whole_list_replace(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    spec.handler(goal="g", items=_items("in_progress", "pending", "pending"))
+    spec.handler(goal="g", items=_items("done", "in_progress"))  # replaces wholesale
+    todo = todomod.load_todo(tmp_path)
+    assert len(todo["items"]) == 2
+    assert [it["status"] for it in todo["items"]] == ["done", "in_progress"]
+
+
+def test_todo_write_refuses_two_in_progress(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    res = json.loads(spec.handler(goal="g", items=_items("in_progress", "in_progress")))
+    assert res.get("error_code") == "invalid_items"
+    assert todomod.load_todo(tmp_path) is None  # nothing written on rejection
+
+
+def test_todo_write_rejects_empty_goal_or_items(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    assert json.loads(spec.handler(goal="", items=_items("pending")))["error_code"] == "invalid_goal"
+    assert json.loads(spec.handler(goal="g", items=[]))["error_code"] == "invalid_items"
+
+
+def test_todo_write_rejects_bad_status(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    res = json.loads(spec.handler(goal="g", items=[{"text": "x", "status": "doing"}]))
+    assert res["error_code"] == "invalid_items"
+
+
+def test_todo_write_clears_when_all_done(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    spec.handler(goal="g", items=_items("in_progress"))
+    res = json.loads(spec.handler(goal="g", items=_items("done", "done")))
+    assert res.get("all_done") is True
+    assert todomod.load_todo(tmp_path) is None  # cleared → no stale recap
+
+
+def test_todo_write_tolerates_extra_keys(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    res = json.loads(spec.handler(goal="g", items=_items("in_progress"), notes="ignored"))
+    assert "error" not in res
+
+
+# ---- render_recap ---------------------------------------------------------
+
+
+def test_render_recap_format():
+    todo = {
+        "goal": "build X",
+        "items": [
+            {"id": "1", "text": "inspect", "status": "done"},
+            {"id": "2", "text": "implement", "status": "in_progress"},
+            {"id": "3", "text": "test", "status": "pending"},
+        ],
+    }
+    recap = todomod.render_recap(todo)
+    assert recap.startswith(todomod.RECAP_MARKER)
+    assert "(1/3 done)" in recap
+    assert "[x] 1. inspect" in recap
+    assert "[>] 2. implement" in recap
+    assert "[ ] 3. test" in recap
+    assert "Next action: implement" in recap
+
+
+def test_render_recap_next_action_falls_back_to_pending():
+    todo = {"goal": "g", "items": [
+        {"id": "1", "text": "a", "status": "done"},
+        {"id": "2", "text": "b", "status": "pending"},
+    ]}
+    assert "Next action: b" in todomod.render_recap(todo)
+
+
+# ---- PreLLMCall recap injection ------------------------------------------
+
+
+def test_recap_injected_for_main_agent(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    hook(msgs, _state())
+    recaps = [m for m in msgs if m["content"].startswith(todomod.RECAP_MARKER)]
+    assert len(recaps) == 1
+    assert msgs[-1]["content"].startswith(todomod.RECAP_MARKER)  # appended last
+
+
+def test_recap_refreshed_not_accumulated(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    for _ in range(3):
+        hook(msgs, _state())
+    recaps = [m for m in msgs if m["content"].startswith(todomod.RECAP_MARKER)]
+    assert len(recaps) == 1  # refreshed each turn, never accumulates
+
+
+def test_recap_noop_without_todo(tmp_path):
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    hook(msgs, _state())
+    assert len(msgs) == 2
+    assert not any(m["content"].startswith(todomod.RECAP_MARKER) for m in msgs)
+
+
+def test_recap_not_injected_for_subagent(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=False)
+    msgs = _msgs()
+    hook(msgs, _state())
+    assert not any(m["content"].startswith(todomod.RECAP_MARKER) for m in msgs)
+
+
+# ---- report_back extension (D11) -----------------------------------------
+
+
+def test_report_back_accepts_suggested_todo_updates():
+    err = validate_report_back_args({
+        "summary": "done",
+        "confidence": "high",
+        "suggested_todo_updates": ["add a test step", "mount the router first"],
+    })
+    assert err is None
+
+
+def test_report_back_omitting_suggestions_is_fine():
+    assert validate_report_back_args({"summary": "s", "confidence": "high"}) is None
+
+
+def test_report_back_rejects_bad_suggestions():
+    assert validate_report_back_args(
+        {"summary": "s", "confidence": "high", "suggested_todo_updates": "nope"}
+    ) is not None
+    assert validate_report_back_args(
+        {"summary": "s", "confidence": "high", "suggested_todo_updates": [1, 2]}
+    ) is not None

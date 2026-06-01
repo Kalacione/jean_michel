@@ -361,41 +361,6 @@ def record_artifact(conn: sqlite3.Connection, request_id: str,
     )
 
 
-def record_phase_completion(conn: sqlite3.Connection, conversation_id: str,
-                            phase: str, agent_code: str, summary: str) -> None:
-    conn.execute(
-        "INSERT INTO conversation_phases "
-        "(conversation_id, phase, agent_code, summary, recorded_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (conversation_id, phase, agent_code, summary, _now()),
-    )
-
-
-def get_pipeline_state(conn: sqlite3.Connection, conv_id: str) -> tuple[str | None, str | None]:
-    """Return (task_class, current_phase) for a conversation."""
-    row = conn.execute(
-        "SELECT task_class, current_phase FROM conversations WHERE id=?",
-        (conv_id,),
-    ).fetchone()
-    if row is None:
-        return None, None
-    return row["task_class"], row["current_phase"]
-
-
-def set_task_class(conn: sqlite3.Connection, conv_id: str, task_class: str) -> None:
-    conn.execute(
-        "UPDATE conversations SET task_class=?, modified_at=datetime('now') WHERE id=?",
-        (task_class, conv_id),
-    )
-
-
-def update_conversation_phase(conn: sqlite3.Connection, conv_id: str, phase: str) -> None:
-    conn.execute(
-        "UPDATE conversations SET current_phase=?, modified_at=datetime('now') WHERE id=?",
-        (phase, conv_id),
-    )
-
-
 # ---- Admin write helpers --------------------------------------------------
 
 def grant_tool(conn: sqlite3.Connection, agent_code: str, tool_code: str) -> None:

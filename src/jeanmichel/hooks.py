@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .compaction import escalate_compaction
 from .config import MAX_DEPTH, MAX_SEARCH_CALLS_PER_TURN
 from .models import ConversationState, ToolCall
+from .todo import RECAP_MARKER, load_todo, render_recap
 
 _log = logging.getLogger(__name__)
 
@@ -120,10 +122,20 @@ class PreLLMCall:
 
     name = "PreLLMCall"
 
-    def __init__(self, llm_client: Any | None = None) -> None:
+    def __init__(
+        self,
+        llm_client: Any | None = None,
+        conv_folder: Path | None = None,
+        is_main_agent: bool = False,
+    ) -> None:
         # `llm_client` is required to escalate to levels 3 and 4 (compactor LLM calls).
         # When None, the hook stops at level 2 (deterministic Snip + Microcompact).
         self.llm_client = llm_client
+        # `conv_folder` + `is_main_agent` let the orchestrator (and ONLY the
+        # orchestrator) re-surface its living TODO each turn. Subagents keep a
+        # focused, recap-free context.
+        self.conv_folder = conv_folder
+        self.is_main_agent = is_main_agent
 
     def __call__(
         self,
@@ -131,7 +143,11 @@ class PreLLMCall:
         state: ConversationState,
     ) -> int:
         """Return the compaction level triggered (0..4)."""
-        return escalate_compaction(messages, state, self.llm_client)
+        level = escalate_compaction(messages, state, self.llm_client)
+        # Re-inject the living TODO recap — main agent only, no-op without todo.json.
+        if self.is_main_agent and self.conv_folder is not None:
+            _refresh_todo_recap(messages, self.conv_folder)
+        return level
 
 
 class PreToolUse:
@@ -310,6 +326,27 @@ def _summarize_for_cache(result: Any) -> str:
     return s[:200] if len(s) > 200 else s
 
 
+def _refresh_todo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> None:
+    """Re-surface the orchestrator's living TODO as the latest `[TODO-RECAP]` msg.
+
+    Idempotent per turn: any previous recap is stripped first (so it never
+    accumulates), then a fresh one rendered from todo.json is appended at the
+    end. No-op when there is no todo.json — a trivial turn carries no recap.
+    """
+    messages[:] = [
+        m for m in messages
+        if not (
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and m["content"].startswith(RECAP_MARKER)
+        )
+    ]
+    todo = load_todo(conv_folder)
+    if todo is None:
+        return
+    messages.append({"role": "user", "content": render_recap(todo)})
+
+
 # ---- Registry helper -----------------------------------------------------
 
 
@@ -327,15 +364,26 @@ class HookRegistry:
     on_delegate_return: OnDelegateReturn = field(default_factory=OnDelegateReturn)
 
 
-def build_hook_registry(llm_client: Any | None = None) -> HookRegistry:
+def build_hook_registry(
+    llm_client: Any | None = None,
+    conv_folder: Path | None = None,
+    is_main_agent: bool = False,
+) -> HookRegistry:
     """Build a fresh hook registry for one execution scope.
 
     `llm_client` is required for the PreLLMCall hook to escalate beyond
     level 2 (Snip + Microcompact). Pass the v2-capable LLM client used by
     the orchestrator.
+
+    `conv_folder` + `is_main_agent` are forwarded to PreLLMCall so the main
+    loop re-injects its TODO recap each turn (subagents get neither).
     """
     return HookRegistry(
-        pre_llm_call=PreLLMCall(llm_client=llm_client),
+        pre_llm_call=PreLLMCall(
+            llm_client=llm_client,
+            conv_folder=conv_folder,
+            is_main_agent=is_main_agent,
+        ),
         pre_tool_use=PreToolUse(),
         post_tool_use=PostToolUse(),
         on_delegate_return=OnDelegateReturn(),

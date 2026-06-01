@@ -28,15 +28,6 @@ def make_spec(conv_folder: Path, has_write_grant: bool = False) -> ToolSpec:
             msg = str(e)
             code = "absolute_path" if "absolute" in msg.lower() else "path_escape"
             return tool_error(code, msg)
-        # plan.md is owned exclusively by the orchestrator (see plan_writer.py).
-        if target == safe_resolve(ws_root, "plan.md"):
-            return tool_error(
-                "reserved_path",
-                (
-                    "plan.md is managed automatically by the orchestrator. "
-                    "Agents cannot append to it directly."
-                ),
-            )
         if not target.exists():
             canonical = target.relative_to(ws_root).as_posix()
             return tool_error(

@@ -144,6 +144,9 @@ class SubResult:
     files_produced: list[str] = field(default_factory=list)
     confidence: str = "high"            # "low" | "medium" | "high"
     low_confidence_reason: str = ""
+    # Work needs the worker surfaced for the orchestrator's plan (D11). The
+    # orchestrator (sole TODO writer) folds these into its next todo_write.
+    suggested_todo_updates: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -154,6 +157,8 @@ class SubResult:
         }
         if self.confidence == "low" and self.low_confidence_reason:
             out["low_confidence_reason"] = self.low_confidence_reason
+        if self.suggested_todo_updates:
+            out["suggested_todo_updates"] = list(self.suggested_todo_updates)
         return out
 
 
@@ -573,6 +578,7 @@ def _handle_tool_call(
             files_produced=list(call.arguments.get("files_produced") or []),
             confidence=call.arguments.get("confidence", "high"),
             low_confidence_reason=call.arguments.get("low_confidence_reason", "") or "",
+            suggested_todo_updates=list(call.arguments.get("suggested_todo_updates") or []),
         )
         return _LoopOutcome(kind="report_back", sub_result=sub_result)
 
@@ -752,7 +758,9 @@ def run_main_loop(
     messages.append(user_msg)
 
     state = ConversationState(depth_current=0)
-    hooks = build_hook_registry(llm_client=llm_client)
+    hooks = build_hook_registry(
+        llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
+    )
     dedup_cache: dict[str, dict[str, Any]] = {}
     tools_payload = _build_tools_payload(agent, tools_registry)
     _initialize_state(
@@ -832,7 +840,9 @@ def spawn_subagent(
     sub_state = ConversationState(
         depth_current=parent_state.depth_current + 1,
     )
-    sub_hooks = build_hook_registry(llm_client=llm_client)
+    sub_hooks = build_hook_registry(
+        llm_client=llm_client, conv_folder=conv_folder, is_main_agent=False
+    )
     sub_dedup: dict[str, dict[str, Any]] = {}
 
     tools_payload = _build_tools_payload(sub_agent, tools_registry)

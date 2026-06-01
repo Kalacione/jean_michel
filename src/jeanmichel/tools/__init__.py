@@ -30,6 +30,7 @@ from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
 from . import stackoverflow as _stackoverflow_mod
+from . import todo_write as _todo_write_mod
 from . import weather as _weather_mod
 from . import web_fetch as _web_fetch_mod
 from . import web_search as _web_search_mod
@@ -74,6 +75,7 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
+    todo_write_spec = _todo_write_mod.make_spec(conv_folder)
     # Bind user_memory to the current owner (None → reserved cli user).
     mum_spec = _manage_user_memory_mod.make_spec(memory_user_id)
     # Workspace-bound image tools : analyze_image reads the normalized derivative
@@ -100,6 +102,7 @@ def build_registry(
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
+        todo_write_spec.name: todo_write_spec,
         mum_spec.name: mum_spec,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
