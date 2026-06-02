@@ -111,23 +111,23 @@ cmd_install() {
 
   # ---- venv ---------------------------------------------------------------
   if [ ! -d "${VENV_DIR}" ]; then
-    echo "[1/3] Creating venv at ${VENV_DIR}"
+    echo "[1/4] Creating venv at ${VENV_DIR}"
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   else
-    echo "[1/3] venv already exists at ${VENV_DIR}"
+    echo "[1/4] venv already exists at ${VENV_DIR}"
   fi
 
   # shellcheck disable=SC1091
   source "${VENV_DIR}/bin/activate"
 
   # ---- dependencies -------------------------------------------------------
-  echo "[2/3] Installing dependencies"
+  echo "[2/4] Installing dependencies"
   pip install --upgrade pip >/dev/null
   pip cache purge >/dev/null 2>&1 || true
   pip install -e ".[dev,web]"
 
   # ---- database -----------------------------------------------------------
-  echo "[3/3] Initializing SQLite database"
+  echo "[3/4] Initializing SQLite database"
   if [ -f "${DB_PATH}" ]; then
     echo "  ${DB_PATH} already exists — skipping schema load."
     echo "  Delete it and re-run if you want a fresh seed."
@@ -140,6 +140,14 @@ with open('${SCHEMA_PATH}') as f:
 conn.close()
 print('  Database created at ${DB_PATH}')
 "
+  fi
+
+  # ---- sandbox Docker images (optional — requires Docker) -----------------
+  echo "[4/4] Building sandbox Docker images"
+  if command -v docker >/dev/null 2>&1; then
+    cmd_build_docker all || echo "  (image build failed — run ./jm.sh --build-docker all once Docker is running)"
+  else
+    echo "  Docker not found — skipping. Build later with: ./jm.sh --build-docker all"
   fi
 
   # ---- post-install : vocal-mode prerequisites (warn only) ----------------
