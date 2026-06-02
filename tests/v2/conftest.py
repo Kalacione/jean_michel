@@ -18,6 +18,20 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 
+@pytest.fixture(autouse=True)
+def _snapshot_disabled_by_default(monkeypatch):
+    """Force per-conversation git snapshots OFF for the whole suite.
+
+    The feature is opt-in (off by default in code), but a developer's local
+    `.env` may enable it (`JEANMICHEL_CONVERSATION_SNAPSHOT_ENABLED=1`), which
+    is loaded at config import. Pin it off so the suite stays deterministic and
+    creates no git repos in tmp dirs. The dedicated snapshot tests re-enable it
+    explicitly.
+    """
+    import jeanmichel.config as cfg
+    monkeypatch.setattr(cfg, "CONVERSATION_SNAPSHOT_ENABLED", False)
+
+
 @pytest.fixture()
 def conv_folder(tmp_path: Path) -> Path:
     """Empty conversation folder backed by pytest's tmp_path."""

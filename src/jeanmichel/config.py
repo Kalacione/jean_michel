@@ -86,6 +86,20 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Per-conversation git snapshots (one local repo per conversation, never
+# pushed) — enables "rewind to a turn" and "fork a new conversation from a
+# point". Opt-in: off by default so existing installs and the test suite are
+# untouched. Cf. src/jeanmichel/snapshot.py.
+CONVERSATION_SNAPSHOT_ENABLED = _bool_env("JEANMICHEL_CONVERSATION_SNAPSHOT_ENABLED", False)
+
+
 # Hard cap on total delegations per turn. Prevents "aspirating the whole
 # internet" on a single user request.
 MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)
