@@ -14,7 +14,8 @@ SPEC = ToolSpec(
     name="self_inspect_activity",
     description=(
         "Query Jean-Michel's runtime activity and operational history. "
-        "scope='conversations': activity stats (failure counts, ask_human frequency, top agents). "
+        "scope='conversations': activity stats from the event logs (request volume, "
+        "low-confidence delegations, hook denials, busiest agents). "
         "scope='sandbox': execution audit of the last 50 sandbox runs. "
         "scope='recent_summaries': content of the last 5 conversation summary.md files — "
         "use this to observe actual conversation quality and recurring user needs."

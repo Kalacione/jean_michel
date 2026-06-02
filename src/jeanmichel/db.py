@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config
-from .models import Agent, Conversation, Paradigm, Request
+from .models import Agent, Conversation, Paradigm
 
 
 def _now() -> str:
@@ -316,38 +316,6 @@ def user_owns_conversation(
         (user_id, conversation_id),
     ).fetchone()
     return row is not None
-
-
-# ---- Requests -------------------------------------------------------------
-
-def create_request(conn: sqlite3.Connection, *, req_id: str, conv_id: str,
-                   parent_id: str | None, depth: int, agent_id: int,
-                   inbound_briefing: str | None, expected_outcome: str | None,
-                   dispatch_group_id: str | None = None,
-                   turn_index: int = 0) -> Request:
-    now = _now()
-    conn.execute(
-        "INSERT INTO requests (id, conversation_id, parent_request_id, dispatch_group_id, "
-        "depth, agent_id, inbound_briefing, expected_outcome, turn_index, status, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-        (req_id, conv_id, parent_id, dispatch_group_id, depth, agent_id,
-         inbound_briefing, expected_outcome, turn_index, now),
-    )
-    return Request(id=req_id, conversation_id=conv_id, parent_request_id=parent_id,
-                   dispatch_group_id=dispatch_group_id, depth=depth, agent_id=agent_id,
-                   inbound_briefing=inbound_briefing, expected_outcome=expected_outcome,
-                   status="pending")
-
-
-def update_request_status(conn: sqlite3.Connection, req_id: str, status: str,
-                          completed: bool = False) -> None:
-    if completed:
-        conn.execute(
-            "UPDATE requests SET status = ?, completed_at = ? WHERE id = ?",
-            (status, _now(), req_id),
-        )
-    else:
-        conn.execute("UPDATE requests SET status = ? WHERE id = ?", (status, req_id))
 
 
 # ---- Admin write helpers --------------------------------------------------

@@ -12,6 +12,7 @@ Stateless tool: connects to DB_PATH at call time.
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .. import config
@@ -26,7 +27,7 @@ def _handler(scope: str = "full") -> str:
         scope: What to return.
             "agents"           — agents + their tools + paradigm counts + sandbox config.
             "paradigms"        — all active paradigms grouped by section/category.
-            "conversations"    — recent activity stats including failure counts.
+            "conversations"    — recent activity stats derived from event logs.
             "sandbox"          — sandbox execution audit (last 50 rows).
             "recent_summaries" — content of the last N conversation summary.md files.
             "full"             — agents + conversations (default).
@@ -159,6 +160,73 @@ def _paradigms_snapshot(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _parse_event_utc(value: str | None) -> datetime | None:
+    """Parse an event `utc` field (events.py format) into an aware datetime."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _events_activity() -> dict:
+    """Aggregate runtime activity from events.jsonl across all conversations.
+
+    Runtime orchestration state moved out of SQL in migration 102 (the
+    `requests`/`artifacts` tables were dropped). The equivalent stats —
+    request volume, delegation health, busiest agents — are now derived from
+    the per-conversation event logs. `RequestStarted` is emitted for each
+    human turn AND each delegation, so it is the v2 analogue of an old
+    `requests` row.
+    """
+    from ..persistence import load_events
+
+    now = datetime.now(UTC)
+    since_7d = now - timedelta(days=7)
+    since_30d = now - timedelta(days=30)
+
+    requests_total = requests_7d = 0
+    delegations_total = low_confidence = 0
+    hook_denials = 0
+    agent_counts_30d: dict[str, int] = {}
+
+    if config.CONVERSATIONS_DIR.exists():
+        for folder in config.CONVERSATIONS_DIR.iterdir():
+            if not folder.is_dir():
+                continue
+            for ev in load_events(folder):
+                etype = ev.get("type")
+                ts = _parse_event_utc(ev.get("utc"))
+                if etype == "RequestStarted":
+                    requests_total += 1
+                    if ts and ts >= since_7d:
+                        requests_7d += 1
+                    if ts and ts >= since_30d:
+                        agent = ev.get("agent") or "?"
+                        agent_counts_30d[agent] = agent_counts_30d.get(agent, 0) + 1
+                elif etype == "DelegationCompleted":
+                    delegations_total += 1
+                    if ev.get("confidence") == "low":
+                        low_confidence += 1
+                elif etype == "HookFired" and "deny" in (ev.get("action") or "").lower():
+                    hook_denials += 1
+
+    top_agents = sorted(agent_counts_30d.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    return {
+        "requests": {
+            "total": requests_total,
+            "last_7_days": requests_7d,
+        },
+        "delegations": {
+            "total": delegations_total,
+            "low_confidence": low_confidence,
+        },
+        "hook_denials_total": hook_denials,
+        "top_agents_30d": [{"agent": a, "requests": n} for a, n in top_agents],
+    }
+
+
 def _activity_snapshot(conn: sqlite3.Connection) -> dict:
     total_convs = conn.execute("SELECT COUNT(*) AS n FROM conversations").fetchone()["n"]
     active_convs = conn.execute(
@@ -173,36 +241,6 @@ def _activity_snapshot(conn: sqlite3.Connection) -> dict:
         "WHERE created_at >= datetime('now', '-30 days')"
     ).fetchone()["n"]
 
-    total_requests = conn.execute("SELECT COUNT(*) AS n FROM requests").fetchone()["n"]
-    requests_7d = conn.execute(
-        "SELECT COUNT(*) AS n FROM requests "
-        "WHERE created_at >= datetime('now', '-7 days')"
-    ).fetchone()["n"]
-
-    failed_total = conn.execute(
-        "SELECT COUNT(*) AS n FROM requests WHERE status='failed'"
-    ).fetchone()["n"]
-    failed_7d = conn.execute(
-        "SELECT COUNT(*) AS n FROM requests "
-        "WHERE status='failed' AND created_at >= datetime('now', '-7 days')"
-    ).fetchone()["n"]
-
-    ask_human_total = conn.execute(
-        "SELECT COUNT(*) AS n FROM artifacts WHERE kind='ask_human'"
-    ).fetchone()["n"]
-    ask_human_7d = conn.execute(
-        "SELECT COUNT(*) AS n FROM artifacts "
-        "WHERE kind='ask_human' AND created_at >= datetime('now', '-7 days')"
-    ).fetchone()["n"]
-
-    # Most active agents in last 30 days
-    top_agents = conn.execute(
-        """SELECT a.code, COUNT(r.id) AS request_count
-           FROM requests r JOIN agents a ON a.id=r.agent_id
-           WHERE r.created_at >= datetime('now', '-30 days')
-           GROUP BY a.code ORDER BY request_count DESC LIMIT 5"""
-    ).fetchall()
-
     return {
         "conversations": {
             "total": total_convs,
@@ -210,19 +248,7 @@ def _activity_snapshot(conn: sqlite3.Connection) -> dict:
             "last_7_days": convs_7d,
             "last_30_days": convs_30d,
         },
-        "requests": {
-            "total": total_requests,
-            "last_7_days": requests_7d,
-            "failed_total": failed_total,
-            "failed_7d": failed_7d,
-        },
-        "ask_human": {
-            "total": ask_human_total,
-            "last_7_days": ask_human_7d,
-        },
-        "top_agents_30d": [
-            {"agent": r["code"], "requests": r["request_count"]} for r in top_agents
-        ],
+        **_events_activity(),
     }
 
 
@@ -319,7 +345,8 @@ SPEC = ToolSpec(
         "Returns a structured JSON snapshot. "
         "scope='agents': agent config (tools, paradigm counts, sandbox grants). "
         "scope='paradigms': full paradigm list. "
-        "scope='conversations': activity stats including failure counts and ask_human frequency. "
+        "scope='conversations': activity stats from the event logs (request volume, "
+        "low-confidence delegations, hook denials, busiest agents). "
         "scope='sandbox': execution audit (last 50 rows). "
         "scope='recent_summaries': content of the last 5 conversation summary.md files — "
         "use this to observe actual conversation quality and user needs. "

@@ -39,20 +39,6 @@ class Conversation:
 
 
 @dataclass
-class Request:
-    id: str
-    conversation_id: str
-    parent_request_id: str | None
-    dispatch_group_id: str | None
-    depth: int
-    agent_id: int
-    inbound_briefing: str | None
-    expected_outcome: str | None
-    status: str = "pending"
-    turn_index: int = 0
-
-
-@dataclass
 class ToolCall:
     """Parsed tool call emitted by the model."""
     name: str

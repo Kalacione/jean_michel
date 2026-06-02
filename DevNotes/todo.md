@@ -41,10 +41,14 @@ Upmc	Medium	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/
 
 ## Dette technique (repéré 2026-06-02)
 
-- **Vestige `requests`** : la table `requests` a été droppée en v2 (migrate_102) mais reste
-  référencée par `db.update_request_status` / `db.create_request` + `tools/self_inspect.py`
-  + `tools/conv_status.py` (SELECT/COUNT/UPDATE `requests`). ⇒ ces outils planteraient s'ils
-  sont invoqués (self_inspect_activity est granté à meta-analyst). À traiter : soit retirer le
-  tracking v1 de ces tools, soit recréer une table `requests`. (record_artifact, même lignée, a
-  été purgé.)
+- ~~**Vestige `requests`/`artifacts`**~~ → ✅ soldé 2026-06-02. Confirmé : en v1 `requests`
+  était l'arbre d'orchestration multi-agent persisté en SQL (parent_request_id = la pile,
+  status = la machine à états) ; la revolucion v2 l'a déplacé vers la récursion Python +
+  `messages[]` + `events.jsonl` (migrate_102 a droppé la table). Restaient des morts :
+  `db.create_request`/`update_request_status` (0 appelant) + dataclass `Request` → supprimés ;
+  `conv_status` (jamais granté) → supprimé ; `self_inspect._activity_snapshot` (granté à
+  meta-analyst via `self_inspect_activity`, **crashait** sur `SELECT FROM requests/artifacts`)
+  → recâblé sur `events.jsonl` (RequestStarted = volume, DelegationCompleted low = santé,
+  HookFired deny, top agents). migrate_102 avait recâblé `_sandbox_snapshot` vers le JSONL
+  mais oublié `_activity_snapshot` juste au-dessus.
 

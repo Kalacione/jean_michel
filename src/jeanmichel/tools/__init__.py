@@ -19,7 +19,6 @@ from . import analyze_image as _analyze_image_mod
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
 from . import conv_history_scan as _conv_history_scan_mod
-from . import conv_status as _conv_status_mod
 from . import github as _github_mod
 from . import image_fetch as _image_fetch_mod
 from . import image_search as _image_search_mod
@@ -75,7 +74,6 @@ def build_registry(
     agent's ``tool_grants`` (loaded from ``agent_tools``) at call time, so
     even tools present here are denied to agents that lack the grant.
     """
-    conv_status_spec = _conv_status_mod.make_spec(conv_id) if conv_id else None
     ws_create_spec = _ws_create_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_append_spec = _ws_append_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
@@ -124,8 +122,6 @@ def build_registry(
         _stackoverflow_mod.SPEC.name: _stackoverflow_mod.SPEC,
         _pypi_mod.SPEC.name: _pypi_mod.SPEC,
     }
-    if conv_status_spec is not None:
-        registry[conv_status_spec.name] = conv_status_spec
     if conv_id and request_id_provider is not None and sandbox_grants is not None:
         sandbox_spec = _bash_sandbox_mod.make_spec(
             conv_folder, conv_id, request_id_provider, sandbox_grants,
