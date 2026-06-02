@@ -10,7 +10,8 @@
       "mcp__vuetify__get_component_api_by_version",
       "Bash(node -e \"console.log\\(Object.keys\\(require\\('./package.json'\\).scripts\\).join\\(', '\\)\\)\")",
       "Bash(bash -n jm.sh)",
-      "Bash(./jm.sh --build-docker node-alpine)"
+      "Bash(./jm.sh --build-docker node-alpine)",
+      "Bash(ollama list *)"
     ]
   }
 }
