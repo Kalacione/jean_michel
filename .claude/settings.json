@@ -6,7 +6,9 @@
       "Bash(find /home/kalacione/lab/clawde/claude-code-fork -type f -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.md\" | head -50)",
       "Read(//home/kalacione/lab/clawde/claude-code-fork/**)",
       "Read(//home/kalacione/lab/clawde/claude-code-fork/src/hooks/toolPermission/**)",
-      "Read(//home/kalacione/lab/clawde/claude-code-fork/src/tools/FileReadTool/**)"
+      "Read(//home/kalacione/lab/clawde/claude-code-fork/src/tools/FileReadTool/**)",
+      "mcp__vuetify__get_component_api_by_version",
+      "Bash(node -e \"console.log\\(Object.keys\\(require\\('./package.json'\\).scripts\\).join\\(', '\\)\\)\")"
     ]
   }
 }
