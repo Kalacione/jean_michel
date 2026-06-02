@@ -12,14 +12,17 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import db
-from ..config import CONVERSATIONS_DIR
+from .. import config, db
 
 
 def make_conv_folder(conv_id: str) -> Path:
     """Create and return the timestamped folder for a conversation."""
     name = datetime.now(UTC).strftime("%Y-%m-%d_%H-%M") + f"_{conv_id}"
-    folder = CONVERSATIONS_DIR / name
+    # Resolve via the config module (NOT an import-time binding) so test fixtures
+    # that redirect config.CONVERSATIONS_DIR to a tmp dir actually take effect —
+    # otherwise every test that creates a conversation pollutes the repo's
+    # conversations/ folder (this is what produced the ~1200 stray folders).
+    folder = config.CONVERSATIONS_DIR / name
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
