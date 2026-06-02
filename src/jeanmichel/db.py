@@ -350,17 +350,6 @@ def update_request_status(conn: sqlite3.Connection, req_id: str, status: str,
         conn.execute("UPDATE requests SET status = ? WHERE id = ?", (status, req_id))
 
 
-# ---- Artifacts ------------------------------------------------------------
-
-def record_artifact(conn: sqlite3.Connection, request_id: str,
-                    relative_path: str, kind: str) -> None:
-    conn.execute(
-        "INSERT INTO artifacts (request_id, relative_path, kind, created_at) "
-        "VALUES (?, ?, ?, ?)",
-        (request_id, relative_path, kind, _now()),
-    )
-
-
 # ---- Admin write helpers --------------------------------------------------
 
 def grant_tool(conn: sqlite3.Connection, agent_code: str, tool_code: str) -> None:
