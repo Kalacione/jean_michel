@@ -2,6 +2,10 @@
 
 - injection date/heure et info user systematiques ?
 
+## Connectivite
+
+- compatibilite du systeme avec mcp
+
 ## recherches searXNG
 
 - verifier comment sont gerees les langues de recherche; le processus de pensees de nos agent est en anglais, mais certaines requetes peuvent cibler du contenu d'autre langues.
