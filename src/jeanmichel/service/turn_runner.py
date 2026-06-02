@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, dispatcher
-from ..config import UserProfile
+from ..config import MAIN_MODEL, UserProfile
 from ..events import MemoryNearCapacity
 from ..orchestrator_v2 import (
     AgentSpec,
@@ -244,6 +244,12 @@ def _run_deep_turn(
                 "role": "system",
                 "content": main_agent.system_prompt,
             }
+
+    # Vision turns (analyse mode, in-context images) need a vision-capable model;
+    # the router's coding model (qwen3:14b) is text-only. Keep gemma4 (MAIN_MODEL)
+    # for these — chat/vocal vision goes through analyze_image, already on gemma4.
+    if images:
+        main_agent.model = MAIN_MODEL
 
     return run_main_loop(
         conv_folder=conv_folder,
