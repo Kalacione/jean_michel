@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .. import db, dispatcher
+from .. import db, dispatcher, snapshot
 from ..config import MAIN_MODEL, MODE_ROUTER_MODEL, UserProfile
 from ..events import MemoryNearCapacity
 from ..orchestrator_v2 import (
@@ -96,12 +96,15 @@ def run_turn(
     user_lang = dispatcher.detect_language(user_text)
 
     # Conversation metadata : opportunistic language + a cheap default title
-    # seeded from the first user message (user-editable later).
+    # seeded from the first user message (user-editable later). Computed on the
+    # clean text, before the attachment note is folded in below — also reused as
+    # the end-of-turn snapshot commit label.
+    turn_label = _default_title(user_text)
     try:
         with db.connect() as conn:
             if user_lang and user_lang != "und":
                 db.update_conversation_language(conn, conv_id, user_lang)
-            db.set_title_if_empty(conn, conv_id, _default_title(user_text))
+            db.set_title_if_empty(conn, conv_id, turn_label)
     except Exception as exc:  # noqa: BLE001
         _log.debug("conversation metadata update failed: %s", exc)
 
@@ -161,6 +164,11 @@ def run_turn(
             db.touch_conversation(conn, conv_id)
     except Exception as exc:  # noqa: BLE001
         _log.debug("touch_conversation failed: %s", exc)
+
+    # End-of-turn snapshot : single chokepoint for both CLI and API. By here
+    # messages.json/state.json/events.jsonl + workspace/ are all flushed. No-op
+    # unless CONVERSATION_SNAPSHOT_ENABLED ; never raises (best-effort).
+    snapshot.commit_turn(conv_folder, f"turn: {turn_label}")
     return answer
 
 

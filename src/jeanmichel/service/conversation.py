@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import config, db
+from .. import config, db, snapshot
 
 
 def make_conv_folder(conv_id: str) -> Path:
@@ -41,7 +41,55 @@ def create_conversation(
             user_language=user_language,
             mode=mode,
         )
+    # Init the per-conversation git repo (no-op unless snapshots are enabled).
+    snapshot.init_repo(conv_folder, conv_id)
     return conv_id, conv_folder
+
+
+def fork_conversation(src_conv_id: str, commit: str) -> tuple[str, Path]:
+    """Create a new conversation from the tree of ``commit`` in the source.
+
+    Copies the source conversation's content AS OF ``commit`` (workspace +
+    messages + state + events, minus ``.git``) into a fresh conversation
+    folder + DB row, then re-inits it as its own repo. Returns (new_id, folder).
+    Raises ValueError if the source is missing, RuntimeError if the snapshot
+    copy fails (snapshots disabled, git absent, or unknown commit). The owner
+    association is the caller's responsibility (mirrors create_conversation).
+    """
+    with db.connect() as conn:
+        src = db.get_conversation(conn, src_conv_id)
+    if src is None:
+        raise ValueError(f"conversation not found: {src_conv_id!r}")
+
+    new_id = uuid.uuid4().hex
+    dst = make_conv_folder(new_id)
+    if not snapshot.fork_at(Path(src["folder_path"]), dst, commit, new_id):
+        shutil.rmtree(dst, ignore_errors=True)
+        raise RuntimeError(
+            "fork failed (snapshots disabled, git absent, or unknown commit)"
+        )
+    with db.connect() as conn:
+        db.create_conversation(
+            conn,
+            conv_id=new_id,
+            folder_path=str(dst),
+            user_language=src["user_language"],
+            mode=src["mode"],
+        )
+    return new_id, dst
+
+
+def revert_conversation(conv_id: str, commit: str) -> bool:
+    """Rewind a conversation to an earlier turn snapshot (destructive).
+
+    Returns True on success. Raises ValueError if the conversation is missing.
+    Returns False if snapshots are disabled / git absent / the commit is unknown.
+    """
+    with db.connect() as conn:
+        row = db.get_conversation(conn, conv_id)
+    if row is None:
+        raise ValueError(f"conversation not found: {conv_id!r}")
+    return snapshot.revert_to(Path(row["folder_path"]), commit)
 
 
 def delete_conversation(conv_id: str) -> None:

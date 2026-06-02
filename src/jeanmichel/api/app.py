@@ -21,6 +21,11 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 
 
+def _valid_commit(commit: str) -> bool:
+    """Accept only a git SHA-ish hex string (7-40 chars) before passing to git."""
+    return 7 <= len(commit) <= 40 and all(c in "0123456789abcdefABCDEF" for c in commit)
+
+
 def create_app() -> Any:
     """Build the FastAPI app. Imports web deps lazily (optional dependency)."""
     from pathlib import Path
@@ -38,7 +43,7 @@ def create_app() -> Any:
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
 
-    from .. import db, persistence
+    from .. import db, persistence, snapshot
     from ..config import UserProfile
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
@@ -56,6 +61,9 @@ def create_app() -> Any:
 
     class ConversationRename(BaseModel):
         title: str
+
+    class SnapshotRef(BaseModel):
+        commit: str
 
     class MemorySaveRequest(BaseModel):
         type: str
@@ -155,6 +163,46 @@ def create_app() -> Any:
     @app.get("/api/conversations/{conversation_id}/state")
     def get_state(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         return {"state": persistence.load_state(Path(conv["folder_path"]))}
+
+    # ---- conversation snapshots (git per conversation) -------------------
+
+    @app.get("/api/conversations/{conversation_id}/snapshots")
+    def get_snapshots(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"snapshots": snapshot.list_snapshots(Path(conv["folder_path"]))}
+
+    @app.post("/api/conversations/{conversation_id}/revert")
+    def revert_conversation_route(
+        body: SnapshotRef, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        commit = body.commit.strip()
+        if not _valid_commit(commit):
+            raise HTTPException(status_code=422, detail="invalid commit")
+        # Don't rewind while any turn is writing to a conversation folder.
+        if executor.turn_lock.locked():
+            raise HTTPException(status_code=409, detail="a turn is in progress")
+        if not conversation_svc.revert_conversation(conv["id"], commit):
+            raise HTTPException(
+                status_code=400, detail="revert failed (snapshots disabled or unknown commit)"
+            )
+        return {"status": "ok"}
+
+    @app.post("/api/conversations/{conversation_id}/fork", status_code=201)
+    def fork_conversation_route(
+        body: SnapshotRef,
+        conv: Any = Depends(auth.require_conversation_owner),
+        user: dict = Depends(auth.current_user),
+    ) -> dict[str, Any]:
+        commit = body.commit.strip()
+        if not _valid_commit(commit):
+            raise HTTPException(status_code=422, detail="invalid commit")
+        # Fork reads committed history (not the working tree) → safe mid-turn.
+        try:
+            new_id, _ = conversation_svc.fork_conversation(conv["id"], commit)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with db.connect() as conn:
+            db.associate_conversation_user(conn, user["id"], new_id)
+        return {"id": new_id}
 
     @app.get("/api/conversations/{conversation_id}/workspace")
     def get_workspace(
