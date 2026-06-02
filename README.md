@@ -447,6 +447,45 @@ CPU 1 vCPU). Audit dans `~/.jean-michel/sandbox_audit.jsonl`.
 Grants en BDD : `agent_sandbox_grants` (une ligne par binaire autorisé).
 Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpine`.
 
+## Serveurs MCP (client)
+
+**Opt-in.** Jean-Michel peut se comporter en **client MCP** (Model Context
+Protocol) : il se connecte à des **serveurs MCP hébergés** (Streamable HTTP, par
+URL — ex. Vuetify, GitHub) et expose leurs outils aux agents **comme des outils
+natifs** (`src/jeanmichel/mcp_client.py`). Dépendance optionnelle :
+`pip install -e .[mcp]`.
+
+Activation : copier `mcp_servers.example.toml` → `mcp_servers.toml` (le fichier
+live est gitignoré ; **aucun secret** dedans — l'auth est une *référence* à une
+variable d'env). Kill-switch : `JEANMICHEL_MCP_DISABLED=1`.
+
+```toml
+[servers.vuetify]
+url = "https://mcp.vuetifyjs.com/mcp"
+category = "docs"
+
+[servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+category = "code"
+auth_env = "GITHUB_MCP_TOKEN"        # token lu de l'env, jamais loggé
+
+[categories]                          # catégorie → agents (association optimale)
+docs = ["jean-michel", "code-fetcher"]
+code = ["jean-michel", "code-fetcher"]
+```
+
+- **Catégorisation** : chaque serveur a une `category` ; `[categories]` associe
+  catégorie→agents. Ajouter un serveur dans une catégorie existante l'accorde
+  automatiquement aux bons agents (pas d'édition par serveur).
+- Les outils sont exposés sous `mcp__<serveur>__<outil>` (namespacés, pas de
+  collision) ; le `inputSchema` JSON Schema part tel quel vers Ollama. Les grants
+  par agent (fusionnés dans `tool_grants`) pilotent la visibilité ET
+  l'autorisation (gate `PreToolUse`).
+- **Best-effort** : désactivé / `mcp` absent / serveur injoignable → no-op ;
+  un appel en échec/timeout → `tool_error` (le LLM continue). Un cap
+  (`JEANMICHEL_MCP_MAX_TOOLS_PER_SERVER`, défaut 30) protège le budget de
+  contexte. Aujourd'hui : serveurs **HTTP hébergés** uniquement (pas de stdio local).
+
 ## Paradigmes en BDD
 
 Le système de paradigmes survit en v2, mais purgé puis enrichi : **118
@@ -750,6 +789,7 @@ jeanmichel/
 │   ├── llm.py                # OllamaClient + MockClient (chat_messages)
 │   ├── persistence.py        # messages.json + state.json + events.jsonl
 │   ├── snapshot.py           # git par conversation (revert / fork), opt-in
+│   ├── mcp_client.py         # client MCP (serveurs hébergés → outils natifs), opt-in
 │   ├── bootstrap.py          # toml → user_memory
 │   ├── prompts.py            # render_system_prompt_v2 + index user_memory
 │   ├── config.py             # paramètres v2 + loader .env
