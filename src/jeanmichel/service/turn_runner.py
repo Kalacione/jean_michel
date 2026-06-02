@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, dispatcher
-from ..config import MAIN_MODEL, UserProfile
+from ..config import MAIN_MODEL, MODE_ROUTER_MODEL, UserProfile
 from ..events import MemoryNearCapacity
 from ..orchestrator_v2 import (
     AgentSpec,
@@ -67,7 +67,7 @@ def _attachment_note(attachments: list[str] | None, mode: str) -> str:
     note = f"\n\nFichiers joints du workspace : {listed}."
     # chat/vocal read images via the analyze_image tool (A) ; analyse mode gets
     # the image in-context (B) so it needs no tool hint.
-    if mode in ("chat", "vocal") and any(is_image(p) for p in attachments):
+    if mode in ("chat", "vocal", "code") and any(is_image(p) for p in attachments):
         note += " Pour analyser une image, utilise l'outil analyze_image(path, question)."
     return note
 
@@ -113,7 +113,7 @@ def run_turn(
     # Tier 0 : dispatch. In chat / vocal modes the small dispatcher LLM sees
     # the conversation history to resolve follow-ups ("et pour demain ?").
     # In analyse mode each question is standalone — the documented contract.
-    dispatcher_history = initial_messages if mode in ("chat", "vocal") else None
+    dispatcher_history = initial_messages if mode in ("chat", "vocal", "code") else None
     decision = dispatcher.classify(user_text, dispatch_llm, history=dispatcher_history)
 
     if on_dispatch is not None:
@@ -245,9 +245,12 @@ def _run_deep_turn(
                 "content": main_agent.system_prompt,
             }
 
-    # Vision turns (analyse mode, in-context images) need a vision-capable model;
-    # the router's coding model (qwen3:14b) is text-only. Keep gemma4 (MAIN_MODEL)
-    # for these — chat/vocal vision goes through analyze_image, already on gemma4.
+    # Router model by interaction mode (config-driven): 'code' uses a stronger
+    # model for methodical decomposition; other modes keep the agent default
+    # (gemma4, vision-capable). In-context vision always forces the vision model.
+    mode_model = MODE_ROUTER_MODEL.get(mode)
+    if mode_model:
+        main_agent.model = mode_model
     if images:
         main_agent.model = MAIN_MODEL
 

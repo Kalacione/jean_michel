@@ -140,7 +140,7 @@ WORKSPACE_UPLOAD_MAX_BYTES = _int_env("JEANMICHEL_UPLOAD_MAX_BYTES", 22 * 1024 *
 # vision. One size, one derivative (cf. DevNotes/WEBUI/03). Env-overridable.
 IMAGE_MAX_PX = _int_env("JEANMICHEL_IMAGE_MAX_PX", 1024)
 
-MODES = ("analyse", "chat", "vocal")
+MODES = ("analyse", "chat", "vocal", "code")
 DEFAULT_OLLAMA_MODEL = os.environ.get(
     "JEANMICHEL_MODEL",
     #"qwen3:14b",
@@ -162,6 +162,13 @@ DISPATCH_MODEL = os.environ.get("JEANMICHEL_DISPATCH_MODEL", "granite4.1:8b")
 MAIN_MODEL = os.environ.get("JEANMICHEL_MAIN_MODEL", "gemma4:latest")
 COMPACTOR_MODEL = os.environ.get("JEANMICHEL_COMPACTOR_MODEL", "gemma4:latest")
 SUBAGENT_DEFAULT_MODEL = os.environ.get("JEANMICHEL_SUBAGENT_MODEL", "gemma4:latest")
+# Router (jean-michel) model used in the `code` interaction mode — a stronger
+# model for methodical decomposition over a codebase. Other modes use the agent
+# default (MAIN_MODEL / gemma4, vision-capable). Env-overridable.
+CODE_MODEL = os.environ.get("JEANMICHEL_CODE_MODEL", "qwen3:14b")
+# Per-mode router-model overrides (mode → Ollama model). A mode absent here uses
+# the agent's resolved default. Consumed in service.turn_runner._run_deep_turn.
+MODE_ROUTER_MODEL = {"code": CODE_MODEL}
 # Slot dédié aux agents dont le métier EST le raisonnement (strategist,
 # critical-thinker, comparator-specialist, meta-analyst). Aujourd'hui chacun
 # pointe dur sur 'gemma4:26b' via `agents.model_override` ; ce slot existe

@@ -103,7 +103,7 @@ def create_app() -> Any:
     def create_conversation(
         body: CreateConversationRequest, user: dict = Depends(auth.current_user)
     ) -> dict[str, Any]:
-        if body.mode not in ("analyse", "chat", "vocal"):
+        if body.mode not in ("analyse", "chat", "vocal", "code"):
             raise HTTPException(status_code=422, detail="invalid mode")
         conv_id, _folder = conversation_svc.create_conversation(body.mode)
         with db.connect() as conn:

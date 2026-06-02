@@ -5,7 +5,7 @@
         v-model="mode"
         density="compact"
         hide-details
-        :items="['analyse', 'chat', 'vocal']"
+        :items="['analyse', 'chat', 'vocal', 'code']"
         label="Mode"
         variant="outlined"
       />

@@ -382,7 +382,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=["analyse", "chat", "vocal"],
+        choices=["analyse", "chat", "vocal", "code"],
         default="analyse",
         help="Conversation mode (default: analyse).",
     )
