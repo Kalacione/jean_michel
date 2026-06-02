@@ -100,6 +100,16 @@ def _bool_env(name: str, default: bool) -> bool:
 CONVERSATION_SNAPSHOT_ENABLED = _bool_env("JEANMICHEL_CONVERSATION_SNAPSHOT_ENABLED", False)
 
 
+# MCP (Model Context Protocol) client — connect to hosted MCP servers and
+# expose their tools to agents natively. Enabled when `mcp_servers.toml` exists
+# and lists ≥1 server (copy mcp_servers.example.toml). MCP_DISABLED is a
+# force-off kill-switch. Cf. src/jeanmichel/mcp_client.py.
+MCP_SERVERS_PATH = REPO_ROOT / "mcp_servers.toml"
+MCP_DISABLED = _bool_env("JEANMICHEL_MCP_DISABLED", False)
+MCP_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_MCP_CALL_TIMEOUT", 25)
+MCP_MAX_TOOLS_PER_SERVER = _int_env("JEANMICHEL_MCP_MAX_TOOLS_PER_SERVER", 30)
+
+
 # Hard cap on total delegations per turn. Prevents "aspirating the whole
 # internet" on a single user request.
 MAX_DELEGATIONS = _int_env("JEANMICHEL_MAX_DELEGATIONS", 8)

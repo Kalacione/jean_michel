@@ -43,6 +43,11 @@ web = [
   # Image normalization : inline thumbnails + format-safe input for Gemma vision.
   "Pillow>=10.0.0",
 ]
+mcp = [
+  # MCP client — connect to hosted MCP servers and expose their tools natively.
+  # Optional: the core runs fine without it (feature degrades to a no-op).
+  "mcp>=1.0.0",
+]
 
 [project.scripts]
 jean-michel = "jeanmichel.cli:main"
@@ -62,6 +67,7 @@ target-version = "py314"
 [tool.pytest.ini_options]
 markers = [
     "docker: tests that require a running Docker daemon",
+    "mcp_live: tests that hit a real MCP server (JEANMICHEL_MCP_LIVE=1 + mcp installed)",
 ]
 
 [tool.ruff.lint]

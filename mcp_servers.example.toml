@@ -1,0 +1,41 @@
+# =============================================================================
+# Jean-Michel — example MCP server config
+# =============================================================================
+# Copy to `mcp_servers.toml` to ENABLE the MCP client (the live file is
+# gitignored). MCP connects to these HOSTED servers at startup and exposes
+# their tools to the granted agents as native tools.
+#
+#   cp mcp_servers.example.toml mcp_servers.toml
+#
+# No secrets live here: `auth_env` is the NAME of an environment variable that
+# holds the token (put the value in `.env`), never the token itself.
+# Force-off without deleting the file: JEANMICHEL_MCP_DISABLED=1.
+# Requires the optional dependency:  pip install -e .[mcp]
+# =============================================================================
+
+# ---- Servers ----------------------------------------------------------------
+# Each server: a remote Streamable-HTTP URL + a `category`. Tools are exposed
+# as `mcp__<server>__<tool>`. Optional per-server `tools` allowlist and
+# `timeout_seconds`.
+
+[servers.vuetify]
+url = "https://mcp.vuetifyjs.com/mcp"
+category = "docs"
+# No auth. Vue 3 / Vuetify 4 component & directive APIs, install/feature guides.
+# tools = ["get_installation_guide", "get_component_api_by_version"]  # optional allowlist
+
+[servers.github]
+url = "https://api.githubcopilot.com/mcp/"   # verify endpoint + token scopes for your use
+category = "code"
+auth_env = "GITHUB_MCP_TOKEN"                # set the value in .env (a GitHub PAT)
+# auth_header = "Authorization"              # default
+# auth_scheme = "Bearer"                     # default → header "Authorization: Bearer <token>"
+
+# ---- Category → agents ------------------------------------------------------
+# Which agents receive each category's servers. Adding a new server in an
+# existing category auto-grants it to these agents (no per-server edits).
+# Agent codes must match the `agents.code` column in the DB.
+
+[categories]
+docs = ["jean-michel", "code-fetcher"]
+code = ["jean-michel", "code-fetcher"]

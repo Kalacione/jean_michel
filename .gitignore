@@ -106,6 +106,10 @@ jeanmichel.db-wal
 *.db-wal
 cli_profile.toml
 conversations/*
+# MCP server config (no secrets — auth is via env-var refs — but kept local;
+# the curated list ships as mcp_servers.example.toml).
+mcp_servers.toml
+!mcp_servers.example.toml
 
 # Piper voice models (30-150 MB each) — keep only the README tracked
 voice_models/*.onnx
