@@ -8,13 +8,18 @@ Prerequisites :
 - Ollama running locally (`ollama serve`).
 - The configured DISPATCH_MODEL (default granite4.1:8b) and MAIN_MODEL
   (default gemma4:latest) pulled (`ollama pull <model>`).
+- For the CODE scenario : CODE_MODEL (default qwen3:14b) and the code workers'
+  model (qwen3-coder:latest) pulled, plus Docker running with the
+  jeanmichel-sandbox:py-alpine image built (`./jm.sh --build-docker`).
 - The v2 migrations applied to the test DB.
 
-Two scenarios, mirroring the DoD of Phase 8 in 07 :
+Three scenarios, mirroring the DoD of Phase 8 in 07 :
 
 1. ALEXA path : "Quelle heure est-il ?" → tier 0 → clock → French answer.
 2. DEEP path  : a question that requires the main loop → conclusion via an
    assistant turn without tool_calls.
+3. CODE path  : mode='code', the qwen3:14b orchestrator decomposes a coding
+   task and delegates to a qwen3-coder worker that writes + runs code.
 
 The tests are best-effort and tolerant : Ollama latency, network blips, and
 local model behaviour vary. We assert that the system returns *something*
@@ -183,3 +188,113 @@ def test_smoke_deep_simple_question(v2_db_for_smoke, tmp_path):
     assert (conv_folder / "messages.json").exists()
     assert (conv_folder / "state.json").exists()
     assert (conv_folder / "events.jsonl").exists()
+
+
+# ---- CODE path -----------------------------------------------------------
+
+
+@requires_ollama
+def test_smoke_code_mode_factorial(v2_db_for_smoke, tmp_path):
+    """CODE path : the orchestrator decomposes a coding task and delegates.
+
+    This is the most fragile path : the qwen3:14b orchestrator drives a PDCA
+    loop, the qwen3-coder workers run with thinking OFF (the model has no think
+    channel), and code-runner executes in the Docker sandbox. Requires
+    qwen3:14b + qwen3-coder:latest pulled and Docker up (see module docstring).
+
+    Tolerant : we assert the loop terminates with a non-empty answer, the
+    conversation persisted, AND the code machinery actually engaged (a TODO was
+    written or a code worker was delegated to) — not the exact result.
+    """
+    import json
+
+    from jeanmichel import db, dispatcher
+    from jeanmichel.config import CODE_MODEL, MODE_ROUTER_MODEL, UserProfile
+    from jeanmichel.llm import OllamaClient
+    from jeanmichel.orchestrator_v2 import load_agent_spec_v2, run_main_loop
+    from jeanmichel.prompts import render_user_memory_index
+    from jeanmichel.tools import build_registry
+
+    # The wiring under test : 'code' mode routes the main agent to CODE_MODEL.
+    assert MODE_ROUTER_MODEL.get("code") == CODE_MODEL
+
+    main_llm = OllamaClient()
+    user_text = (
+        "Écris une fonction Python factorial(n) qui calcule la factorielle, "
+        "puis exécute-la dans le sandbox pour n=5 et donne le résultat."
+    )
+    user_lang = dispatcher.detect_language(user_text)
+
+    conv_folder = tmp_path / "conv_code_smoke"
+    conv_folder.mkdir()
+
+    with db.connect() as conn:
+        user_memory_block, _ = render_user_memory_index(conn)
+        agent = load_agent_spec_v2(
+            conn,
+            "jean-michel",
+            mode="code",
+            user_profile_text=UserProfile().render(),
+            user_memory_block=user_memory_block,
+            user_language=user_lang,
+        )
+        # Mirror turn_runner : 'code' mode swaps the router onto CODE_MODEL.
+        agent.model = MODE_ROUTER_MODEL["code"]
+        # Sandbox whitelist = union of all agents' grants, so the code workers
+        # reach bash_sandbox through the shared registry (spawn_subagent reuses
+        # the same registry, filtered per-agent by the PreToolUse hook).
+        sandbox_grants = sorted(
+            {
+                r["command"]
+                for r in conn.execute("SELECT DISTINCT command FROM agent_sandbox_grants")
+            }
+        )
+
+    def resolver(code):
+        try:
+            with db.connect() as conn:
+                return load_agent_spec_v2(conn, code, mode="code", user_language=user_lang)
+        except KeyError:
+            return None
+
+    tools_registry = build_registry(
+        conv_folder=conv_folder,
+        has_workspace_write=True,
+        conv_id="code-smoke",
+        request_id_provider=lambda: "main",
+        sandbox_grants=sandbox_grants,
+        agent_role="router",
+    )
+
+    answer = run_main_loop(
+        conv_folder=conv_folder,
+        agent=agent,
+        tools_registry=tools_registry,
+        llm_client=main_llm,
+        user_text=user_text,
+        agent_resolver=resolver,
+        event_emitter=None,
+        max_iterations=40,
+    )
+
+    assert answer
+    assert not answer.startswith("[Orchestrator aborted")
+    assert (conv_folder / "messages.json").exists()
+    assert (conv_folder / "events.jsonl").exists()
+
+    # The code machinery engaged : a TODO was written (PDCA decomposition) or a
+    # code worker was delegated to.
+    todo_written = (conv_folder / "todo.json").exists()
+    events = [
+        json.loads(line)
+        for line in (conv_folder / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    code_workers = {"code-runner", "code-runner-node"}
+    delegated_to_code = any(
+        e.get("type") == "DelegationStarted" and e.get("child_agent") in code_workers
+        for e in events
+    )
+    assert todo_written or delegated_to_code, (
+        "code mode did not engage: no todo.json and no delegation to a code worker"
+    )
