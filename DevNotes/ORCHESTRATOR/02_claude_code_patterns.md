@@ -184,6 +184,14 @@ messages avant envoi (UUID stables, attachments remontés jusqu'à une frontièr
 **Sessions** persistées en **JSONL** + fichiers d'état ; *resume* = messages **après la dernière
 frontière de compaction** + re-préfixe de contexte.
 
+> **→ applicabilité Jean-Michel (mode `code`) : DÉJÀ COUVERT.** `compaction.py` (4 paliers, seuils
+> 0.70/0.80/0.90/0.95), budget `ctx − reserve − 0.15·ctx`, recap `[TODO-RECAP]`, resume JSONL. Les
+> manques sont **inapplicables au runtime** (réactif-413 : Ollama tronque `num_ctx`, pas de 413 ;
+> prefetch-pendant-streaming : on ne stream pas), **déjà mitigés** (budget par résultat ← microcompact
+> + les workers renvoient des *résumés* via `report_back`, pas le brut) ou **volontaires** (mémoire =
+> index statique + pull `manage_user_memory` ; l'auto-injection par tour coûterait le ctx 40960 de
+> qwen3:14b). ⇒ rien à implémenter.
+
 ## 9. Permissions & hooks (`hooks/toolPermission/`, `entrypoints/sdk/coreSchemas.ts`)
 - **Modes** (`coreSchemas.ts:337`) : `default` (prompte le dangereux), `acceptEdits` (auto-accepte
   les éditions), `bypassPermissions` (saute tout — exige un flag), `plan` (**aucune exécution**),
@@ -234,6 +242,13 @@ frontière de compaction** + re-préfixe de contexte.
 - **Invocation** : `SkillTool` n'expose qu'une **liste plate** ; le **contenu complet n'est chargé
   qu'à l'`invoke()`** → évite le gonflement de contexte. Blocs shell `!` interdits pour les skills
   MCP (non fiables).
+
+> **→ applicabilité Jean-Michel (mode `code`) : INUTILE / redondant.** Pas de skills ; le comportement
+> réutilisable passe par **paradigmes** (normes déclaratives, `agent_paradigms` / `paradigm_modes`) +
+> **agents** (capacités via `agent_tools` + délégation). Un `SKILL.md` dupliquerait les agents (chaque
+> skill ≈ mini-agent) et casserait la séparation K.I.S.S. (paradigmes = *penser* / tools = *faire* /
+> agents = *qui appeler*). Le seul nugget (lazy-load du corps pour économiser le contexte) relève de
+> §8, pas d'un système de skills. ⇒ rien à faire.
 
 ## 13. Performance & robustesse
 - **Prefetch parallèle au démarrage** (`main.tsx`) : MDM + keychain lancés avant les imports lourds.
