@@ -36,7 +36,10 @@ from . import web_fetch as _web_fetch_mod
 from . import web_search as _web_search_mod
 from . import wikipedia as _wikipedia_mod
 from . import workspace_append as _ws_append_mod
+from . import workspace_create_dir as _ws_mkdir_mod
 from . import workspace_create_file as _ws_create_mod
+from . import workspace_delete_dir as _ws_deldir_mod
+from . import workspace_delete_file as _ws_delfile_mod
 from . import workspace_list as _ws_list_mod
 from . import workspace_str_replace as _ws_replace_mod
 from . import workspace_view as _ws_view_mod
@@ -48,6 +51,9 @@ WORKSPACE_WRITE_TOOLS: frozenset[str] = frozenset({
     "workspace_create_file",
     "workspace_str_replace",
     "workspace_append",
+    "workspace_create_dir",
+    "workspace_delete_file",
+    "workspace_delete_dir",
 })
 
 
@@ -75,6 +81,9 @@ def build_registry(
     ws_replace_spec = _ws_replace_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_view_spec = _ws_view_mod.make_spec(conv_folder)
     ws_list_spec = _ws_list_mod.make_spec(conv_folder)
+    ws_mkdir_spec = _ws_mkdir_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
+    ws_delfile_spec = _ws_delfile_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
+    ws_deldir_spec = _ws_deldir_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     todo_write_spec = _todo_write_mod.make_spec(conv_folder)
     # Bind user_memory to the current owner (None → reserved cli user).
     mum_spec = _manage_user_memory_mod.make_spec(memory_user_id)
@@ -102,6 +111,9 @@ def build_registry(
         ws_replace_spec.name: ws_replace_spec,
         ws_view_spec.name: ws_view_spec,
         ws_list_spec.name: ws_list_spec,
+        ws_mkdir_spec.name: ws_mkdir_spec,
+        ws_delfile_spec.name: ws_delfile_spec,
+        ws_deldir_spec.name: ws_deldir_spec,
         todo_write_spec.name: todo_write_spec,
         mum_spec.name: mum_spec,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,

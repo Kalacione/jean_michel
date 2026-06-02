@@ -214,11 +214,16 @@ VALUES (
 );
 
 -- 2. Grants outils
+-- NB : la forme `(VALUES (...)) AS t(col)` n'est PAS supportée par notre SQLite —
+-- utiliser un sous-SELECT UNION ALL (portable), ou un INSERT par outil.
 INSERT INTO agent_tools (agent_id, tool_code)
 SELECT a.id, t.tool_code
-FROM agents a,
-     (VALUES ('workspace_create_file'), ('workspace_str_replace'),
-             ('workspace_view'), ('workspace_list'), ('bash_sandbox')) AS t(tool_code)
+FROM agents a
+CROSS JOIN (            SELECT 'workspace_create_file' AS tool_code
+            UNION ALL SELECT 'workspace_str_replace'
+            UNION ALL SELECT 'workspace_view'
+            UNION ALL SELECT 'workspace_list'
+            UNION ALL SELECT 'bash_sandbox') AS t
 WHERE a.code = 'code-runner';
 
 -- 3. Grant workspace write
