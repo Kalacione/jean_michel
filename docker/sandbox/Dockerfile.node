@@ -13,8 +13,10 @@ RUN apk add --no-cache \
         git \
     && rm -rf /var/cache/apk/*
 
-# Non-root sandbox user.
-RUN addgroup -S sandbox && adduser -S -G sandbox -u 1000 sandbox
+# Non-root sandbox user. The base image already ships a `node` user at uid 1000,
+# so free that uid first (we keep a single `sandbox`/1000 convention across images).
+RUN deluser node 2>/dev/null; \
+    addgroup -S sandbox && adduser -S -G sandbox -u 1000 sandbox
 
 # Pre-install common Node packages globally.
 RUN npm install -g typescript ts-node
