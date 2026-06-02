@@ -56,3 +56,25 @@ Upmc	Medium	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/
   HookFired deny, top agents). migrate_102 avait recâblé `_sandbox_snapshot` vers le JSONL
   mais oublié `_activity_snapshot` juste au-dessus.
 
+## Futur
+
+### Sources de MCP
+
+https://glama.ai/mcp/servers
+https://mcpservers.org/
+
+### A voir MCP server
+
+https://glama.ai/mcp/servers/brave/brave-search-mcp-server
+
+### Pour piece detachees
+
+https://github.com/mikelewis1971/ai_workspace_mcp/blob/main/ai_workspace_mcp.py
+
+### Dinguerie de MCP server (necessite chrome + desktop)
+
+https://github.com/opentabs-dev/opentabs
+
+### re-etudier E2B
+
+pour la sandbox propre, vient avec son serveur MCP https://mcpservers.org/servers/e2b-dev/mcp-server
