@@ -59,6 +59,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_120_coding_decomposition.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_121_code_mode.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_122_workspace_file_ops.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_123_code_runner_node.sql")
     yield conn
     conn.close()
 
