@@ -171,6 +171,69 @@ def test_real_turn_creates_snapshot(client, monkeypatch):
     assert snaps[1]["subject"].startswith("turn:")
 
 
+def test_alexa_turn_creates_snapshot(client, monkeypatch):
+    """A tier-0 (ALEXA) turn is now persisted history → it gets a snapshot."""
+    def _alexa_clients():
+        dispatch = MockClient(
+            script=[LLMResponse(thinking="", content='{"intent":"alexa","tool":"clock","args":{}}')]
+        )
+        return dispatch, MockClient(script=[])
+
+    monkeypatch.setattr(executor, "get_llm_clients", _alexa_clients)
+    _make_user("dan", "pw")
+    token = _login(client, "dan", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "analyse"}, headers=_auth(token)
+    ).json()["id"]
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "what time is it"})
+        while ws.receive_json()["type"] not in ("final", "error"):
+            pass
+
+    snaps = _snapshots(client, token, conv_id)
+    assert len(snaps) == 2  # init + the ALEXA turn
+    assert snaps[1]["subject"].startswith("turn:")
+    # The exchange is now real history (survives reload) → bubbles line up 1:1.
+    roles = [m["role"] for m in persistence.load_messages(_conv_folder(conv_id))]
+    assert roles == ["user", "assistant"]
+
+
+def test_alexa_first_then_deep_turn(client, monkeypatch):
+    """ALEXA-first conversation then a DEEP turn : both snapshot, and the DEEP
+    turn keeps its system prompt despite the ALEXA-seeded history."""
+    # get_llm_clients is cached once per connection → one dispatch client must
+    # script both classifications (turn 1 = alexa, turn 2 = deep).
+    def _clients():
+        dispatch = MockClient(script=[
+            LLMResponse(thinking="", content='{"intent":"alexa","tool":"clock","args":{}}'),
+            LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}'),
+        ])
+        main = MockClient(script=[LLMResponse(thinking="", content="Deep answer.")])
+        return dispatch, main
+
+    monkeypatch.setattr(executor, "get_llm_clients", _clients)
+    _make_user("erin", "pw")
+    token = _login(client, "erin", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "analyse"}, headers=_auth(token)
+    ).json()["id"]
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        for text in ("what time is it", "now think hard"):
+            ws.send_json({"type": "turn", "text": text})
+            while ws.receive_json()["type"] not in ("final", "error"):
+                pass
+
+    snaps = _snapshots(client, token, conv_id)
+    assert len(snaps) == 3  # init + ALEXA + DEEP
+    # The DEEP turn ran with a system prompt (prepended) → messages.json starts
+    # with system, and the deep answer is present.
+    msgs = persistence.load_messages(_conv_folder(conv_id))
+    assert msgs[0]["role"] == "system"
+    assert any(m["role"] == "assistant" and "Deep answer." in (m.get("content") or "") for m in msgs)
+
+
 def test_ownership_enforced(client, alice_conv):
     _token_a, conv_id, _ = alice_conv
     _make_user("bob", "pw")

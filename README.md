@@ -386,9 +386,11 @@ re-rendu pour intégrer l'index user_memory à jour.
 chaque conversation devient un **repo git local** (jamais pushé) dont la
 branche porte l'`id` de la conversation. À **chaque fin de tour** (point de
 passage unique `turn_runner.run_turn`, partagé CLI + API), un **commit**
-archive l'état complet du dossier (messages / state / events / workspace). Les
-tours ALEXA qui n'écrivent rien ne créent pas de commit (skip si rien n'a
-changé).
+archive l'état complet du dossier (messages / state / events / workspace).
+**Tous les tours sont capturés** : les tours ALEXA (tier-0) persistent
+désormais leur échange dans `messages.json` — avant ils étaient éphémères
+(perdus au reload) —, donc ils produisent eux aussi un snapshot et restent
+alignés 1:1 avec les bulles du chat.
 
 Deux opérations, exposées par un menu **⋮ inline sur chaque réponse** dans le
 frontal web :

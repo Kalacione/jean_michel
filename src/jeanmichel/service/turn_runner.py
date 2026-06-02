@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .. import db, dispatcher, snapshot
+from .. import db, dispatcher, persistence, snapshot
 from ..config import MAIN_MODEL, MODE_ROUTER_MODEL, UserProfile
 from ..events import MemoryNearCapacity
 from ..orchestrator_v2 import (
@@ -52,6 +52,20 @@ def _default_title(text: str, limit: int = 60) -> str:
     if not line:
         return "Conversation"
     return line[:limit] + ("…" if len(line) > limit else "")
+
+
+def _persist_alexa_turn(conv_folder, user_text: str, answer: str) -> None:
+    """Append a tier-0 (ALEXA) exchange to messages.json so it is first-class
+    history : it survives reload, feeds the next turn's context, and gets its
+    own end-of-turn snapshot — exactly like a DEEP turn (which persists via
+    run_main_loop). ALEXA wrote nothing to disk before. Best-effort."""
+    try:
+        messages = persistence.load_messages(conv_folder)
+        messages.append({"role": "user", "content": user_text})
+        messages.append({"role": "assistant", "content": answer})
+        persistence.save_messages(conv_folder, messages)
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("alexa turn persistence failed: %s", exc)
 
 
 def _attachment_note(attachments: list[str] | None, mode: str) -> str:
@@ -133,6 +147,9 @@ def run_turn(
             user_lang=user_lang,
             user_profile=profile,
         )
+        # Persist the exchange so every turn — not just DEEP ones — is real
+        # history and gets a snapshot at end-of-turn.
+        _persist_alexa_turn(conv_folder, user_text, answer)
     else:
         # Vision B : in `analyse` mode, feed attached images IN-CONTEXT (transient
         # base64 from the normalized workspace derivative). chat/vocal rely on the
@@ -243,15 +260,17 @@ def _run_deep_turn(
     )
 
     # On resume, re-render messages[0] with a fresh system prompt to pick up
-    # user_memory updates.
+    # user_memory updates. A history that has no leading system message (e.g. a
+    # conversation whose first turns were ALEXA — those persist [user,assistant]
+    # only) gets the system prompt prepended so the main agent keeps its prompt.
     seeded_messages: list[dict] | None = None
     if initial_messages:
         seeded_messages = list(initial_messages)
+        system_msg = {"role": "system", "content": main_agent.system_prompt}
         if seeded_messages and seeded_messages[0].get("role") == "system":
-            seeded_messages[0] = {
-                "role": "system",
-                "content": main_agent.system_prompt,
-            }
+            seeded_messages[0] = system_msg
+        else:
+            seeded_messages = [system_msg, *seeded_messages]
 
     # Router model by interaction mode (config-driven): 'code' uses a stronger
     # model for methodical decomposition; other modes keep the agent default
