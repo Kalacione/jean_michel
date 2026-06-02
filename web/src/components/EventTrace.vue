@@ -31,10 +31,32 @@
           <div
             v-for="(e, i) in rows"
             :key="i"
-            class="trace-row d-flex align-center ga-2 text-caption"
+            class="trace-row d-flex ga-2"
+            :class="e.type === 'AgentThinking' ? 'align-start' : 'align-center text-caption'"
           >
-            <v-icon :color="color(e)" :icon="icon(e)" size="14" />
-            <span :class="{ 'font-italic text-medium-emphasis': e.type === 'AgentThinking' }">{{ label(e) }}</span>
+            <!-- Thinking step : collapsible markdown block with a peek + triangle.
+                 Only the latest step is expanded ; the rest stay peeked. -->
+            <template v-if="e.type === 'AgentThinking'">
+              <v-icon
+                class="think-toggle"
+                color="purple"
+                :icon="expandedIdx === i ? 'mdi-menu-down' : 'mdi-menu-right'"
+                size="16"
+                @click="toggle(i)"
+              />
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <div
+                class="think-body font-italic text-medium-emphasis flex-grow-1"
+                :class="{ collapsed: expandedIdx !== i }"
+                @click="toggle(i)"
+                v-html="renderMarkdown(e.text)"
+              />
+            </template>
+            <!-- Other events : compact one-liner. -->
+            <template v-else>
+              <v-icon :color="color(e)" :icon="icon(e)" size="14" />
+              <span>{{ label(e) }}</span>
+            </template>
           </div>
         </v-slide-y-transition>
       </div>
@@ -44,6 +66,7 @@
 
 <script setup>
   import { computed, ref, watch } from 'vue'
+  import { renderMarkdown } from '@/markdown'
 
   const props = defineProps({
     events: { type: Array, default: () => [] },
@@ -52,8 +75,8 @@
     queued: Boolean,
   })
 
-  // Expanded while thinking, auto-collapsed once the turn ends. The chevron
-  // lets the user override either way. No history is kept — a single live block.
+  // Whole-trace card : expanded while thinking, auto-collapsed once the turn
+  // ends. The chevron lets the user override either way.
   const open = ref(props.busy)
   watch(() => props.busy, (now, was) => {
     if (now) open.value = true
@@ -65,6 +88,22 @@
   const rows = computed(() =>
     props.events.map(m => m.event).filter(e => e && !HIDDEN.has(e.type)),
   )
+
+  // Which thinking step is expanded (index in rows). The latest auto-expands as
+  // new steps arrive — collapsing the previous one to a peek. -1 = none expanded.
+  const expandedIdx = ref(-1)
+  let prevThinkCount = 0
+  watch(rows, list => {
+    if (!list.length) { prevThinkCount = 0; expandedIdx.value = -1; return }
+    const idxs = []
+    list.forEach((e, i) => { if (e.type === 'AgentThinking') idxs.push(i) })
+    if (idxs.length > prevThinkCount) expandedIdx.value = idxs[idxs.length - 1]
+    prevThinkCount = idxs.length
+  }, { immediate: true })
+
+  function toggle (i) {
+    expandedIdx.value = expandedIdx.value === i ? -1 : i
+  }
 
   const headerLabel = computed(() => {
     if (props.queued) return 'En file d’attente…'
@@ -90,7 +129,6 @@
   }
   function color (e) {
     switch (e.type) {
-      case 'AgentThinking': return 'purple'
       case 'DelegationStarted': return 'indigo'
       case 'ToolCallStarted': return 'amber-darken-2'
       case 'RequestCompleted': return 'success'
@@ -105,7 +143,6 @@
       case 'ToolCallCompleted': return `↳ ${e.tool_name}`
       case 'DelegationStarted': return `délègue → ${e.child_agent}`
       case 'DelegationCompleted': return `✓ ${e.child_agent} (${e.confidence})`
-      case 'AgentThinking': return e.text
       case 'HookFired': return `${e.hook_name}: ${e.action}`
       case 'WorkingBudgetUpdate': return `compaction (${Math.round((e.ratio || 0) * 100)} %)`
       case 'MemoryNearCapacity': return `mémoire ${e.current_count}/${e.limit}`
@@ -117,4 +154,28 @@
 
 <style scoped>
 .trace-row { padding: 1px 0; }
+
+/* Thinking step : smaller text, markdown prose, expandable height (peek). */
+.think-toggle { cursor: pointer; margin-top: 1px; }
+.think-body {
+  font-size: 0.74rem;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow: hidden;
+  max-height: 2000px;          /* expanded : effectively unbounded */
+  transition: max-height 0.25s ease;
+}
+.think-body.collapsed {
+  max-height: 3.2em;           /* peek : ~2 lines */
+}
+.think-body :deep(p) { margin: 0 0 0.3em; }
+.think-body :deep(p:last-child) { margin-bottom: 0; }
+.think-body :deep(ul), .think-body :deep(ol) { padding-left: 1.1em; margin: 0.2em 0; }
+.think-body :deep(pre) {
+  overflow-x: auto;
+  padding: 0.3em 0.4em;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15);
+}
+.think-body :deep(code) { font-family: monospace; }
 </style>

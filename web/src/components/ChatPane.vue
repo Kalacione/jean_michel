@@ -20,7 +20,7 @@
                   class="md"
                   @click="onMdClick"
                   @error.capture="onImgError"
-                  v-html="render(stripImages(m.content))"
+                  v-html="renderMarkdown(stripImages(m.content))"
                 />
                 <!-- Remote images → Vuetify image grid (tiles + wrap). -->
                 <v-row v-if="imagesOf(m.content).length" class="ma-0 mt-1" dense>
@@ -179,12 +179,12 @@
 </template>
 
 <script setup>
-  import MarkdownIt from 'markdown-it'
   import { computed, nextTick, ref, watch } from 'vue'
   import { api } from '@/api'
   import EventTrace from '@/components/EventTrace.vue'
   import WorkspaceImage from '@/components/WorkspaceImage.vue'
   import { saveBlob } from '@/download'
+  import { renderMarkdown } from '@/markdown'
   import { useConvStore } from '@/stores/conversations'
 
   const conv = useConvStore()
@@ -193,7 +193,6 @@
   const scroller = ref(null)
   const fileInput = ref(null)
   const snackbar = ref({ show: false, text: '', color: 'success' })
-  const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
   // Anchor for the live thinking block : the most recent user message.
   const lastUserIndex = computed(() => {
@@ -202,10 +201,6 @@
     }
     return -1
   })
-
-  function render (text) {
-    return md.render(text || '')
-  }
 
   // Remote images the agent embeds (Markdown `![](http…)`) are pulled out and
   // shown as a Vuetify image grid ; the rest of the message renders as Markdown.
