@@ -11,7 +11,10 @@
       "Bash(node -e \"console.log\\(Object.keys\\(require\\('./package.json'\\).scripts\\).join\\(', '\\)\\)\")",
       "Bash(bash -n jm.sh)",
       "Bash(./jm.sh --build-docker node-alpine)",
-      "Bash(ollama list *)"
+      "Bash(ollama list *)",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
     ]
   }
 }
