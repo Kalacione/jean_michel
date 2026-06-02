@@ -12,6 +12,8 @@ optional for the rest of the codebase.
 # ``create_app`` (they aren't in module globals), and would treat the request
 # body as a query param. Real annotations keep the models local AND working.
 
+import asyncio
+import contextlib
 import os
 from typing import Any
 
@@ -43,14 +45,24 @@ def create_app() -> Any:
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
 
-    from .. import db, persistence, snapshot
+    from .. import db, mcp_client, persistence, snapshot
     from ..config import UserProfile
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
     from ..service import workspace as workspace_svc
     from . import auth, executor
 
-    app = FastAPI(title="Jean-Michel API", version="0.1.0")
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app):
+        # Connect to MCP servers at startup (off-loop : startup() blocks on a
+        # bounded connect). No-op when MCP is off/unconfigured. Best-effort.
+        await asyncio.to_thread(mcp_client.startup)
+        try:
+            yield
+        finally:
+            await asyncio.to_thread(mcp_client.shutdown)
+
+    app = FastAPI(title="Jean-Michel API", version="0.1.0", lifespan=_lifespan)
 
     class LoginRequest(BaseModel):
         username: str

@@ -66,6 +66,7 @@ def build_registry(
     agent_role: str = "",
     memory_user_id: int | None = None,
     vision_client: Any = None,
+    extra_tools: list[ToolSpec] | None = None,
 ) -> dict[str, ToolSpec]:
     """Build the tool registry for a given conversation context.
 
@@ -128,6 +129,10 @@ def build_registry(
             sandbox_image=sandbox_image,
         )
         registry[sandbox_spec.name] = sandbox_spec
+    # MCP-sourced tools (discovered from hosted servers) — added last; names are
+    # namespaced (mcp__server__tool) so they can't collide with native tools.
+    for spec in extra_tools or []:
+        registry[spec.name] = spec
     return registry
 
 

@@ -967,6 +967,11 @@ def load_agent_spec_v2(
 
     paradigms = _db.load_paradigms_for_agent(conn, row["id"], mode)
     tool_grants = frozenset(_db.load_tool_grants(conn, row["id"]))
+    # Merge MCP tools granted to this agent (by category). No-op when MCP is
+    # off/unconfigured. Single chokepoint → covers router AND subagents, and the
+    # gate (PreToolUse) + the LLM tools payload both read tool_grants.
+    from . import mcp_client
+    tool_grants = tool_grants | mcp_client.get_manager().granted_tool_names_for(agent_code)
     delegation_targets = frozenset(_db.load_delegation_targets(conn, row["id"]))
 
     # Load (code, role, mission) for each delegation target so the system

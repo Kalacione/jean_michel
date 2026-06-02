@@ -28,7 +28,7 @@ from rich.rule import Rule
 from rich.text import Text
 
 from . import bootstrap as bootstrap_mod
-from . import db, persistence
+from . import db, mcp_client, persistence
 from .config import (
     DISPATCH_MODEL,
     MAIN_MODEL,
@@ -471,6 +471,9 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[{C_WARN}]{exc}[/]")
         return 2
 
+    # Connect to configured MCP servers (no-op when off/unconfigured).
+    mcp_client.startup()
+
     # Vocal mode preflight : warn now if TTS isn't usable, so the user
     # knows responses will be text-only before the first turn runs.
     if args.mode == "vocal":
@@ -513,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
                 db.close_conversation(conn, conv_id)
         except Exception as exc:  # noqa: BLE001
             _log.debug("close_conversation failed: %s", exc)
+        mcp_client.shutdown()  # tear down MCP sessions/loop (no-op when off)
 
     # ----- --once : single non-interactive turn -----
     if args.once:

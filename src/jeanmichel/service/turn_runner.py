@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .. import db, dispatcher, persistence, snapshot
+from .. import db, dispatcher, mcp_client, persistence, snapshot
 from ..config import MAIN_MODEL, MODE_ROUTER_MODEL, UserProfile
 from ..events import MemoryNearCapacity
 from ..orchestrator_v2 import (
@@ -247,6 +247,11 @@ def _run_deep_turn(
             }
         )
 
+    # Permissive registry : add EVERY MCP tool (the shared registry also serves
+    # subagents). Per-agent grants (merged by category in load_agent_spec_v2)
+    # decide who actually sees/uses each one. No-op when MCP is off.
+    mcp_specs = mcp_client.get_manager().all_tool_specs()
+
     tools_registry = build_registry(
         conv_folder=conv_folder,
         has_workspace_write=True,
@@ -257,6 +262,7 @@ def _run_deep_turn(
         agent_role="router",
         memory_user_id=memory_user_id,
         vision_client=main_llm,
+        extra_tools=mcp_specs,
     )
 
     # On resume, re-render messages[0] with a fresh system prompt to pick up
