@@ -178,6 +178,22 @@ class OllamaClient:
                     f"Ollama chat() exceeded {LLM_CALL_TIMEOUT_SECONDS}s. "
                     "Model may be hung or VRAM saturated."
                 ) from None
+            except Exception as exc:
+                # Some models (e.g. coder models without a reasoning channel)
+                # reject Ollama's `think` parameter with HTTP 400 ("does not
+                # support thinking"). Drop it and retry once rather than aborting
+                # the whole agent turn — the safety net for per-agent model wiring.
+                if "think" in kwargs and "does not support thinking" in str(exc).lower():
+                    _log.warning(
+                        "model %r does not support thinking; retrying without it",
+                        kwargs.get("model"),
+                    )
+                    kwargs.pop("think", None)
+                    raw = self._executor.submit(
+                        self._client.chat, **kwargs
+                    ).result(timeout=LLM_CALL_TIMEOUT_SECONDS)
+                else:
+                    raise
             last_resp = self._to_llm_response(raw)
             if not (_looks_corrupted(last_resp.content) or _looks_corrupted(last_resp.thinking or "")):
                 return last_resp

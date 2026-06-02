@@ -140,3 +140,59 @@ def test_llm_response_accepts_token_usage_fields():
     )
     assert resp.prompt_eval_count == 100
     assert resp.eval_count == 42
+
+
+# ---- Thinking-unsupported fallback (R5) ----------------------------------
+
+
+class _FakeOllamaChat:
+    """Fake ollama Client: raises 'does not support thinking' when `think` is
+    passed, succeeds otherwise. Records each call's kwargs."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        if "think" in kwargs:
+            raise RuntimeError(
+                '"qwen3-coder:latest" does not support thinking (status code: 400)'
+            )
+        return {"message": {"role": "assistant", "content": "ok"}}
+
+
+def _bare_ollama_client(fake):
+    """Build an OllamaClient without touching ollama (bypass __init__)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from jeanmichel.llm import OllamaClient
+    c = OllamaClient.__new__(OllamaClient)
+    c.model = "qwen3-coder:latest"
+    c._client = fake
+    c._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-ollama")
+    return c
+
+
+def test_chat_messages_retries_without_thinking_on_400():
+    fake = _FakeOllamaChat()
+    client = _bare_ollama_client(fake)
+    resp = client.chat_messages(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[], temperature=0.1, thinking=True,
+    )
+    assert resp.content == "ok"
+    assert len(fake.calls) == 2          # first (with think) failed → retried
+    assert "think" in fake.calls[0]      # first attempt requested thinking
+    assert "think" not in fake.calls[1]  # retry dropped it
+
+
+def test_chat_messages_other_errors_propagate():
+    import pytest
+
+    class _Boom:
+        def chat(self, **kwargs):
+            raise RuntimeError("connection refused")
+
+    client = _bare_ollama_client(_Boom())
+    with pytest.raises(RuntimeError, match="connection refused"):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
