@@ -9,7 +9,7 @@
 ## Memory
 
 - L'analyse automatique des échanges pour extraire des faits reste hors scope (trop complexe pour le gain).
-- comment coisir les memory qu'on inject pour un sujet en particulier
+- comment choisir les memory qu'on inject pour un sujet en particulier
 
 ## Files 
 
@@ -37,6 +37,8 @@ Gilles	Low	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/g
 
 Voix feminine jessica
 
+Upmc	Medium	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx?download=true	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx.json?download=true	French	France
+
 ## Dette technique (repéré 2026-06-02)
 
 - **Vestige `requests`** : la table `requests` a été droppée en v2 (migrate_102) mais reste
@@ -46,4 +48,3 @@ Voix feminine jessica
   tracking v1 de ces tools, soit recréer une table `requests`. (record_artifact, même lignée, a
   été purgé.)
 
-Upmc	Medium	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx?download=true	https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx.json?download=true	French	France
