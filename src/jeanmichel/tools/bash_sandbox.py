@@ -26,9 +26,11 @@ cross-conversation `~/.jean-michel/sandbox_audit.jsonl` log via
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..persistence import append_sandbox_audit
@@ -80,6 +82,60 @@ def _start_container(name: str, workspace_path: Path, image: str) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _list_sandbox_containers() -> list[str]:
+    """Names of currently running jm-sandbox-* containers."""
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=jm-sandbox-"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return []
+    return [n.strip() for n in result.stdout.splitlines() if n.strip().startswith("jm-sandbox-")]
+
+
+def _container_age_seconds(name: str) -> float | None:
+    """Seconds since the container started, or None if it can't be determined."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.StartedAt}}", name],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    raw = result.stdout.strip().replace("Z", "+00:00")
+    # Docker emits nanosecond precision; trim fractional seconds to 6 digits.
+    m = re.match(r"^(.*\.\d{6})\d*([+-]\d{2}:\d{2})$", raw)
+    if m:
+        raw = m.group(1) + m.group(2)
+    try:
+        started = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return (datetime.now(UTC) - started).total_seconds()
+
+
+def reap_sandboxes(max_idle_minutes: int | None = None) -> list[str]:
+    """Stop lingering jm-sandbox-* containers and return the names stopped.
+
+    Sandbox containers run detached with `--rm`, so stopping them removes them.
+    This is SAFE: an active conversation respawns its container on the next
+    `bash_sandbox` call (only ephemeral in-container state is lost; the mounted
+    workspace persists). With `max_idle_minutes`, only containers running longer
+    than that are stopped; `None` stops all.
+    """
+    stopped: list[str] = []
+    for name in _list_sandbox_containers():
+        if max_idle_minutes is not None:
+            age = _container_age_seconds(name)
+            if age is None or age < max_idle_minutes * 60:
+                continue
+        result = subprocess.run(
+            ["docker", "stop", name], capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            stopped.append(name)
+    return stopped
 
 
 def make_spec(

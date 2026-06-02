@@ -56,6 +56,7 @@ Commands:
   --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
+  --reap-sandboxes [--idle-minutes N]  Stop lingering jm-sandbox-* containers (default: all)
   --admin [CMD ...]           Manage agents, tools, and paradigms (interactive REPL or one-shot)
   --meta-analysis             Run a meta-analysis: inspect system state and produce improvement proposals
   --help                      Show this help
@@ -211,6 +212,11 @@ cmd_clean() {
   exec python "${PROJECT_ROOT}/debug/clean_convs.py" "$@"
 }
 
+cmd_reap_sandboxes() {
+  ensure_venv
+  exec python "${PROJECT_ROOT}/debug/reap_sandboxes.py" "$@"
+}
+
 cmd_browse_db() {
   ensure_venv
   if [ ! -f "${DB_PATH}" ]; then
@@ -334,6 +340,10 @@ case "${COMMAND}" in
   --clean)
     shift
     cmd_clean "$@"
+    ;;
+  --reap-sandboxes)
+    shift
+    cmd_reap_sandboxes "$@"
     ;;
   --admin)
     shift
