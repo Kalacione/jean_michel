@@ -1,14 +1,28 @@
 # Audit & design — Décomposition méthodique + TODO persistant (orchestrateur « Claude-Code-like »)
 
-> **Statut : design à valider.** État des lieux (base LIVE + code), recherche externe, et
-> logique d'implémentation K.I.S.S. adaptée à notre infra modeste. Aucune implémentation encore.
-> Date : 2026-06-01.
+> **Statut : IMPLÉMENTÉ (S1 + S2 + S2.5), 2026-06-02** — voir « Statut d'implémentation » ci-dessous.
+> État des lieux (base LIVE + code), recherche externe, logique K.I.S.S. adaptée à l'infra modeste.
+> Date du design : 2026-06-01.
 >
 > ⚠️ **Révision (retour d'expérience utilisateur)** : la première version proposait *un seul
 > agent codeur en boucle*. **Écarté** — un agent unique hallucine dès que la tâche ou la
 > codebase devient grande. Le design retenu ci-dessous est **multi-agents** : analyse →
 > découpage méthodique → délégation séquentielle à des **workers frais**, chacun avec un
 > **contexte crafté** pour son action précise.
+
+## ✅ Statut d'implémentation (2026-06-02)
+Design **livré**. Le mode `code` (S2.5) a remplacé l'override global de jean-michel + la garde vision.
+
+| Sprint | Statut | Commit |
+|---|---|---|
+| **S1** — TODO persistant (`todo_write`, recap `PreLLMCall` main-agent-only, `report_back.suggested_todo_updates`, purge des fantômes) | ✅ livré | `f34b370` |
+| **S2** — orchestrateur `qwen3:14b` + worker `qwen3-coder` + paradigme PDCA + grants (migrate_120) | ✅ livré | `fcc573b` |
+| **S2.5** — mode d'interaction `code` (migrate_121) + fix `code-runner.thinking_mode=0` ; gemma4 reste le défaut hors `code` | ✅ livré | `978f5e8` |
+| **S3** — E2E en mode `code` | ✅ validé (rapide, délégation OK) | — |
+
+**Diagnostic S3** : qwen3:14b délègue correctement ; l'échec initial venait du `thinking_mode` de
+code-runner (qwen3-coder → HTTP 400 sur `think`), **pas** du tool-calling. Garde-fou général ajouté
+côté client LLM (R5, cf. [04_repo_mining_ollamacode_e2b.md](04_repo_mining_ollamacode_e2b.md)).
 
 ## 0. Décisions
 

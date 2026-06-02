@@ -3,7 +3,16 @@
 > Analyse des retours utilisateur (2026-06-01) + revue du prior art public. Pèse le pour/contre de
 > trois idées : (1) un mode d'interaction `code`, (2) des sandboxes par langage, (3) l'« autonomie
 > Docker ». Fait suite à [01_audit_decomposition_todo.md](01_audit_decomposition_todo.md) (S1+S2
-> livrés). **Aucune implémentation ici** — on tranche la direction.
+> livrés). Les directions ci-dessous sont désormais **tranchées et implémentées** (voir le statut).
+
+## ✅ Statut (2026-06-02)
+- **Mode `code`** : ✅ **implémenté** (migrate_121, `978f5e8`) — gemma4 par défaut, `qwen3:14b` en mode
+  `code`, paradigme PDCA scopé `code`, garde vision retirée (plus propre que l'override global, comme
+  anticipé §1).
+- **Sandbox par langage** : ✅ worker `code-runner-node` (node-alpine), `56a8bbe` (cf. doc 04 R2).
+- **Templates curatés** : ✅ une image alpine minimale par langage (py / node), via `agents.sandbox_image`.
+- **Pré-chauffage du conteneur** (doc 04 R3) : ❌ **ignoré** — négligeable pour une image alpine.
+- **« Clés de Docker »** : ❌ écarté (sécurité), inchangé.
 
 ## 0. Verdicts en un coup d'œil
 | Idée | Verdict | En une ligne |

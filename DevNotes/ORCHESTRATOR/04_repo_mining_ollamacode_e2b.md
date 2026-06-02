@@ -4,6 +4,18 @@
 > [03_code_mode_and_sandbox_strategy.md](03_code_mode_and_sandbox_strategy.md)). Sources
 > systématiquement citées. OpenHands : testé plus tard (noté §4). Date : 2026-06-01.
 
+## ✅ Statut des recommandations (2026-06-02)
+| Reco | Statut | Commit / raison |
+|---|---|---|
+| **R1** — reaper de sandboxes (`./jm.sh --reap-sandboxes`) | ✅ livré | `4d9b9a4` |
+| **R2** — un worker par image (`code-runner-node`, node-alpine) | ✅ livré | `56a8bbe` |
+| **R3** — pré-chauffage du conteneur sandbox | ❌ ignoré | négligeable pour une image alpine |
+| **R4** — tools fichier (`workspace_create_dir` / `delete_file` / `delete_dir`) | ✅ livré | `cdf6a8d` |
+| **R5** — garde-fou « modèle sans thinking » (retry sans `think`) | ✅ livré | `0330a2f` |
+| **R6** — ne pas copier l'archi mono-agent d'ollamacode | ✅ respecté | par conception |
+| **Streaming des tokens** | ❌ ignoré | trop de surface (4 couches + `tool_calls` fragmentés) pour un ressenti de façade ; risqué |
+| Bonus — pollution `conversations/` par les tests | ✅ corrigé | `d3df998` |
+
 ## 0. TL;DR — à prendre / à éviter
 | Source | À PRENDRE | À ÉVITER |
 |---|---|---|
