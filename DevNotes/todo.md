@@ -2,6 +2,10 @@
 
 - injection date/heure et info user systematiques ?
 
+## recherches searXNG
+
+- verifier comment sont gerees les langues de recherche; le processus de pensees de nos agent est en anglais, mais certaines requetes peuvent cibler du contenu d'autre langues.
+
 ## Memory
 
 - L'analyse automatique des échanges pour extraire des faits reste hors scope (trop complexe pour le gain).
