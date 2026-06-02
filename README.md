@@ -58,7 +58,7 @@ veut pas lancer un daemon.
 
 ## Agents v2 — le mille-feuille cognitif
 
-15 agents actifs, organisés en **deux dimensions** :
+16 agents actifs, organisés en **deux dimensions** :
 
 **1. Dimension structurelle (place dans le task tree)** — exposée par
 `agents.role` :
@@ -79,13 +79,17 @@ colonne SQL formelle, mais une convention reflétée dans
 |---|---|---|
 | **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `code-fetcher`, `workspace-manager` | `gemma4:latest` (default) |
 | **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
-| **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst`, `code-runner` | `gemma4:26b` via `model_override` |
+| **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
+| **Code (workers)** | `code-runner`, `code-runner-node` | `qwen3-coder:latest` via `model_override` |
 
 **Pattern fetcher/runner pour le code** : `code-fetcher` fait du lookup
 (GitHub, Stack Overflow, PyPI + web_fetch sur les URLs) ; `code-runner`
-écrit et exécute du code dans le sandbox Docker. Quand code-runner coince
+(sandbox `py-alpine`) et `code-runner-node` (sandbox `node-alpine`)
+écrivent et exécutent du code dans le sandbox Docker. Quand un runner coince
 sur une erreur ou doute d'une API, il délègue à code-fetcher avant de
-deviner — pattern miroir de `news-specialist` + `web_fetch`.
+deviner — pattern miroir de `news-specialist` + `web_fetch`. Les workers
+code tournent sur `qwen3-coder` (thinking off — ce modèle n'a pas de canal
+de réflexion), pilotés par l'orchestrateur `qwen3:14b` en mode `code`.
 
 Les **reasoners** sont des specialists dont le métier *EST* le raisonnement —
 ils sont sur un modèle plus capable parce que c'est leur raison d'être, pas
@@ -99,10 +103,21 @@ nouveau specialist dont c'est le métier.
 
 ## Modes
 
-Choisi au démarrage via `--mode {analyse,chat,vocal}` (défaut `analyse`).
+Choisi au démarrage via `--mode {analyse,chat,vocal,code}` (défaut `analyse`).
 
 - **`analyse`** — CLI persistante entre questions, pas de follow-ups.
 - **`chat`** — conversation continue, follow-ups proposés par jean-michel.
+- **`code`** — mode orchestrateur codeur. Le main agent passe sur
+  `qwen3:14b` (modèle plus robuste pour raisonner sur du code, via
+  `MODE_ROUTER_MODEL`), décompose la demande en un **TODO plat** (`todo_write`,
+  un seul item `in_progress` à la fois) et délègue aux workers code
+  (`code-runner` / `code-runner-node` sur `qwen3-coder`, `code-fetcher` pour
+  le lookup) selon une boucle **PDCA** : Plan (todo) → Do (délégation) →
+  Check (`report_back`, dont `suggested_todo_updates` proposés par les
+  workers) → Act (réécriture du TODO par l'orchestrateur). Le TODO est
+  ré-injecté dans le prompt à chaque tour par `PreLLMCall`. Voir
+  [DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md](DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md).
+  Les autres modes conservent `gemma4:latest` (et ses capacités image).
 - **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
   `concise_output` activé. Le texte est aussi synthétisé via **Piper TTS**
   (modèle ONNX local) puis joué via `paplay` / `aplay` / `ffplay`. Voir
@@ -181,7 +196,9 @@ Composants principaux :
   `markdown-it`.
 - `EventTrace.vue` — déroulé chronologique des events typés (mêmes 11
   classes que le CLI : `RequestStarted`, `DelegationStarted/Completed`,
-  `ToolCall*`, `HookFired`, `WorkingBudgetUpdate`…).
+  `ToolCall*`, `HookFired`, `WorkingBudgetUpdate`…). Les étapes de réflexion
+  rendent le Markdown et sont repliables : seule la dernière est dépliée,
+  les précédentes restent en aperçu (puce triangulaire pour basculer).
 - `AskHumanDialog.vue` — aller-retour humain en cours de turn (le
   router peut demander une clarification, le UI met le turn en pause).
 - `MemoryDialog.vue` — CRUD `user_memory` côté UI (save / recall /
@@ -232,41 +249,47 @@ Création d'un compte web :
 ./jm.sh --create-user alice           # prompt pour le password
 ```
 
-## Capacités image (en cours, branche `picture_feature`)
+## Capacités image (livré)
 
-Sprint en cours, audit complet dans
+Audit complet dans
 [DevNotes/WEBUI/03_audit_image_capabilities.md](DevNotes/WEBUI/03_audit_image_capabilities.md).
-Cibles décidées :
+Livré (migrate_115→119) :
 
 1. **Affichage** : endpoint authed `GET …/workspace/image?path=…`
    (vrai MIME), pattern blob → objectURL côté front (même mécanique que
-   le TTS), lightbox `v-dialog` pour le clic.
-2. **Recherche** : nouvel outil `image_search` (catégorie SearXNG)
-   qui retourne URLs + miniatures sans télécharger (zéro SSRF/quota).
-3. **Vision** : nouvel outil `analyze_image(path, question)` qui encode
-   l'image du workspace en base64 **transitoire** vers gemma4
-   multimodal — JAMAIS de base64 persisté dans `messages.json`. Image
-   ⇒ DEEP forcé (granite ne classifie pas d'image).
-4. **Listing** : masquer les dotfiles (`if not name.startswith(".")`)
-   pour cacher un futur `.thumbs/` éventuel.
-
-Pas encore implémenté — l'audit décrit l'état des lieux, les options
-et la voie K.I.S.S. pour chaque décision avant qu'on écrive du code.
+   le TTS), lightbox `v-dialog` pour le clic. Côté front, `ChatPane.vue`
+   extrait les images Markdown distantes (`![](http…)`) en grille `v-img`
+   et `WorkspaceImage.vue` rend les images du workspace en miniatures.
+2. **Recherche** : outil `image_search` (catégorie SearXNG) qui retourne
+   URLs + miniatures sans télécharger (zéro SSRF/quota), résultats cappés.
+3. **Vision** : outil `analyze_image(path, question)` qui encode l'image
+   du workspace en base64 **transitoire** vers gemma4 multimodal — JAMAIS
+   de base64 persisté dans `messages.json`. Image ⇒ DEEP forcé (granite ne
+   classifie pas d'image).
+4. **Listing** : les dotfiles sont masqués dans le workspace.
 
 ## Modèles configurables
 
-5 slots dans `config.py`, chacun overridable par env var et CLI flag :
+6 slots dans `config.py`, chacun overridable par env var et CLI flag :
 
 | Slot                     | Défaut             | Env var                           | CLI flag           |
 |--------------------------|--------------------|-----------------------------------|--------------------|
 | `DISPATCH_MODEL`         | `granite4.1:8b`    | `JEANMICHEL_DISPATCH_MODEL`       | `--dispatch-model` |
 | `MAIN_MODEL`             | `gemma4:latest`    | `JEANMICHEL_MAIN_MODEL`           | `--main-model`     |
+| `CODE_MODEL`             | `qwen3:14b`        | `JEANMICHEL_CODE_MODEL`           | —                  |
 | `COMPACTOR_MODEL`        | `gemma4:latest`    | `JEANMICHEL_COMPACTOR_MODEL`      | —                  |
 | `SUBAGENT_DEFAULT_MODEL` | `gemma4:latest`    | `JEANMICHEL_SUBAGENT_MODEL`       | —                  |
 | `REASONER_MODEL`         | `gemma4:26b`       | `JEANMICHEL_REASONER_MODEL`       | —                  |
 
+**Routage du main agent par mode** : `MODE_ROUTER_MODEL` mappe un mode → un
+modèle de routeur. Aujourd'hui seul `code` est mappé (`→ CODE_MODEL`,
+`qwen3:14b`) ; les autres modes gardent `MAIN_MODEL` (`gemma4:latest`), ce
+qui préserve les capacités image de gemma4 hors mode code. Si la requête
+porte une image, le main agent retombe sur `MAIN_MODEL` quel que soit le mode.
+
 Per-agent override : la colonne `agents.model_override` permet d'assigner
-un modèle spécifique à un subagent (ex. `strategist → gemma4:26b`).
+un modèle spécifique à un subagent (ex. `strategist → gemma4:26b`, les
+workers code → `qwen3-coder:latest`).
 
 **Convention** : aujourd'hui, les 4 reasoners (strategist, critical-thinker,
 comparator-specialist, meta-analyst) ont chacun `model_override='gemma4:26b'`
@@ -287,7 +310,9 @@ Les 4 hooks remplacent les anciens MUST en cascade dans les prompts :
 
 - **`PreLLMCall(messages, state)`** — escalade de compaction sur le `WORKING`
   budget à 4 niveaux (Snip / Microcompact / Context Collapse / Autocompact),
-  cf. §7 doc 06. Seuils 70/80/90/95 %.
+  cf. §7 doc 06. Seuils 70/80/90/95 %. Ré-injecte aussi le recap du TODO
+  (`todo.json`) en tête de contexte quand un existe (mode code, main agent
+  seulement — no-op sinon).
 - **`PreToolUse(ctx, state, dedup_cache)`** — grant check + dédup contextualisée
   + `MAX_DEPTH` pour delegate_to + `MAX_SEARCH=10` turn-wide pour les
   research tools. Retourne `Decision(deny, reason)`.
@@ -379,7 +404,9 @@ Inchangé sur le principe (sandboxing, quota 256 Mo). En v2, un hook
 consécutifs sans persist.
 
 Tools : `workspace_create_file`, `workspace_append`, `workspace_str_replace`,
-`workspace_view`, `workspace_list`.
+`workspace_view`, `workspace_list`, `workspace_create_dir`,
+`workspace_delete_file`, `workspace_delete_dir` (les trois derniers grantés
+aux workers code + workspace-manager).
 
 ## Sandbox Docker
 
@@ -392,8 +419,9 @@ Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpi
 
 ## Paradigmes en BDD
 
-Le système de paradigmes survit en v2, mais purgé puis enrichi : **109
-paradigmes actifs** au total. Trajectoire :
+Le système de paradigmes survit en v2, mais purgé puis enrichi : **118
+paradigmes actifs** au total. Trajectoire (extraits — détail complet dans
+`db/migrations/`) :
 
 - Phase 6 (migrate_100) : passage de 119 v1 → 104 v2 (anti-loop
   incantatoires retirés, outils morts purgés, 5 nouveaux paradigmes :
@@ -460,13 +488,15 @@ de la purge initiale.
 ## Installation
 
 ```bash
-./jm.sh --install       # crée le venv + charge le schéma v2 (db/schema.sql)
+./jm.sh --install       # venv + schéma v2 (db/schema.sql) + build des images sandbox
 ./jm.sh                 # lance le CLI (mode analyse, nouvelle conversation)
 ./jm.sh --mode chat     # conversation continue
+./jm.sh --mode code     # orchestrateur codeur (qwen3:14b + workers qwen3-coder, PDCA + TODO)
 ./jm.sh --mode vocal    # réponses courtes + Piper TTS (voir voice_models/README.md)
 ./jm.sh --resume        # reprend la dernière conversation active
 ./jm.sh --resume <id>   # reprend une conversation spécifique (id ou préfixe)
 ./jm.sh --list-conv     # liste les conversations actives et exit
+./jm.sh --reap-sandboxes            # tue les containers sandbox orphelins
 ./jm.sh --build-docker              # builde l'image Python Alpine
 ./jm.sh --build-docker node-alpine  # builde l'image Node Alpine
 ./jm.sh --build-docker all          # builde toutes les images sandbox
@@ -608,11 +638,22 @@ Migrations v2 sous `db/migrations/` :
   FK pour que la suppression d'une conversation (depuis le web) emporte
   proprement ses messages, events, state et association
   `conversation_users`. Le workspace sur disque est nettoyé côté service.
+- `migrate_115`→`119` — **capacités image** : outil `image_search`
+  (115), outils vision `analyze_image` (116), routing affichage image +
+  DEEP forcé sur image (117), paradigmes ré-écrits en anglais (118), cap
+  sur le nombre de résultats image (119).
+- `migrate_120`→`123` — **orchestrateur codeur** : infra de décomposition
+  TODO (`todo_write`, paradigme PDCA) + agent `code-runner` re-routé
+  (120), mode `code` + extension des CHECK `mode IN (…,'code')` sur
+  `paradigm_modes` et `conversations` + `CODE_MODEL` (121), workspace
+  file ops (`workspace_create_dir`/`delete_file`/`delete_dir`, 122), agent
+  `code-runner-node` (sandbox `node-alpine`, modèle `qwen3-coder`, 123).
+  Cf. [DevNotes/ORCHESTRATOR/](DevNotes/ORCHESTRATOR/).
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114; do
+for m in $(seq 100 123); do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -642,7 +683,7 @@ jeanmichel/
 ├── cli_profile.example.toml
 ├── .env / .env.example       # clés d'API tools externes
 ├── db/
-│   ├── schema.sql            # schéma v2 consolidé (114 migrations appliquées)
+│   ├── schema.sql            # schéma v2 consolidé (123 migrations appliquées)
 │   ├── schema_v1_baseline.sql # baseline v1 (tests migration)
 │   └── migrations/           # migrate_NNN_*.sql
 ├── debug/
@@ -664,6 +705,7 @@ jeanmichel/
 │   │   ├── 01_audit_api_async_webui.md
 │   │   ├── 02_audit_user_memory_isolation.md
 │   │   └── 03_audit_image_capabilities.md
+│   ├── ORCHESTRATOR/         # mode code : décomposition PDCA, patterns Claude Code (01→04)
 │   ├── claude_4.7_extraction/
 │   ├── the_toolbox/
 │   └── todo.md
@@ -694,10 +736,12 @@ jeanmichel/
 │   │   └── executor.py       # run_turn_streaming (event → WS)
 │   └── tools/
 │       ├── delegate_to.py    # schema (control verb)
-│       ├── report_back.py    # schema + validation
+│       ├── report_back.py    # schema + validation (+ suggested_todo_updates)
+│       ├── todo_write.py      # TODO plat (mode code, PDCA)
 │       ├── manage_user_memory.py
 │       ├── clock.py, weather.py, wikipedia.py, web_search.py, web_fetch.py
 │       ├── news.py, github.py, stackoverflow.py, pypi.py
+│       ├── image_search.py, image_fetch.py, analyze_image.py  # capacités image
 │       ├── workspace_*.py, self_inspect_*.py
 │       └── bash_sandbox.py
 ├── web/                      # frontal SPA Vue 3 + Vuetify
@@ -719,7 +763,7 @@ jeanmichel/
 │       │   ├── ProfileDialog.vue
 │       │   └── WorkspaceDialog.vue    # arbre, upload, download zip
 │       └── plugins/vuetify.js + styles/
-└── tests/v2/                 # ~500 tests pytest
+└── tests/v2/                 # ~550 tests pytest
     ├── conftest.py
     ├── test_orchestrator_v2.py
     ├── test_dispatcher.py
@@ -740,9 +784,10 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`),
-mergée sur `main`. **15 agents actifs** (dont 5 reasoners sur gemma4:26b —
-strategist + critical-thinker + comparator + meta-analyst + code-runner — et
-le pattern fetcher/runner pour le code). **~500 tests v2 verts.**
+mergée sur `main`. **16 agents actifs** : 4 reasoners sur gemma4:26b
+(strategist + critical-thinker + comparator + meta-analyst), 2 workers code
+sur qwen3-coder (code-runner + code-runner-node) avec le pattern
+fetcher/runner, le reste sur gemma4:latest. **~550 tests v2 verts.**
 
 **Cœur stabilisé** : CLI multi-tour en tous modes, `--resume`, `--list-conv`,
 dispatcher Tier 0 opérationnel via granite, main loop Tier 1 multi-turn
@@ -758,11 +803,17 @@ auth + chat + drawer conversations + workspace UI + memory CRUD +
 profile + TTS navigateur. Conteneurisé côté front uniquement (nginx),
 daemon Python à la main côté hôte.
 
-**Sprint en cours** : capacités image (branche `picture_feature`).
-Audit complet validé dans
-[DevNotes/WEBUI/03_audit_image_capabilities.md](DevNotes/WEBUI/03_audit_image_capabilities.md) :
-endpoint authed `/workspace/image` (vrai MIME + blob pattern), outil
-`image_search` (SearXNG), outil `analyze_image(path, question)` vers
-gemma4 multimodal (image ⇒ DEEP forcé, jamais de base64 persisté dans
-`messages.json`). Rien encore en production, décisions arrêtées,
-implémentation à venir.
+**Capacités image livrées** (migrate_115→119) : endpoint authed
+`/workspace/image` (vrai MIME + blob pattern), outil `image_search`
+(SearXNG), outil `analyze_image(path, question)` vers gemma4 multimodal
+(image ⇒ DEEP forcé, jamais de base64 persisté dans `messages.json`),
+affichage front (grille `v-img` + miniatures workspace + lightbox).
+
+**Orchestrateur codeur livré** (mode `code`, migrate_120→123, cf.
+[DevNotes/ORCHESTRATOR/](DevNotes/ORCHESTRATOR/)) : main agent `qwen3:14b`
+qui décompose en TODO plat (`todo_write`) et pilote une boucle PDCA sur des
+workers `qwen3-coder` (code-runner py-alpine + code-runner-node node-alpine,
+code-fetcher pour le lookup). Sprints S1 (infra TODO) + S2 (wiring modèles +
+paradigme PDCA) + S2.5 (mode code), plus les renforts tirés du fork Claude
+Code : retry sans thinking (R5), reaper de sandbox (R1, `--reap-sandboxes`),
+tools fichiers workspace (R4), worker node (R2).
