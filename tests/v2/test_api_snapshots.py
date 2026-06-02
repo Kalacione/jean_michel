@@ -27,6 +27,8 @@ from jeanmichel import config, db, persistence, snapshot  # noqa: E402
 from jeanmichel.api import app as api_app  # noqa: E402
 from jeanmichel.api import auth, executor  # noqa: E402
 from jeanmichel.db import connect as db_connect  # noqa: E402
+from jeanmichel.llm import MockClient  # noqa: E402
+from jeanmichel.models import LLMResponse  # noqa: E402
 
 
 def _make_user(username: str, password: str) -> int:
@@ -140,6 +142,33 @@ def test_invalid_commit_rejected(client, alice_conv):
         f"/api/conversations/{conv_id}/revert", json={"commit": "not-a-sha!!"}, headers=_auth(token)
     )
     assert resp.status_code == 422
+
+
+def test_real_turn_creates_snapshot(client, monkeypatch):
+    """The end-of-turn chokepoint (run_turn) actually commits a snapshot."""
+    def _deep_clients():
+        dispatch = MockClient(
+            script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
+        )
+        main = MockClient(script=[LLMResponse(thinking="", content="The answer is 42.")])
+        return dispatch, main
+
+    monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
+    _make_user("carol", "pw")
+    token = _login(client, "carol", "pw")
+    conv_id = client.post(
+        "/api/conversations", json={"mode": "analyse"}, headers=_auth(token)
+    ).json()["id"]
+
+    with client.websocket_connect(f"/ws/conversations/{conv_id}?token={token}") as ws:
+        ws.send_json({"type": "turn", "text": "compare rust and go"})
+        while ws.receive_json()["type"] not in ("final", "error"):
+            pass
+
+    snaps = _snapshots(client, token, conv_id)
+    assert [s["subject"] for s in snaps[:1]] == ["init"]
+    assert len(snaps) == 2
+    assert snaps[1]["subject"].startswith("turn:")
 
 
 def test_ownership_enforced(client, alice_conv):

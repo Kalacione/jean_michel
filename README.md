@@ -379,6 +379,34 @@ les exécutions `bash_sandbox`, toutes conversations confondues).
 **Reprise** : `--resume` recharge `messages.json` ; le system prompt est
 re-rendu pour intégrer l'index user_memory à jour.
 
+## Snapshots git par conversation (revert / fork)
+
+**Opt-in**, désactivé par défaut. Activé via
+`JEANMICHEL_CONVERSATION_SNAPSHOT_ENABLED=1` (ou `config.CONVERSATION_SNAPSHOT_ENABLED`),
+chaque conversation devient un **repo git local** (jamais pushé) dont la
+branche porte l'`id` de la conversation. À **chaque fin de tour** (point de
+passage unique `turn_runner.run_turn`, partagé CLI + API), un **commit**
+archive l'état complet du dossier (messages / state / events / workspace). Les
+tours ALEXA qui n'écrivent rien ne créent pas de commit (skip si rien n'a
+changé).
+
+Deux opérations, exposées par un menu **⋮ inline sur chaque réponse** dans le
+frontal web :
+
+- **Revenir à ce point** — rembobinage destructif (`git reset --hard` +
+  `git clean -fd`) ; les tours suivants sont jetés (récupérables via
+  `git reflog`). Refusé (409) si un tour est en cours.
+- **Créer une nouvelle conversation à partir d'ici** — fork : le contenu du
+  dossier **à ce commit** (hors `.git`, via `git archive`) est extrait dans
+  une nouvelle conversation possédée par le même utilisateur. L'originale
+  reste intacte.
+
+Routes API (owner-scoped) : `GET …/snapshots`, `POST …/revert`,
+`POST …/fork`. Tout est **best-effort** : `git` absent ou flag à off ⇒ no-op,
+jamais de crash de tour (cf. `src/jeanmichel/snapshot.py`). Les dossiers
+`conversations/` sont déjà gitignorés à la racine du projet, donc ces repos
+imbriqués ne polluent pas le repo principal.
+
 ## Événements typés
 
 L'orchestrateur émet 11 types d'events (catalogue dans
@@ -719,6 +747,7 @@ jeanmichel/
 │   ├── tokens.py             # estimation contexte
 │   ├── llm.py                # OllamaClient + MockClient (chat_messages)
 │   ├── persistence.py        # messages.json + state.json + events.jsonl
+│   ├── snapshot.py           # git par conversation (revert / fork), opt-in
 │   ├── bootstrap.py          # toml → user_memory
 │   ├── prompts.py            # render_system_prompt_v2 + index user_memory
 │   ├── config.py             # paramètres v2 + loader .env
