@@ -19,6 +19,18 @@ sys.path.insert(0, str(_ROOT / "src"))
 
 
 @pytest.fixture(autouse=True)
+def _mcp_off_by_default(monkeypatch):
+    """Force the MCP manager inert for the whole suite.
+
+    A developer's local `mcp_servers.toml` must never make tests hit the network
+    or become non-deterministic. The dedicated MCP tests install their own
+    manager explicitly.
+    """
+    import jeanmichel.mcp_client as mcp_client
+    monkeypatch.setattr(mcp_client, "_manager", mcp_client.MCPManager({}, {}))
+
+
+@pytest.fixture(autouse=True)
 def _snapshot_disabled_by_default(monkeypatch):
     """Force per-conversation git snapshots OFF for the whole suite.
 

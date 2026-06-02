@@ -51,6 +51,7 @@ _log = logging.getLogger(__name__)
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
 _MAX_NAME = 64
 _CONNECT_TIMEOUT_S = 15  # bounded wait so a slow server never delays startup
+_CALL_BACKSTOP_S = 5  # extra margin above the MCP-level read timeout (hung coro)
 
 
 @dataclass(frozen=True)
@@ -204,12 +205,25 @@ class MCPManager:
     def close(self) -> None:
         if not self._started or self._loop is None:
             return
-        if self._stop_event is not None:
-            self._loop.call_soon_threadsafe(self._stop_event.set)
-        self._loop.call_soon_threadsafe(self._loop.stop)
+        loop = self._loop
+        try:
+            asyncio.run_coroutine_threadsafe(self._ashutdown(), loop).result(timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("mcp: shutdown drain incomplete: %s", exc)
+        loop.call_soon_threadsafe(loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5)
         self._started = False
+
+    async def _ashutdown(self) -> None:
+        """Signal holders, cancel any in-flight tasks, await them — clean exit
+        of the anyio scopes on their own tasks (no 'task destroyed' warnings)."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+        pending = [t for t in asyncio.all_tasks(self._loop) if t is not asyncio.current_task()]
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
     # ---- spec building ---------------------------------------------------
 
@@ -256,7 +270,7 @@ class MCPManager:
                                  read_timeout_seconds=timedelta(seconds=timeout))
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
-            result = fut.result(timeout=timeout + 5)  # backstop above the MCP-level timeout
+            result = fut.result(timeout=timeout + _CALL_BACKSTOP_S)  # backstop for a hung coro
         except FuturesTimeout:
             return tool_error("mcp_timeout", f"{server}.{real_name} timed out after {timeout}s")
         except Exception as exc:  # noqa: BLE001
@@ -284,6 +298,14 @@ class MCPManager:
 
     def granted_tool_names_for(self, agent_code: str) -> frozenset[str]:
         return frozenset(spec.name for spec in self.tool_specs_for_agent(agent_code))
+
+    def all_tool_specs(self) -> list[ToolSpec]:
+        """Every discovered MCP ToolSpec (across all servers). The registry is
+        permissive ; per-agent grants decide visibility/permission."""
+        specs: list[ToolSpec] = []
+        for server_specs in self._specs_by_server.values():
+            specs.extend(server_specs)
+        return specs
 
 
 def _format_result(result: Any) -> str:
