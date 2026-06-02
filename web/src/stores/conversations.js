@@ -167,6 +167,38 @@ export const useConvStore = defineStore('conversations', () => {
     await refresh()
   }
 
+  // ---- conversation snapshots (git per conversation) ---------------------
+
+  // Reload the current conversation's messages from disk WITHOUT select()'s
+  // same-id early-return (needed after a revert rewrites messages.json).
+  async function reloadCurrent () {
+    if (!currentId.value) return
+    const loaded = (await api.messages(currentId.value)).messages
+    messages.value = loaded.filter(m => m.role === 'user' || m.role === 'assistant')
+    trace.value = []
+    dispatch.value = null
+    await fetchWsFiles()
+  }
+
+  async function loadSnapshots () {
+    if (!currentId.value) return []
+    return (await api.snapshots(currentId.value)).snapshots
+  }
+
+  async function revert (commit) {
+    if (!currentId.value) return
+    await api.revertConversation(currentId.value, commit)
+    await reloadCurrent()
+  }
+
+  async function fork (commit) {
+    if (!currentId.value) return null
+    const c = await api.forkConversation(currentId.value, commit)
+    await refresh()
+    await select(c.id)
+    return c
+  }
+
   function reset () {
     closeWs()
     list.value = []
@@ -182,5 +214,6 @@ export const useConvStore = defineStore('conversations', () => {
     wsFiles, wsOpen, wsInitialPath,
     refresh, create, select, sendTurn, answer, rename, remove, reset,
     fetchWsFiles, openWorkspace,
+    loadSnapshots, revert, fork, reloadCurrent,
   }
 })

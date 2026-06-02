@@ -57,6 +57,34 @@
               <div v-else class="user-text">{{ m.content }}</div>
             </v-card>
 
+            <!-- Per-turn snapshot menu : rewind / fork from this point. Shown
+                 only when a git snapshot exists for this assistant turn. -->
+            <v-menu v-if="m.role === 'assistant' && snapshotForRow(i)" location="bottom start">
+              <template #activator="{ props: menu }">
+                <v-btn
+                  v-bind="menu"
+                  class="snap-btn mt-1"
+                  density="comfortable"
+                  icon="mdi-dots-horizontal"
+                  size="x-small"
+                  title="Snapshot de ce tour"
+                  variant="text"
+                />
+              </template>
+              <v-list density="compact">
+                <v-list-item
+                  prepend-icon="mdi-history"
+                  title="Revenir à ce point"
+                  @click="askRevert(snapshotForRow(i))"
+                />
+                <v-list-item
+                  prepend-icon="mdi-source-branch"
+                  title="Nouvelle conversation à partir d'ici"
+                  @click="askFork(snapshotForRow(i))"
+                />
+              </v-list>
+            </v-menu>
+
             <!-- Workspace files attached to / referenced by this message :
                  images render as thumbnails, everything else as a chip. -->
             <div v-if="messageFiles(m).length" class="d-flex flex-wrap ga-2 mt-1">
@@ -175,6 +203,18 @@
     <v-dialog v-model="lightbox.open" max-width="80vw">
       <v-img contain max-height="80vh" :src="lightbox.src" @click="lightbox.open = false" />
     </v-dialog>
+
+    <v-dialog v-model="confirm.open" max-width="460">
+      <v-card>
+        <v-card-title class="text-body-1">{{ confirm.title }}</v-card-title>
+        <v-card-text class="text-body-2 text-medium-emphasis">{{ confirm.text }}</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="confirm.open = false">Annuler</v-btn>
+          <v-btn :color="confirm.color" variant="flat" @click="runConfirm">{{ confirm.cta }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -193,6 +233,65 @@
   const scroller = ref(null)
   const fileInput = ref(null)
   const snackbar = ref({ show: false, text: '', color: 'success' })
+
+  // ---- per-turn git snapshots (revert / fork) ----------------------------
+  // Snapshots come back oldest→newest ; snapshots[0] is the empty "init"
+  // commit, so the k-th assistant bubble maps to snapshots[k]. ALEXA turns
+  // write nothing → no commit, so the persisted bubbles line up 1:1 with the
+  // turn commits.
+  const snapshots = ref([])
+  async function refreshSnapshots () {
+    try { snapshots.value = await conv.loadSnapshots() } catch { snapshots.value = [] }
+  }
+  const snapshotByRow = computed(() => {
+    const out = {}
+    let k = 0
+    conv.messages.forEach((m, i) => {
+      if (m.role === 'assistant') { k += 1; out[i] = snapshots.value[k] || null }
+    })
+    return out
+  })
+  function snapshotForRow (i) {
+    return snapshotByRow.value[i] || null
+  }
+  watch(() => conv.currentId, refreshSnapshots, { immediate: true })
+  watch(() => conv.busy, now => { if (!now) refreshSnapshots() })
+
+  const confirm = ref({ open: false, kind: '', commit: '', title: '', text: '', cta: '', color: 'primary' })
+  function askRevert (snap) {
+    if (!snap) return
+    confirm.value = {
+      open: true, kind: 'revert', commit: snap.commit,
+      title: 'Revenir à ce point ?',
+      text: 'La conversation sera rembobinée à ce tour. Les tours suivants seront supprimés (récupérables via git reflog).',
+      cta: 'Revenir', color: 'warning',
+    }
+  }
+  function askFork (snap) {
+    if (!snap) return
+    confirm.value = {
+      open: true, kind: 'fork', commit: snap.commit,
+      title: 'Nouvelle conversation à partir d’ici ?',
+      text: 'Crée une nouvelle conversation avec le contenu de ce point. L’originale reste intacte.',
+      cta: 'Créer', color: 'primary',
+    }
+  }
+  async function runConfirm () {
+    const { kind, commit } = confirm.value
+    confirm.value.open = false
+    try {
+      if (kind === 'revert') {
+        await conv.revert(commit)
+        snackbar.value = { show: true, color: 'success', text: 'Conversation rembobinée.' }
+      } else {
+        await conv.fork(commit)
+        snackbar.value = { show: true, color: 'success', text: 'Nouvelle conversation créée.' }
+      }
+      await refreshSnapshots()
+    } catch (err) {
+      snackbar.value = { show: true, color: 'error', text: err.detail || err.message || 'Échec.' }
+    }
+  }
 
   // Anchor for the live thinking block : the most recent user message.
   const lastUserIndex = computed(() => {
@@ -342,4 +441,7 @@
 }
 .md :deep(img.img-broken) { display: none; }
 .clickable { cursor: zoom-in; }
+/* Per-turn snapshot menu : discreet until hovered. */
+.snap-btn { opacity: 0.35; transition: opacity 0.15s ease; }
+.snap-btn:hover { opacity: 1; }
 </style>

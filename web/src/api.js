@@ -57,6 +57,10 @@ export const api = {
   messages: id => request('GET', `/conversations/${id}/messages`),
   events: id => request('GET', `/conversations/${id}/events`),
   state: id => request('GET', `/conversations/${id}/state`),
+
+  snapshots: id => request('GET', `/conversations/${id}/snapshots`),
+  revertConversation: (id, commit) => request('POST', `/conversations/${id}/revert`, { commit }),
+  forkConversation: (id, commit) => request('POST', `/conversations/${id}/fork`, { commit }),
   workspace: (id, sub = '') =>
     request('GET', `/conversations/${id}/workspace${sub ? `?sub_path=${encodeURIComponent(sub)}` : ''}`),
   workspaceFile: (id, path) =>
