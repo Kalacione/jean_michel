@@ -452,12 +452,13 @@ Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpi
 **Opt-in.** Jean-Michel peut se comporter en **client MCP** (Model Context
 Protocol) : il se connecte à des **serveurs MCP hébergés** (Streamable HTTP, par
 URL — ex. Vuetify, GitHub) et expose leurs outils aux agents **comme des outils
-natifs** (`src/jeanmichel/mcp_client.py`). Dépendance optionnelle :
-`pip install -e .[mcp]`.
+natifs** (`src/jeanmichel/mcp_client.py`). Le paquet `mcp` (extra `[mcp]`) est
+installé par `./jm.sh --install`.
 
 Activation : copier `mcp_servers.example.toml` → `mcp_servers.toml` (le fichier
 live est gitignoré ; **aucun secret** dedans — l'auth est une *référence* à une
-variable d'env). Kill-switch : `JEANMICHEL_MCP_DISABLED=1`.
+variable d'env). Sans ce fichier → no-op total. Kill-switch :
+`JEANMICHEL_MCP_DISABLED=1`.
 
 ```toml
 [servers.vuetify]
@@ -553,6 +554,10 @@ de la purge initiale.
 - `argon2-cffi` + `itsdangerous` — hash + bearer signé.
 - `python-multipart` — uploads workspace.
 - Côté front : Vue 3.5, Vuetify 4, Pinia 3, markdown-it, Vite 8.
+
+**Client MCP** (extra `[mcp]`) :
+- `mcp` — SDK officiel (client Streamable HTTP). Installé par `./jm.sh --install` ;
+  inerte tant qu'aucun `mcp_servers.toml` n'est présent.
 
 ## Installation
 
@@ -747,7 +752,7 @@ notes = "Dev senior, préfère les réponses directes sans préambule."
 jeanmichel/
 ├── README.md
 ├── jm.sh                     # point d'entrée unifié (CLI + --serve + --create-user)
-├── pyproject.toml            # extras [dev] et [web]
+├── pyproject.toml            # extras [dev], [web], [mcp]
 ├── cli_profile.toml          # profil du user système 'cli'
 ├── cli_profile.example.toml
 ├── .env / .env.example       # clés d'API tools externes

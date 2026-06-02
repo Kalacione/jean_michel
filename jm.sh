@@ -124,7 +124,7 @@ cmd_install() {
   echo "[2/4] Installing dependencies"
   pip install --upgrade pip >/dev/null
   pip cache purge >/dev/null 2>&1 || true
-  pip install -e ".[dev,web]"
+  pip install -e ".[dev,web,mcp]"
 
   # ---- database -----------------------------------------------------------
   echo "[3/4] Initializing SQLite database"
@@ -169,6 +169,14 @@ print('  Database created at ${DB_PATH}')
     echo "   'pactl get-default-sink' should NOT return 'auto_null'."
     echo
     echo "   You can keep using non-vocal modes without this — it's vocal-mode only."
+  fi
+
+  # ---- post-install : MCP client (optional, opt-in) -----------------------
+  if [ ! -f "${PROJECT_ROOT}/mcp_servers.toml" ]; then
+    echo
+    echo "ℹ  MCP client ready (the 'mcp' extra is installed). To connect hosted"
+    echo "   MCP servers (Vuetify, GitHub…) as native tools, enable it with:"
+    echo "       cp mcp_servers.example.toml mcp_servers.toml"
   fi
 
   echo
