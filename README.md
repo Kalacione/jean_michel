@@ -487,6 +487,25 @@ code = ["jean-michel", "code-fetcher"]
   (`JEANMICHEL_MCP_MAX_TOOLS_PER_SERVER`, défaut 30) protège le budget de
   contexte. Aujourd'hui : serveurs **HTTP hébergés** uniquement (pas de stdio local).
 
+**Authentification (`auth = …`)** : `none` (public), `bearer` (token statique
+depuis une var d'env — cf. GitHub), ou `oauth` (générique). Pour un serveur
+OAuth (ex. Notion, Linear, Sentry), le consentement se fait **une fois** :
+
+```bash
+./jm.sh --mcp-auth notion      # ouvre un navigateur, stocke les tokens
+```
+
+Les tokens vivent **hors du repo** (`~/.jean-michel/mcp/<serveur>/`, chmod 600)
+et sont rafraîchis automatiquement (le SDK gère PKCE + DCR + refresh). Au
+démarrage normal, un serveur OAuth **sans token** est sauté avec un log
+« run `./jm.sh --mcp-auth <serveur>` » — **jamais** de navigateur côté daemon.
+
+**Nudge par config** : un champ optionnel `instructions` par serveur est ajouté
+à la description de ses outils (ex. « quand on te demande d'exporter dans Notion,
+utilise ces outils ») — un guidage piloté par TOML, **sans code ni paradigme**.
+Rien de spécifique à un service tiers n'est committé : la config (stanza +
+`instructions`) vit dans ton `mcp_servers.toml` gitignoré.
+
 ## Paradigmes en BDD
 
 Le système de paradigmes survit en v2, mais purgé puis enrichi : **118

@@ -15,8 +15,17 @@
 
 # ---- Servers ----------------------------------------------------------------
 # Each server: a remote Streamable-HTTP URL + a `category`. Tools are exposed
-# as `mcp__<server>__<tool>`. Optional per-server `tools` allowlist and
-# `timeout_seconds`.
+# as `mcp__<server>__<tool>`. Optional per-server `tools` allowlist,
+# `timeout_seconds`, and `instructions` (a free-text nudge appended to that
+# server's tool descriptions — e.g. when to use them).
+#
+# Auth modes (`auth = ...`):
+#   none   — public server (default ; cf. vuetify)
+#   bearer — static token from an env var (cf. github ; auth_env names the var)
+#   oauth  — "log in" once: ./jm.sh --mcp-auth <server> opens a browser and
+#            stores tokens under ~/.jean-michel/mcp/<server>/ (chmod 600, auto
+#            refreshed). A server with no stored token is skipped at startup
+#            with a "run ./jm.sh --mcp-auth <server>" log (never a prompt).
 
 [servers.vuetify]
 url = "https://mcp.vuetifyjs.com/mcp"
@@ -27,9 +36,22 @@ category = "docs"
 [servers.github]
 url = "https://api.githubcopilot.com/mcp/"   # verify endpoint + token scopes for your use
 category = "code"
+auth = "bearer"
 auth_env = "GITHUB_MCP_TOKEN"                # set the value in .env (a GitHub PAT)
 # auth_header = "Authorization"              # default
 # auth_scheme = "Bearer"                     # default → header "Authorization: Bearer <token>"
+
+# ---- OAuth example (hosted servers that require "log in": Notion, Linear,
+#      Sentry…). Uncomment + adapt, then run:  ./jm.sh --mcp-auth notion
+#      Also add its category to [categories] below (e.g. notes = [...]). ------
+# [servers.notion]
+# url = "https://mcp.notion.com/mcp"
+# category = "notes"
+# auth = "oauth"
+# scopes = "read:content update:content"
+# instructions = "When the user asks to save or export content to Notion, use these tools."
+# # redirect_port = 8973         # default ; must be free during --mcp-auth (registered via DCR)
+# # tools = ["notion-create-pages", "notion-update-page"]   # write-only allowlist (optional)
 
 # ---- Category → agents ------------------------------------------------------
 # Which agents receive each category's servers. Adding a new server in an
@@ -39,3 +61,4 @@ auth_env = "GITHUB_MCP_TOKEN"                # set the value in .env (a GitHub P
 [categories]
 docs = ["jean-michel", "code-fetcher"]
 code = ["jean-michel", "code-fetcher"]
+# notes = ["jean-michel", "document-builder"]   # for the OAuth example above
