@@ -1,5 +1,17 @@
 # Todo
 
+## Inputs
+
+Etudier ces modeles
+
+ encodeurs à tête de classification → non servables par Ollama ; 2/3 = sentiment, 1 = sûreté de contenu → hors-sujet
+
+https://huggingface.co/knowledgator/opir-multitask-multilang-v1.0
+https://huggingface.co/nlptown/bert-base-multilingual-uncased-sentiment
+https://huggingface.co/yangheng/deberta-v3-base-absa-v1.1
+
++ prompt degueu 
+
 - injection date/heure et info user systematiques ?
 
 ## Connectivite
