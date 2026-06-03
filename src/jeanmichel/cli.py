@@ -404,13 +404,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="TEXT",
         help="Process a single prompt non-interactively then exit.",
     )
-    parser.add_argument(
-        "--mcp-auth",
-        metavar="SERVER",
-        default=None,
-        help="Run the one-time OAuth consent for an MCP server (opens a browser), "
-             "store its tokens, and exit.",
-    )
     return parser
 
 
@@ -469,16 +462,6 @@ def main(argv: list[str] | None = None) -> int:
         return _list_conv_and_exit(console)
 
     ensure_dirs()
-
-    # One-time MCP OAuth consent (opens a browser), then exit. No daemon, no LLM.
-    if args.mcp_auth:
-        console.print(f"[dim]→ MCP OAuth consent for '{args.mcp_auth}' — a browser will open…[/]")
-        ok = mcp_client.authenticate(args.mcp_auth)
-        console.print(
-            f"[green]✓ '{args.mcp_auth}' authenticated — tokens stored.[/]" if ok
-            else f"[{C_WARN}]✖ authentication for '{args.mcp_auth}' failed (see logs above).[/]"
-        )
-        return 0 if ok else 1
 
     # ----- LLM clients -----
     try:

@@ -109,16 +109,6 @@ MCP_DISABLED = _bool_env("JEANMICHEL_MCP_DISABLED", False)
 MCP_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_MCP_CALL_TIMEOUT", 25)
 MCP_MAX_TOOLS_PER_SERVER = _int_env("JEANMICHEL_MCP_MAX_TOOLS_PER_SERVER", 30)
 
-# OAuth (generic) for servers with auth = "oauth" — one-time consent via
-# `./jm.sh --mcp-auth <server>`. Tokens persist OUTSIDE the repo (home dir) so
-# they can never be committed. Overridable for tests.
-MCP_OAUTH_DIR = Path(
-    os.environ.get("JEANMICHEL_MCP_OAUTH_DIR", Path.home() / ".jean-michel" / "mcp")
-)
-MCP_OAUTH_CALLBACK_TIMEOUT = _int_env("JEANMICHEL_MCP_OAUTH_TIMEOUT", 300)
-# 8973 (not 8765 — that's the paradigm-matrix editor) ; must be free during --mcp-auth.
-MCP_OAUTH_DEFAULT_PORT = _int_env("JEANMICHEL_MCP_OAUTH_PORT", 8973)
-
 
 # Hard cap on total delegations per turn. Prevents "aspirating the whole
 # internet" on a single user request.

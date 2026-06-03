@@ -49,7 +49,6 @@ Commands:
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
   --serve                     Launch the web daemon (FastAPI) at http://0.0.0.0:8000
   --create-user <username>    Create a web frontend user (prompts for password)
-  --mcp-auth <server>         One-time OAuth consent for a hosted MCP server (browser)
   --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
                               (alias: --backup-db)
@@ -195,13 +194,6 @@ cmd_serve() {
   # by default (override via JEANMICHEL_API_HOST / JEANMICHEL_API_PORT).
   ensure_venv
   exec jean-michel-serve "$@"
-}
-
-cmd_mcp_auth() {
-  # One-time OAuth consent for a hosted MCP server (opens a browser, stores tokens).
-  #   ./jm.sh --mcp-auth <server>
-  ensure_venv
-  exec jean-michel --mcp-auth "$@"
 }
 
 cmd_create_user() {
@@ -392,10 +384,6 @@ case "${COMMAND}" in
   --create-user)
     shift
     cmd_create_user "$@"
-    ;;
-  --mcp-auth)
-    shift
-    cmd_mcp_auth "$@"
     ;;
   "")
     cmd_cli
