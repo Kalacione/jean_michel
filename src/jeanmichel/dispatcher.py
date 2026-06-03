@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 from .config import DISPATCH_MODEL
@@ -122,6 +124,8 @@ def classify(
     llm: Any,
     model: str | None = None,
     history: list[dict[str, Any]] | None = None,
+    today: date | None = None,
+    default_location: str | None = None,
 ) -> DispatchDecision:
     """Classify a user request via the dispatcher LLM.
 
@@ -138,7 +142,7 @@ def classify(
     """
     chosen_model = model or DISPATCH_MODEL
     last_raw = ""
-    messages = _build_dispatcher_messages(user_text, history)
+    messages = _build_dispatcher_messages(user_text, history, today, default_location)
 
     for attempt in (1, 2):
         try:
@@ -187,17 +191,33 @@ _HISTORY_TURNS_FOR_DISPATCHER = 4  # last ~2 exchanges = enough for follow-ups
 
 
 def _build_dispatcher_messages(
-    user_text: str, history: list[dict[str, Any]] | None
+    user_text: str,
+    history: list[dict[str, Any]] | None,
+    today: date | None = None,
+    default_location: str | None = None,
 ) -> list[dict[str, Any]]:
     """Prepend a small slice of conversation history to the dispatcher prompt.
 
-    Strategy : keep the system prompt first, then the last N user/assistant
-    pairs (skipping tool messages and system messages from history), then
-    the current user_text. Tool noise would confuse the small 8b
-    classifier ; we want it to focus on the conversation thread.
+    Strategy : keep the system prompt first, then a deterministic ## Context
+    block (today's date + the user's default location — so the small no-thinking
+    LLM never has to compute a date or guess a city), then the last N
+    user/assistant pairs (skipping tool/system messages), then the current
+    user_text. Tool noise would confuse the small 8b classifier.
     """
+    system = DISPATCH_SYSTEM_PROMPT
+    context_lines: list[str] = []
+    if today is not None:
+        context_lines.append(f"Today is {today.strftime('%A')}, {today.isoformat()}.")
+    if default_location:
+        context_lines.append(
+            f"Default location: {default_location}. Use it whenever the user "
+            "does not name a place (omit `location`)."
+        )
+    if context_lines:
+        system = f"{system}\n\n## Context\n" + "\n".join(context_lines)
+
     out: list[dict[str, Any]] = [
-        {"role": "system", "content": DISPATCH_SYSTEM_PROMPT},
+        {"role": "system", "content": system},
     ]
     if history:
         # Keep only user + assistant turns (drop system, tool messages with
@@ -295,6 +315,7 @@ def execute_alexa(
     user_lang: str = "en",
     model: str | None = None,
     user_profile: Any = None,
+    today: date | None = None,
 ) -> str:
     """Execute an ALEXA decision and return a formatted user-facing string.
 
@@ -320,6 +341,16 @@ def execute_alexa(
     # empty args ("quelle heure est-il ?" with no place mentioned).
     args = _enrich_args_from_profile(decision.tool, decision.args, user_profile)
 
+    # Weather: the LLM copied the user's day word into `when` (verbatim, no
+    # date math). Resolve it to a forecast offset deterministically here.
+    forecast_offset: int | None = None
+    if decision.tool == "weather" and "when" in args:
+        when_word = args.pop("when")  # always strip: not a weather tool param
+        forecast_offset = _resolve_when(str(when_word or ""), today)
+        if forecast_offset and forecast_offset >= 1:
+            args["mode"] = "forecast"
+            args["forecast_days"] = forecast_offset + 1
+
     # --- Step 1 : invoke the native tool -----------------------------------
     try:
         result_json = _invoke_tool(decision.tool, args)
@@ -336,6 +367,11 @@ def execute_alexa(
 
     if not isinstance(data, dict):
         data = {"error": "tool_output_invalid", "summary": str(data)[:300]}
+
+    # Trim the multi-day forecast to the requested day so the formatter (and the
+    # English summary) speak about that day, not "N-day forecast".
+    if forecast_offset and forecast_offset >= 1 and today is not None and "error" not in data:
+        _focus_forecast_day(data, forecast_offset, today)
 
     # --- Step 2 : format in user_lang --------------------------------------
     if "error" in data:
@@ -398,6 +434,79 @@ def _profile_location(user_profile: Any) -> str:
     country = (getattr(user_profile, "country", "") or "").strip()
     parts = [p for p in (city, country) if p]
     return ", ".join(parts)
+
+
+# Weekday names (EN + FR) → Monday=0 … Sunday=6, for resolving the LLM's
+# verbatim `when` word into a forecast offset WITHOUT any LLM date math.
+_WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+    "lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3,
+    "vendredi": 4, "samedi": 5, "dimanche": 6,
+}
+# Relative terms → days ahead. Checked longest-first so "apresdemain" wins over
+# "demain". All accent/space/punctuation-stripped (see _norm_when).
+_RELATIVE_WHEN = {
+    "aftertomorrow": 2, "apresdemain": 2,
+    "tomorrow": 1, "demain": 1,
+    "today": 0, "tonight": 0, "now": 0, "thisevening": 0, "thismorning": 0,
+    "thisafternoon": 0, "aujourdhui": 0, "cesoir": 0, "maintenant": 0,
+    "cematin": 0, "cetapresmidi": 0,
+}
+
+
+def _norm_when(when: str) -> str:
+    """Lowercase, strip accents, keep only [a-z0-9] (drops spaces/'/-)."""
+    folded = unicodedata.normalize("NFKD", when.lower())
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return "".join(c for c in folded if c.isalnum())
+
+
+def _resolve_when(when: str, today: date | None) -> int | None:
+    """Map a verbatim day word ('thursday', 'jeudi soir', 'demain') to a
+    forecast offset in days (0 = today). None if unresolvable → current weather."""
+    if not when or today is None:
+        return None
+    key = _norm_when(when)
+    if not key:
+        return None
+    for rel in sorted(_RELATIVE_WHEN, key=len, reverse=True):
+        if rel in key:
+            return _RELATIVE_WHEN[rel]
+    for name, wd in _WEEKDAYS.items():
+        if name in key:  # substring covers "jeudisoir", "thursdayevening"
+            return (wd - today.weekday()) % 7
+    return None
+
+
+def _focus_forecast_day(data: dict[str, Any], offset: int, today: date) -> None:
+    """Trim a multi-day forecast (data['daily']) to the requested day in place,
+    annotate it, and rebuild a focused one-line summary (used as-is on the
+    English templatable path)."""
+    daily = data.get("daily")
+    if not isinstance(daily, dict):
+        return
+    times = daily.get("time") or []
+    if offset >= len(times):  # forecast didn't reach that day
+        return
+    one = {k: (v[offset] if isinstance(v, list) and offset < len(v) else None)
+           for k, v in daily.items()}
+    data["daily"] = {k: ([v[offset]] if isinstance(v, list) and offset < len(v) else v)
+                     for k, v in daily.items()}
+    target = today + timedelta(days=offset)
+    data["requested_day"] = target.strftime("%A %Y-%m-%d")
+
+    loc = (data.get("location") or {}).get("name", "")
+    wc = one.get("weather_code")
+    descs = data.get("wmo_descriptions") or {}
+    cond = descs.get(str(wc)) or descs.get(wc) or "" if wc is not None else ""
+    tmin, tmax = one.get("temperature_2m_min"), one.get("temperature_2m_max")
+    bits = [target.strftime("%A")]
+    if tmin is not None and tmax is not None:
+        bits.append(f"{tmin}–{tmax}°C")
+    if cond:
+        bits.append(str(cond))
+    data["summary"] = f"{loc}: " + ", ".join(bits) if loc else ", ".join(bits)
 
 
 def _invoke_tool(tool: str, args: dict[str, Any]) -> str:

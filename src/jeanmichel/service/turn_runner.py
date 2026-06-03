@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -127,11 +128,27 @@ def run_turn(
     # title/metadata above, which intentionally use the clean text).
     user_text = user_text + _attachment_note(attachments, mode)
 
+    # Deterministic context for the small no-thinking dispatcher : today's date
+    # (so a day word like "thursday"/"jeudi" can be resolved later) and the
+    # user's default location (so it doesn't hallucinate a city from the
+    # request language). The LLM never computes dates or guesses places.
+    today = date.today()
+    default_location = ", ".join(
+        p for p in (getattr(profile, "city", "") or "", getattr(profile, "country", "") or "")
+        if p.strip()
+    )
+
     # Tier 0 : dispatch. In chat / vocal modes the small dispatcher LLM sees
     # the conversation history to resolve follow-ups ("et pour demain ?").
     # In analyse mode each question is standalone — the documented contract.
     dispatcher_history = initial_messages if mode in ("chat", "vocal", "code") else None
-    decision = dispatcher.classify(user_text, dispatch_llm, history=dispatcher_history)
+    decision = dispatcher.classify(
+        user_text,
+        dispatch_llm,
+        history=dispatcher_history,
+        today=today,
+        default_location=default_location or None,
+    )
 
     if on_dispatch is not None:
         on_dispatch(decision)
@@ -146,6 +163,7 @@ def run_turn(
             dispatch_llm,
             user_lang=user_lang,
             user_profile=profile,
+            today=today,
         )
         # Persist the exchange so every turn — not just DEEP ones — is real
         # history and gets a snapshot at end-of-turn.

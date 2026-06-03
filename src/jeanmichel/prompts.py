@@ -49,14 +49,16 @@ in `intent`.
 
 intent="alexa" when ONE tool from the list can satisfy the request directly:
   - clock              : current time / date
-        args: {"location": "<city>"} when the user names a place
-              (e.g. "Paris", "Tokyo, Japan"). Omit args for the user's
-              own local time — the orchestrator fills it from the profile.
-  - weather            : current weather or forecast at a location
-        args: {"location": "<city>"} when the user names a place
-              (e.g. "Paris", "Tokyo, Japan"). Omit args for weather
-              at the user's own location — the orchestrator fills it
-              from the profile.
+        args: OMIT entirely for the user's own location (the default in
+              Context is used). Set {"location": "<city>"} ONLY if the user
+              names a different place.
+  - weather            : current conditions or a forecast
+        args:
+          - "location": OMIT it unless the user names a place different from
+            the default in Context. Do not guess a city.
+          - "when": if the user mentions a day or time ("tonight", "tomorrow",
+            "this weekend", "thursday", "jeudi"…), copy that word VERBATIM.
+            NEVER compute a date. Omit "when" for current weather.
   - wikipedia_search   : single factual lookup (definition, dates, identity)
         args: {"query": "<entity name>"}
 
