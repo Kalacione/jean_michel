@@ -336,8 +336,9 @@ def execute_alexa(
         raise ValueError(f"Unknown ALEXA tool: {decision.tool!r}")
 
     # Inject profile-derived location for `clock`/`weather` when the LLM emitted
-    # no location ("quelle heure est-il ?" / "la météo ?"). The `when` arg (an
-    # English day phrase) is forwarded as-is — the weather tool resolves it.
+    # no location ("quelle heure est-il ?" / "la météo ?"). The `when` arg (a
+    # relative day phrase, FR or EN, copied verbatim by the dispatcher) is
+    # forwarded as-is — the weather tool resolves it deterministically.
     args = _enrich_args_from_profile(decision.tool, decision.args, user_profile)
 
     # --- Step 1 : invoke the native tool -----------------------------------

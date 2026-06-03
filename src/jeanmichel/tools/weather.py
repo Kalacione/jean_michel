@@ -115,6 +115,50 @@ def _focus_day(result: dict, target_iso: str, display_name: str) -> str:
     return f"{display_name}: " + ", ".join(bits)
 
 
+def _focus_part_of_day(result: dict, target_iso: str, part: str, display_name: str) -> str:
+    """Slice result['hourly'] to the part-of-day window on target_iso (handling
+    the night wrap past midnight), annotate it, and return a focused summary."""
+    from collections import Counter
+
+    from ._temporal import PART_WINDOWS
+
+    hourly = result.get("hourly") or {}
+    times = hourly.get("time") or []
+    lo, hi = PART_WINDOWS[part]
+    next_iso = (date.fromisoformat(target_iso) + timedelta(days=1)).isoformat()
+
+    def _in_window(t: str) -> bool:
+        d, h = t[:10], int(t[11:13])
+        if lo < hi:  # same-day window
+            return d == target_iso and lo <= h < hi
+        return (d == target_iso and h >= lo) or (d == next_iso and h < hi)  # wraps midnight
+
+    idxs = [i for i, t in enumerate(times) if _in_window(t)]
+    if not idxs:  # window not covered by the fetched range → fall back to the whole day
+        idxs = [i for i, t in enumerate(times) if t[:10] == target_iso]
+    if not idxs:
+        return f"{display_name}: {part} on {target_iso}"
+
+    result["hourly"] = {k: [v[i] for i in idxs] for k, v in hourly.items() if isinstance(v, list)}
+    result["mode"] = "hourly"
+    result["requested_day"] = target_iso
+    result["requested_window"] = part
+
+    temps = [t for t in result["hourly"].get("temperature_2m", []) if t is not None]
+    codes = [int(c) for c in result["hourly"].get("weather_code", []) if c is not None]
+    pprob = [p for p in result["hourly"].get("precipitation_probability", []) if p is not None]
+    bits = [f"{date.fromisoformat(target_iso).strftime('%A')} {part}"]
+    if temps:
+        bits.append(f"{min(temps)}–{max(temps)}°C")
+    if codes:
+        cond = _WMO_CODES.get(Counter(codes).most_common(1)[0][0], "")
+        if cond:
+            bits.append(cond)
+    if pprob:
+        bits.append(f"precip ≤{max(pprob)}%")
+    return f"{display_name}: " + ", ".join(bits)
+
+
 def _handler(
     location: str,
     mode: str = "current",
@@ -123,17 +167,25 @@ def _handler(
     timezone: str = "auto",
     when: str | None = None,
 ) -> str:
-    # --- Resolve a relative day word ("tomorrow", "thursday", "in 3 days") --
-    # English only (internal mechanics are English) → a forecast day to focus.
+    # --- Resolve an ENGLISH relative day phrase + optional part-of-day ------
+    # ("tomorrow", "thursday", "this evening", "tomorrow morning", "in 3 days").
+    # Internal mechanics are English. → a target day + optional hour window.
     target_date: str | None = None
+    part: str | None = None
     if when:
-        from ._temporal import resolve_when
+        from ._temporal import part_of_day, resolve_when
         offset = resolve_when(when)
-        if offset is not None and 1 <= offset <= 15:
+        part = part_of_day(when)
+        if part:
+            # Part-of-day → focus the hourly on those hours, on the resolved day
+            # (or today when no day was named, e.g. "this evening").
+            day_off = offset if (offset is not None and 0 <= offset <= 15) else 0
+            target_date = (date.today() + timedelta(days=day_off)).isoformat()
+        elif offset is not None and 1 <= offset <= 15:
+            # A plain future day (no part) → daily forecast focused on that day.
+            target_date = (date.today() + timedelta(days=offset)).isoformat()
             mode = "forecast"
             forecast_days = max(forecast_days, offset + 1)
-            target_date = (date.today() + timedelta(days=offset)).isoformat()
-        # offset 0 (today) / out of range / unparseable → leave mode as current
 
     # --- Resolve coordinates ------------------------------------------------
     m = _LAT_LON_RE.match(location.strip())
@@ -155,7 +207,20 @@ def _handler(
         "timezone": timezone,
     }
 
-    if mode == "current":
+    if part and target_date:
+        # Part-of-day → fetch the target day's hourly (+ next day if the window
+        # wraps midnight, e.g. night 23:00–05:00) ; we slice it after the fetch.
+        from ._temporal import PART_WINDOWS
+        lo, hi = PART_WINDOWS[part]
+        end_date = (
+            target_date if lo < hi
+            else (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
+        )
+        params["hourly"] = "temperature_2m,apparent_temperature,precipitation_probability,weather_code"
+        params["start_date"] = target_date
+        params["end_date"] = end_date
+
+    elif mode == "current":
         params["current"] = ",".join([
             "temperature_2m", "relative_humidity_2m", "apparent_temperature",
             "precipitation", "weather_code", "cloud_cover",
@@ -211,7 +276,10 @@ def _handler(
     result["wmo_descriptions"] = _extract_wmo_descriptions(raw)
 
     # Build a short human summary for the plan log.
-    if target_date and isinstance(result.get("daily"), dict):
+    if part and target_date and isinstance(result.get("hourly"), dict):
+        # `when` named a part of day → slice the hourly to that window.
+        summary = _focus_part_of_day(result, target_date, part, display_name)
+    elif target_date and isinstance(result.get("daily"), dict):
         # `when` requested a specific day → trim the forecast to it.
         summary = _focus_day(result, target_date, display_name)
     elif mode == "current" and "current" in raw:
@@ -290,11 +358,12 @@ SPEC = ToolSpec(
             "when": {
                 "type": "string",
                 "description": (
-                    "An ENGLISH relative day phrase for a single forecast day: "
-                    "'tomorrow', 'tonight', 'thursday', 'next monday', 'this weekend', "
-                    "'in 3 days', 'june 10'. Resolved to a date internally (no date "
-                    "math needed by the caller). Omit for current conditions. "
-                    "Express it in English even if the user spoke another language."
+                    "A relative day and/or part-of-day phrase, French or English, "
+                    "copied from the user: 'tomorrow', 'ce soir', 'demain matin', "
+                    "'jeudi soir', 'next monday', 'this weekend', 'in 3 days', "
+                    "'june 10'. A part of day (morning/midday/afternoon/evening/"
+                    "night) focuses the result on those hours. Resolved internally "
+                    "(no date math, no translation needed). Omit for current conditions."
                 ),
             },
         },

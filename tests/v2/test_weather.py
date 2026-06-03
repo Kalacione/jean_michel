@@ -50,3 +50,64 @@ def test_no_when_is_unchanged(monkeypatch):
     out = json.loads(weather._handler(location="Montreal"))
     assert out["mode"] == "current"
     assert "requested_date" not in out
+
+
+def _fake_hourly(monkeypatch):
+    """Stub hourly covering today + tomorrow, 24h each, so part-of-day windows
+    (incl. the night wrap past midnight) have data to slice. Captures the query
+    params so the test can assert start_date/end_date were requested."""
+    base = date.today()
+    captured: dict = {}
+    times, t2m, pp, wc = [], [], [], []
+    for d in (base, base + timedelta(days=1)):
+        for h in range(24):
+            times.append(f"{d.isoformat()}T{h:02d}:00")
+            t2m.append(10 + h % 10)
+            pp.append(h * 2 % 100)
+            wc.append(2 if 18 <= h < 23 else 0)
+    raw = {
+        "utc_offset_seconds": -14400,
+        "timezone": "America/Montreal",
+        "hourly": {
+            "time": times, "temperature_2m": t2m, "apparent_temperature": t2m,
+            "precipitation_probability": pp, "weather_code": wc,
+        },
+    }
+
+    def _capture(url):
+        captured["url"] = url
+        return raw
+
+    monkeypatch.setattr(weather, "_geocode_openmeteo", lambda n: (45.5, -73.6, "Montreal"))
+    monkeypatch.setattr(weather, "_http_get_json", _capture)
+    return base, captured
+
+
+def test_when_evening_slices_the_part_window(monkeypatch):
+    base, captured = _fake_hourly(monkeypatch)
+    out = json.loads(weather._handler(location="Montreal", when="this evening"))
+    assert out["mode"] == "hourly"
+    assert out["requested_window"] == "evening"
+    assert out["requested_day"] == base.isoformat()
+    hours = [int(t[11:13]) for t in out["hourly"]["time"]]
+    assert hours == [18, 19, 20, 21, 22]              # evening window (18–22)
+    assert "Montreal" in out["summary"]
+    # same-day window → single-day fetch
+    assert f"start_date={base.isoformat()}" in captured["url"]
+    assert f"end_date={base.isoformat()}" in captured["url"]
+
+
+def test_when_night_wraps_to_next_day(monkeypatch):
+    base, captured = _fake_hourly(monkeypatch)
+    out = json.loads(weather._handler(location="Montreal", when="tomorrow night"))
+    assert out["requested_window"] == "night"
+    tomorrow = (base + timedelta(days=1)).isoformat()
+    day_after = (base + timedelta(days=2)).isoformat()
+    assert out["requested_day"] == tomorrow
+    # night wraps midnight → fetch spans tomorrow..day-after
+    assert f"start_date={tomorrow}" in captured["url"]
+    assert f"end_date={day_after}" in captured["url"]
+    # only the 23:00 slot exists in the (2-day) stub, but it is the right one
+    pairs = [(t[:10], int(t[11:13])) for t in out["hourly"]["time"]]
+    assert (tomorrow, 23) in pairs
+    assert all(d == tomorrow and h >= 23 for d, h in pairs)
