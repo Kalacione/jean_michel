@@ -24,6 +24,9 @@ dependencies = [
   "piper-tts>=1.4.0",
   # SQLite browser (run: sqlite_web jeanmichel.db)
   "sqlite-web>=0.6.0",
+  # Relative-date parsing (FR/EN) for the weather `when` arg — deterministic,
+  # offline ; resolves "tomorrow"/"next monday"/"thursday" → a date.
+  "dateparser>=1.2.0",
 ]
 
 [project.optional-dependencies]

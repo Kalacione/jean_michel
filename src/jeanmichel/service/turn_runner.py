@@ -163,7 +163,6 @@ def run_turn(
             dispatch_llm,
             user_lang=user_lang,
             user_profile=profile,
-            today=today,
         )
         # Persist the exchange so every turn — not just DEEP ones — is real
         # history and gets a snapshot at end-of-turn.

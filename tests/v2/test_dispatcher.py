@@ -11,8 +11,6 @@ from jeanmichel.dispatcher import (
     _ALEXA_TOOLS,
     DispatchDecision,
     _build_dispatcher_messages,
-    _focus_forecast_day,
-    _resolve_when,
     classify,
     detect_language,
     execute_alexa,
@@ -731,45 +729,12 @@ def test_execute_alexa_weather_partial_profile_uses_what_it_has(monkeypatch):
     assert captured.get("location") == "Reykjavík"
 
 
-# ---- ALEXA context + `when` resolution (small no-thinking LLM helpers) ----
-
-
-def test_resolve_when_weekdays_and_relatives():
-    tue = date(2026, 6, 2)  # Tuesday
-    assert _resolve_when("thursday", tue) == 2
-    assert _resolve_when("jeudi", tue) == 2
-    assert _resolve_when("jeudi soir", tue) == 2      # substring, accents/space ignored
-    assert _resolve_when("demain", tue) == 1
-    assert _resolve_when("tomorrow", tue) == 1
-    assert _resolve_when("après-demain", tue) == 2    # longest-first beats "demain"
-    assert _resolve_when("ce soir", tue) == 0
-    assert _resolve_when("mardi", tue) == 0           # the weekday that IS today
-    assert _resolve_when("la semaine prochaine", tue) is None
-    assert _resolve_when("", tue) is None
-    assert _resolve_when("jeudi", None) is None       # no today → unresolvable
-
-
-def test_focus_forecast_day_trims_and_summarizes():
-    today = date(2026, 6, 2)
-    data = {
-        "location": {"name": "Montreal"},
-        "daily": {
-            "time": ["2026-06-02", "2026-06-03", "2026-06-04"],
-            "temperature_2m_min": [10, 11, 12],
-            "temperature_2m_max": [20, 21, 22],
-            "weather_code": [3, 61, 2],
-        },
-        "wmo_descriptions": {"2": "partly cloudy"},
-    }
-    _focus_forecast_day(data, 2, today)
-    assert data["daily"]["time"] == ["2026-06-04"]
-    assert data["requested_day"] == "Thursday 2026-06-04"
-    assert "Thursday" in data["summary"] and "partly cloudy" in data["summary"]
+# ---- ALEXA context injection + `when` forwarding ------------------------
 
 
 def test_dispatcher_context_block_injected():
     msgs = _build_dispatcher_messages(
-        "météo jeudi", None, date(2026, 6, 2), "Montréal, Canada"
+        "weather thursday", None, date(2026, 6, 2), "Montréal, Canada"
     )
     system = msgs[0]["content"]
     assert "## Context" in system
@@ -781,50 +746,21 @@ def test_classify_forwards_context_to_llm():
     mock = MockClient(
         script=[LLMResponse(thinking="", content='{"intent":"alexa","tool":"weather","args":{}}')]
     )
-    classify("météo jeudi", mock, today=date(2026, 6, 2), default_location="Montréal, Canada")
+    classify("weather thursday", mock, today=date(2026, 6, 2), default_location="Montréal, Canada")
     system = mock.calls_v2[0]["messages"][0]["content"]
     assert "Default location: Montréal, Canada" in system
     assert "Today is Tuesday" in system
 
 
-def test_execute_alexa_weather_when_resolves_to_forecast(monkeypatch):
-    """`when='jeudi'` → forecast mode + the right number of days, `when` stripped,
-    and the answer is focused on that day (no date math by the LLM)."""
-    captured: dict = {}
-
-    def _fake_weather(**kwargs):
-        captured.update(kwargs)
-        return json.dumps({
-            "summary": "Montreal: 3-day forecast",
-            "location": {"name": "Montreal"},
-            "daily": {
-                "time": ["2026-06-02", "2026-06-03", "2026-06-04"],
-                "temperature_2m_min": [10, 11, 12],
-                "temperature_2m_max": [20, 21, 22],
-                "weather_code": [3, 61, 2],
-            },
-            "wmo_descriptions": {"2": "partly cloudy"},
-        })
-
-    monkeypatch.setattr("jeanmichel.dispatcher._weather_handler", _fake_weather)
-    decision = DispatchDecision(intent="alexa", tool="weather", args={"when": "jeudi"})
-    out = execute_alexa(decision, MockClient(script=[]), user_lang="en", today=date(2026, 6, 2))
-
-    assert captured.get("mode") == "forecast"
-    assert captured.get("forecast_days") == 3          # offset 2 + 1
-    assert "when" not in captured                       # not a weather tool param
-    assert "Thursday" in out                            # focused on the requested day
-
-
-def test_execute_alexa_weather_when_current_when_no_offset(monkeypatch):
-    """`when='ce soir'` (offset 0) stays current; `when` is still stripped."""
+def test_execute_alexa_forwards_when_to_weather(monkeypatch):
+    """The dispatcher forwards `when` verbatim to the weather tool — the tool
+    resolves the date now (no resolution glue left in the dispatcher)."""
     captured: dict = {}
     monkeypatch.setattr(
         "jeanmichel.dispatcher._weather_handler",
-        lambda **k: (captured.update(k), '{"summary":"Montreal: 14C clear"}')[1],
+        lambda **k: (captured.update(k), '{"summary": "Montreal: Thursday, 12-22C"}')[1],
     )
-    decision = DispatchDecision(intent="alexa", tool="weather", args={"when": "ce soir"})
-    out = execute_alexa(decision, MockClient(script=[]), user_lang="en", today=date(2026, 6, 2))
-    assert "mode" not in captured                        # stayed current
-    assert "when" not in captured
-    assert out == "Montreal: 14C clear"
+    decision = DispatchDecision(intent="alexa", tool="weather", args={"when": "thursday"})
+    out = execute_alexa(decision, MockClient(script=[]), user_lang="en")
+    assert captured.get("when") == "thursday"   # forwarded as-is to the tool
+    assert out == "Montreal: Thursday, 12-22C"

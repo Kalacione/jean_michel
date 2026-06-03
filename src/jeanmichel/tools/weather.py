@@ -10,7 +10,7 @@ import json
 import re
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from ._base import ToolSpec
 from ._errors import tool_error
@@ -83,13 +83,58 @@ def _extract_wmo_descriptions(data: dict) -> dict[str, str]:
 # Handler
 # ---------------------------------------------------------------------------
 
+def _focus_day(result: dict, target_iso: str, display_name: str) -> str:
+    """Trim result['daily'] to the requested day (match by date ; fall back to the
+    nearest available day), set result['requested_date'], return a focused summary."""
+    daily = result.get("daily") or {}
+    times = daily.get("time") or []
+    if not times:
+        return f"{display_name}: forecast for {target_iso}"
+    if target_iso in times:
+        idx = times.index(target_iso)
+    else:  # tz off-by-one or out of window → nearest available day
+        idx = min(
+            range(len(times)),
+            key=lambda i: abs((date.fromisoformat(times[i]) - date.fromisoformat(target_iso)).days),
+        )
+    result["daily"] = {
+        k: ([v[idx]] if isinstance(v, list) and idx < len(v) else v)
+        for k, v in daily.items()
+    }
+    day_iso = times[idx]
+    result["requested_date"] = day_iso
+    one = {k: (v[0] if isinstance(v, list) and v else None) for k, v in result["daily"].items()}
+    wc = one.get("weather_code")
+    cond = _WMO_CODES.get(int(wc), "") if wc is not None else ""
+    tmin, tmax = one.get("temperature_2m_min"), one.get("temperature_2m_max")
+    bits = [f"{date.fromisoformat(day_iso).strftime('%A')} {day_iso}"]
+    if tmin is not None and tmax is not None:
+        bits.append(f"{tmin}–{tmax}°C")
+    if cond:
+        bits.append(cond)
+    return f"{display_name}: " + ", ".join(bits)
+
+
 def _handler(
     location: str,
     mode: str = "current",
     forecast_days: int = 1,
     past_days: int = 1,
     timezone: str = "auto",
+    when: str | None = None,
 ) -> str:
+    # --- Resolve a relative day word ("tomorrow", "thursday", "in 3 days") --
+    # English only (internal mechanics are English) → a forecast day to focus.
+    target_date: str | None = None
+    if when:
+        from ._temporal import resolve_when
+        offset = resolve_when(when)
+        if offset is not None and 1 <= offset <= 15:
+            mode = "forecast"
+            forecast_days = max(forecast_days, offset + 1)
+            target_date = (date.today() + timedelta(days=offset)).isoformat()
+        # offset 0 (today) / out of range / unparseable → leave mode as current
+
     # --- Resolve coordinates ------------------------------------------------
     m = _LAT_LON_RE.match(location.strip())
     if m:
@@ -166,7 +211,10 @@ def _handler(
     result["wmo_descriptions"] = _extract_wmo_descriptions(raw)
 
     # Build a short human summary for the plan log.
-    if mode == "current" and "current" in raw:
+    if target_date and isinstance(result.get("daily"), dict):
+        # `when` requested a specific day → trim the forecast to it.
+        summary = _focus_day(result, target_date, display_name)
+    elif mode == "current" and "current" in raw:
         cur = raw["current"]
         temp = cur.get("temperature_2m")
         wc = cur.get("weather_code")
@@ -237,6 +285,16 @@ SPEC = ToolSpec(
                 "description": (
                     "IANA timezone name (e.g. 'America/Montreal'). "
                     "Default 'auto' resolves from coordinates."
+                ),
+            },
+            "when": {
+                "type": "string",
+                "description": (
+                    "An ENGLISH relative day phrase for a single forecast day: "
+                    "'tomorrow', 'tonight', 'thursday', 'next monday', 'this weekend', "
+                    "'in 3 days', 'june 10'. Resolved to a date internally (no date "
+                    "math needed by the caller). Omit for current conditions. "
+                    "Express it in English even if the user spoke another language."
                 ),
             },
         },

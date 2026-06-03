@@ -56,9 +56,10 @@ intent="alexa" when ONE tool from the list can satisfy the request directly:
         args:
           - "location": OMIT it unless the user names a place different from
             the default in Context. Do not guess a city.
-          - "when": if the user mentions a day or time ("tonight", "tomorrow",
-            "this weekend", "thursday", "jeudi"…), copy that word VERBATIM.
-            NEVER compute a date. Omit "when" for current weather.
+          - "when": if the user mentions a day or time, express it as an ENGLISH
+            phrase ("tonight", "tomorrow", "this weekend", "thursday",
+            "next monday", "in 3 days"). Translate to English even if the user
+            wrote in another language. NEVER compute a date. Omit for current weather.
   - wikipedia_search   : single factual lookup (definition, dates, identity)
         args: {"query": "<entity name>"}
 
