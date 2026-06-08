@@ -76,8 +76,8 @@ export const useConvStore = defineStore('conversations', () => {
     wsOpen.value = true
   }
 
-  async function create (mode) {
-    const c = await api.createConversation(mode)
+  async function create (mode, projectId = null) {
+    const c = await api.createConversation(mode, projectId)
     await refresh()
     await select(c.id)
     return c

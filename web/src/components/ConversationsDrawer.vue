@@ -1,21 +1,42 @@
 <template>
   <div class="d-flex flex-column fill-height">
-    <div class="pa-3 d-flex ga-2 align-center">
-      <v-select
-        v-model="mode"
-        density="compact"
-        hide-details
-        :items="['analyse', 'chat', 'vocal', 'code']"
-        label="Mode"
-        variant="outlined"
-      />
-      <v-btn
-        color="primary"
-        icon="mdi-plus"
-        :loading="creating"
-        title="Nouvelle conversation"
-        @click="create"
-      />
+    <div class="pa-3 d-flex flex-column ga-2">
+      <div class="d-flex ga-2 align-center">
+        <v-select
+          v-model="mode"
+          density="compact"
+          hide-details
+          :items="['analyse', 'chat', 'vocal', 'code']"
+          label="Mode"
+          variant="outlined"
+        />
+        <v-btn
+          color="primary"
+          icon="mdi-plus"
+          :loading="creating"
+          title="Nouvelle conversation"
+          @click="create"
+        />
+      </div>
+      <div class="d-flex ga-2 align-center">
+        <v-select
+          v-model="projectId"
+          clearable
+          density="compact"
+          hide-details
+          item-title="name"
+          item-value="id"
+          :items="projects.list"
+          label="Projet (optionnel)"
+          variant="outlined"
+        />
+        <v-btn
+          icon="mdi-folder-cog-outline"
+          title="Gérer les projets"
+          variant="text"
+          @click="projectsOpen = true"
+        />
+      </div>
     </div>
     <v-divider />
     <v-list class="flex-grow-1 overflow-y-auto" density="compact" nav>
@@ -49,18 +70,26 @@
   </div>
 
   <ConversationDetailsDialog v-model="detailsOpen" :item="selected" />
+  <ProjectsDialog v-model="projectsOpen" />
 </template>
 
 <script setup>
-  import { ref } from 'vue'
+  import { onMounted, ref } from 'vue'
   import ConversationDetailsDialog from '@/components/ConversationDetailsDialog.vue'
+  import ProjectsDialog from '@/components/ProjectsDialog.vue'
   import { useConvStore } from '@/stores/conversations'
+  import { useProjectStore } from '@/stores/projects'
 
   const conv = useConvStore()
+  const projects = useProjectStore()
   const mode = ref('chat')
+  const projectId = ref(null)
   const creating = ref(false)
   const detailsOpen = ref(false)
+  const projectsOpen = ref(false)
   const selected = ref(null)
+
+  onMounted(() => projects.refresh())
 
   function openDetails (c) {
     selected.value = c
@@ -70,7 +99,7 @@
   async function create () {
     creating.value = true
     try {
-      await conv.create(mode.value)
+      await conv.create(mode.value, projectId.value ?? null)
     } finally {
       creating.value = false
     }

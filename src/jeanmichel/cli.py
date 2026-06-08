@@ -387,6 +387,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Conversation mode (default: analyse).",
     )
     parser.add_argument(
+        "--project",
+        metavar="CODE",
+        default=None,
+        help="Attach the new conversation to a project (by code). Its scope='project' "
+        "memory is then injected each turn. Created on first use if absent.",
+    )
+    parser.add_argument(
         "--resume",
         nargs="?",
         const="__last__",
@@ -448,6 +455,27 @@ def _list_conv_and_exit(console: Console) -> int:
     return 0
 
 
+def _resolve_cli_project(code: str, console: Console) -> int | None:
+    """Resolve a project by ``code`` for the cli user, creating it if absent.
+
+    Returns the project id, or None on any error (project attachment is
+    best-effort — it must never block starting a conversation)."""
+    from .service import project as project_svc
+
+    try:
+        with db.connect() as conn:
+            uid = db.cli_user_id(conn)
+            existing = db.get_project_by_code(conn, uid, code)
+            if existing is not None:
+                return existing["id"]
+            proj = project_svc.create(conn, user_id=uid, code=code, name=code)
+            console.print(f"[dim]Created project '{code}'.[/]")
+            return proj["id"]
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]project '{code}' skipped: {exc}[/]")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -503,7 +531,12 @@ def main(argv: list[str] | None = None) -> int:
         initial_messages = persistence.load_messages(conv_folder)
         console.print(f"[dim]Resumed conversation {conv_id[:12]} (mode: {conv_mode})[/]\n")
     else:
-        conv_id, conv_folder = conversation_svc.create_conversation(args.mode)
+        project_id = _resolve_cli_project(args.project, console) if args.project else None
+        conv_id, conv_folder = conversation_svc.create_conversation(
+            args.mode, project_id=project_id
+        )
+        if project_id is not None:
+            console.print(f"[dim]Project: {args.project}[/]\n")
 
     render_splash(console, args.main_model, args.dispatch_model, args.mode)
 

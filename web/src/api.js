@@ -50,9 +50,12 @@ export const api = {
   me: () => request('GET', '/auth/me'),
 
   listConversations: () => request('GET', '/conversations'),
-  createConversation: mode => request('POST', '/conversations', { mode }),
+  createConversation: (mode, projectId = null) =>
+    request('POST', '/conversations', { mode, project_id: projectId }),
   getConversation: id => request('GET', `/conversations/${id}`),
   renameConversation: (id, title) => request('PATCH', `/conversations/${id}`, { title }),
+  setConversationProject: (id, projectId) =>
+    request('PUT', `/conversations/${id}/project`, { project_id: projectId }),
   deleteConversation: id => request('DELETE', `/conversations/${id}`),
   messages: id => request('GET', `/conversations/${id}/messages`),
   events: id => request('GET', `/conversations/${id}/events`),
@@ -115,11 +118,38 @@ export const api = {
     return res.ok ? res.blob() : null
   },
 
-  listMemory: type => request('GET', `/memory${type ? `?type=${encodeURIComponent(type)}` : ''}`),
-  recallMemory: (type, code) => request('GET', `/memory/${type}/${code}`),
+  // Memory is scope-based (world/user/project/tool). project/tool targets pass
+  // their key as a query param ; user/world need none.
+  listMemory: (scope, params = {}) => {
+    const q = new URLSearchParams()
+    if (scope) q.set('scope', scope)
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, v)
+    const qs = q.toString()
+    return request('GET', `/memory${qs ? `?${qs}` : ''}`)
+  },
+  searchMemory: (query, params = {}) => {
+    const q = new URLSearchParams({ q: query })
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, v)
+    return request('GET', `/memory/search?${q.toString()}`)
+  },
+  recallMemory: (scope, code, params = {}) => {
+    const q = new URLSearchParams(params)
+    const qs = q.toString()
+    return request('GET', `/memory/${scope}/${code}${qs ? `?${qs}` : ''}`)
+  },
   saveMemory: entry => request('POST', '/memory', entry),
-  updateMemory: (type, code, patch) => request('PATCH', `/memory/${type}/${code}`, patch),
-  deleteMemory: (type, code) => request('DELETE', `/memory/${type}/${code}`),
+  updateMemory: (scope, code, patch) => request('PATCH', `/memory/${scope}/${code}`, patch),
+  deleteMemory: (scope, code, params = {}) => {
+    const q = new URLSearchParams(params)
+    const qs = q.toString()
+    return request('DELETE', `/memory/${scope}/${code}${qs ? `?${qs}` : ''}`)
+  },
+
+  listProjects: (includeArchived = true) =>
+    request('GET', `/projects?include_archived=${includeArchived ? 'true' : 'false'}`),
+  createProject: project => request('POST', '/projects', project),
+  updateProject: (id, patch) => request('PATCH', `/projects/${id}`, patch),
+  deleteProject: id => request('DELETE', `/projects/${id}`),
 
   getProfile: () => request('GET', '/profile'),
   updateProfile: patch => request('PATCH', '/profile', patch),

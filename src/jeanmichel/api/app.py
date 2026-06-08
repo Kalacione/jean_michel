@@ -49,6 +49,7 @@ def create_app() -> Any:
     from ..config import UserProfile
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
+    from ..service import project as project_svc
     from ..service import workspace as workspace_svc
     from . import auth, executor
 
@@ -70,9 +71,23 @@ def create_app() -> Any:
 
     class CreateConversationRequest(BaseModel):
         mode: str = "analyse"
+        project_id: int | None = None
 
     class ConversationRename(BaseModel):
         title: str
+
+    class ConversationProject(BaseModel):
+        project_id: int | None = None  # None → detach
+
+    class ProjectSaveRequest(BaseModel):
+        code: str
+        name: str
+        description: str = ""
+
+    class ProjectUpdateRequest(BaseModel):
+        name: str | None = None
+        description: str | None = None
+        status: str | None = None
 
     class SnapshotRef(BaseModel):
         commit: str
@@ -129,10 +144,19 @@ def create_app() -> Any:
     ) -> dict[str, Any]:
         if body.mode not in ("analyse", "chat", "vocal", "code"):
             raise HTTPException(status_code=422, detail="invalid mode")
-        conv_id, _folder = conversation_svc.create_conversation(body.mode)
+        if body.project_id is not None:
+            # Only attach to a project the caller owns.
+            with db.connect() as conn:
+                try:
+                    project_svc.get_owned(conn, user_id=user["id"], project_id=body.project_id)
+                except project_svc.ProjectOpError as exc:
+                    raise HTTPException(status_code=404, detail=exc.message) from exc
+        conv_id, _folder = conversation_svc.create_conversation(
+            body.mode, project_id=body.project_id
+        )
         with db.connect() as conn:
             db.associate_conversation_user(conn, user["id"], conv_id)
-        return {"id": conv_id, "mode": body.mode, "status": "active"}
+        return {"id": conv_id, "mode": body.mode, "status": "active", "project_id": body.project_id}
 
     @app.get("/api/conversations")
     def list_conversations(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
@@ -148,6 +172,7 @@ def create_app() -> Any:
             "mode": conv["mode"],
             "status": conv["status"],
             "user_language": conv["user_language"],
+            "project_id": conv["project_id"],
             "created_at": conv["created_at"],
             "modified_at": conv["modified_at"],
         }
@@ -162,6 +187,23 @@ def create_app() -> Any:
         with db.connect() as conn:
             db.rename_conversation(conn, conv["id"], title)
         return {"id": conv["id"], "title": title}
+
+    @app.put("/api/conversations/{conversation_id}/project")
+    def set_conversation_project_route(
+        body: ConversationProject,
+        conv: Any = Depends(auth.require_conversation_owner),
+        user: dict = Depends(auth.current_user),
+    ) -> dict[str, Any]:
+        """Attach (project_id) or detach (null) a conversation to one of the
+        caller's projects. Takes effect on the next turn's prompt."""
+        with db.connect() as conn:
+            if body.project_id is not None:
+                try:
+                    project_svc.get_owned(conn, user_id=user["id"], project_id=body.project_id)
+                except project_svc.ProjectOpError as exc:
+                    raise HTTPException(status_code=404, detail=exc.message) from exc
+            db.set_conversation_project(conn, conv["id"], body.project_id)
+        return {"id": conv["id"], "project_id": body.project_id}
 
     @app.delete("/api/conversations/{conversation_id}", status_code=204)
     def delete_conversation(conv: Any = Depends(auth.require_conversation_owner)) -> Response:
@@ -311,6 +353,63 @@ def create_app() -> Any:
                 status_code=404 if exc.code == "not_found" else 400, detail=exc.message
             ) from exc
         return FileResponse(target, media_type=media_type)
+
+    # ---- projects (owner-scoped) -----------------------------------------
+    def _project_http(exc: project_svc.ProjectOpError) -> HTTPException:
+        status = {"already_exists": 409, "not_found": 404}.get(exc.code, 400)
+        return HTTPException(status_code=status, detail=exc.message)
+
+    @app.get("/api/projects")
+    def list_projects(
+        include_archived: bool = True, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        with db.connect() as conn:
+            return {"projects": project_svc.list_(conn, user_id=user["id"], include_archived=include_archived)}
+
+    @app.post("/api/projects", status_code=201)
+    def create_project(
+        body: ProjectSaveRequest, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                proj = project_svc.create(
+                    conn, user_id=user["id"], code=body.code, name=body.name,
+                    description=body.description,
+                )
+        except project_svc.ProjectOpError as exc:
+            raise _project_http(exc) from exc
+        return {"project": proj}
+
+    @app.get("/api/projects/{project_id}")
+    def get_project(project_id: int, user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                return {"project": project_svc.get_owned(conn, user_id=user["id"], project_id=project_id)}
+        except project_svc.ProjectOpError as exc:
+            raise _project_http(exc) from exc
+
+    @app.patch("/api/projects/{project_id}")
+    def update_project(
+        project_id: int, body: ProjectUpdateRequest, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                proj = project_svc.update(
+                    conn, user_id=user["id"], project_id=project_id,
+                    name=body.name, description=body.description, status=body.status,
+                )
+        except project_svc.ProjectOpError as exc:
+            raise _project_http(exc) from exc
+        return {"project": proj}
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project(project_id: int, user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                deleted = project_svc.delete(conn, user_id=user["id"], project_id=project_id)
+        except project_svc.ProjectOpError as exc:
+            raise _project_http(exc) from exc
+        return {"deleted_id": deleted}
 
     # ---- long-term memory (scope-aware ; auth-gated) ---------------------
     #

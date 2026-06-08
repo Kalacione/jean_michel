@@ -128,15 +128,18 @@ def load_delegation_targets(conn: sqlite3.Connection, agent_id: int) -> set[str]
 
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,
                         user_language: str | None, mode: str = "analyse",
-                        title: str | None = None) -> Conversation:
+                        title: str | None = None,
+                        project_id: int | None = None) -> Conversation:
     now = _now()
     conn.execute(
-        "INSERT INTO conversations (id, title, folder_path, user_language, status, mode, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, 'active', ?, ?, ?)",
-        (conv_id, title, folder_path, user_language, mode, now, now),
+        "INSERT INTO conversations (id, title, folder_path, user_language, status, mode, "
+        "project_id, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+        (conv_id, title, folder_path, user_language, mode, project_id, now, now),
     )
     return Conversation(id=conv_id, folder_path=folder_path,
-                        user_language=user_language, title=title, mode=mode)
+                        user_language=user_language, title=title, mode=mode,
+                        project_id=project_id)
 
 
 def update_conversation_language(conn: sqlite3.Connection, conv_id: str, language: str) -> None:
@@ -174,7 +177,7 @@ def list_active_conversations(conn: sqlite3.Connection, limit: int = 20) -> list
 
 def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite3.Row | None:
     """Look up a conversation by exact id or by id prefix."""
-    cols = "id, folder_path, mode, user_language, status, title, created_at, modified_at"
+    cols = "id, folder_path, mode, user_language, status, title, project_id, created_at, modified_at"
     row = conn.execute(
         f"SELECT {cols} FROM conversations WHERE id=?",
         (conv_id_or_prefix,),
@@ -316,6 +319,85 @@ def user_owns_conversation(
         (user_id, conversation_id),
     ).fetchone()
     return row is not None
+
+
+# ---- Projects (migrate_124) -----------------------------------------------
+
+_PROJECT_COLS = "id, user_id, code, name, description, status, created_at, modified_at"
+
+
+def create_project(
+    conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = ""
+) -> int:
+    """Insert a project owned by ``user_id``. Returns the new id.
+
+    Raises IntegrityError on a duplicate (user_id, code)."""
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO projects (user_id, code, name, description, status, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, 'active', ?, ?)",
+        (user_id, code, name, description, now, now),
+    )
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+def list_projects_for_user(
+    conn: sqlite3.Connection, user_id: int, *, include_archived: bool = True
+) -> list[sqlite3.Row]:
+    """Projects owned by ``user_id``, newest first. Active-only when asked."""
+    sql = f"SELECT {_PROJECT_COLS} FROM projects WHERE user_id=?"
+    if not include_archived:
+        sql += " AND status='active'"
+    sql += " ORDER BY modified_at DESC"
+    return conn.execute(sql, (user_id,)).fetchall()
+
+
+def get_project(conn: sqlite3.Connection, project_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        f"SELECT {_PROJECT_COLS} FROM projects WHERE id=?", (project_id,)
+    ).fetchone()
+
+
+def get_project_by_code(
+    conn: sqlite3.Connection, user_id: int, code: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        f"SELECT {_PROJECT_COLS} FROM projects WHERE user_id=? AND code=?", (user_id, code)
+    ).fetchone()
+
+
+def update_project(
+    conn: sqlite3.Connection, project_id: int, *,
+    name: str | None = None, description: str | None = None, status: str | None = None,
+) -> None:
+    """Update a project's mutable fields. Only provided fields are written."""
+    sets: list[str] = []
+    vals: list[object] = []
+    for col, val in (("name", name), ("description", description), ("status", status)):
+        if val is not None:
+            sets.append(f"{col}=?")
+            vals.append(val)
+    if not sets:
+        return
+    sets.append("modified_at=?")
+    vals.append(_now())
+    vals.append(project_id)
+    conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id=?", vals)
+
+
+def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
+    """Delete a project. Memory scope='project' cascades ; conversations.project_id
+    is set NULL (migrate_124). Requires PRAGMA foreign_keys=ON (set by ``connect``)."""
+    conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+
+
+def set_conversation_project(
+    conn: sqlite3.Connection, conv_id: str, project_id: int | None
+) -> None:
+    """Attach (or detach, with None) a conversation to a project."""
+    conn.execute(
+        "UPDATE conversations SET project_id=? WHERE id=?", (project_id, conv_id)
+    )
 
 
 # ---- Admin write helpers --------------------------------------------------

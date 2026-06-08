@@ -28,9 +28,12 @@ def make_conv_folder(conv_id: str) -> Path:
 
 
 def create_conversation(
-    mode: str, *, user_language: str | None = None
+    mode: str, *, user_language: str | None = None, project_id: int | None = None
 ) -> tuple[str, Path]:
-    """Create a new conversation (DB row + folder). Returns (conv_id, folder)."""
+    """Create a new conversation (DB row + folder). Returns (conv_id, folder).
+
+    ``project_id`` (optional) attaches the conversation to a project so its
+    scope='project' memory is injected for every turn."""
     conv_id = uuid.uuid4().hex
     conv_folder = make_conv_folder(conv_id)
     with db.connect() as conn:
@@ -40,6 +43,7 @@ def create_conversation(
             folder_path=str(conv_folder),
             user_language=user_language,
             mode=mode,
+            project_id=project_id,
         )
     # Init the per-conversation git repo (no-op unless snapshots are enabled).
     snapshot.init_repo(conv_folder, conv_id)

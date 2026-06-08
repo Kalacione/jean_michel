@@ -520,6 +520,59 @@ def test_memory_isolated_between_users(client):
     assert client.get("/api/memory/user/alice-secret", headers=_auth(tok_a)).status_code == 200
 
 
+# ---- Projects (owner-scoped) ----------------------------------------------
+
+
+def test_project_crud_via_api(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    # Create.
+    resp = client.post("/api/projects", json={"code": "jm", "name": "Jean-Michel"}, headers=_auth(token))
+    assert resp.status_code == 201, resp.text
+    pid = resp.json()["project"]["id"]
+    # Duplicate code → 409.
+    assert client.post("/api/projects", json={"code": "jm", "name": "x"}, headers=_auth(token)).status_code == 409
+    # List.
+    assert any(p["id"] == pid for p in client.get("/api/projects", headers=_auth(token)).json()["projects"])
+    # Update.
+    assert client.patch(f"/api/projects/{pid}", json={"status": "archived"}, headers=_auth(token)).status_code == 200
+    # Delete.
+    assert client.delete(f"/api/projects/{pid}", headers=_auth(token)).status_code == 200
+    assert client.get(f"/api/projects/{pid}", headers=_auth(token)).status_code == 404
+
+
+def test_projects_owner_scoped(client):
+    _make_user("alice", "pw")
+    _make_user("bob", "pw")
+    tok_a = _login(client, "alice", "pw")
+    tok_b = _login(client, "bob", "pw")
+    pid = client.post("/api/projects", json={"code": "secret", "name": "S"}, headers=_auth(tok_a)).json()["project"]["id"]
+    # Bob cannot see or touch Alice's project.
+    assert client.get(f"/api/projects/{pid}", headers=_auth(tok_b)).status_code == 404
+    assert client.patch(f"/api/projects/{pid}", json={"name": "n"}, headers=_auth(tok_b)).status_code == 404
+    assert not client.get("/api/projects", headers=_auth(tok_b)).json()["projects"]
+    assert client.get("/api/projects").status_code == 401  # auth required
+
+
+def test_conversation_project_attach(client):
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    pid = client.post("/api/projects", json={"code": "p", "name": "P"}, headers=_auth(token)).json()["project"]["id"]
+    # Create a conversation attached to the project.
+    conv = client.post("/api/conversations", json={"mode": "chat", "project_id": pid}, headers=_auth(token))
+    assert conv.status_code == 201
+    conv_id = conv.json()["id"]
+    assert client.get(f"/api/conversations/{conv_id}", headers=_auth(token)).json()["project_id"] == pid
+    # Detach.
+    assert client.put(f"/api/conversations/{conv_id}/project", json={"project_id": None}, headers=_auth(token)).status_code == 200
+    assert client.get(f"/api/conversations/{conv_id}", headers=_auth(token)).json()["project_id"] is None
+    # Attach to a foreign project → 404.
+    _make_user("bob", "pw")
+    tok_b = _login(client, "bob", "pw")
+    bob_pid = client.post("/api/projects", json={"code": "b", "name": "B"}, headers=_auth(tok_b)).json()["project"]["id"]
+    assert client.put(f"/api/conversations/{conv_id}/project", json={"project_id": bob_pid}, headers=_auth(token)).status_code == 404
+
+
 # ---- User profile (M3) ----------------------------------------------------
 
 

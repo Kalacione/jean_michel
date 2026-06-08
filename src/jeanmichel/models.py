@@ -36,6 +36,7 @@ class Conversation:
     user_language: str | None
     title: str | None = None
     mode: str = "analyse"
+    project_id: int | None = None  # migrate_124, nullable (0 or 1 project)
 
 
 @dataclass
