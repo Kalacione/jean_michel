@@ -2,8 +2,10 @@
 
 **Date** : 2026-06-08 · **Version testée** : graphify `0.8.35` · **Verdict : GO comme outil dev
 local** (extraction code-only déterministe + nommage des communautés 100 % local via Ollama,
-validés). **Étape 2 (tool MCP pour jean-michel) : VIABLE** — le serveur MCP HTTP existe bien
-(`python -m graphify.serve … --transport http`), juste pas exposé dans `--help`. Voir §Étape 2.
+validés). **Étape 2 (tool MCP pour jean-michel) : VALIDÉE end-to-end** — jean-michel découvre les 10
+outils `mcp__graphify__*`, ils lui sont grantés (catégorie `code`), et un appel réel
+`graph_stats` renvoie la structure du repo (Nodes 3750 / Edges 6111 / Communities 290).
+Déterministe, 100 % local, **zéro code cœur** (juste de la config). Voir §Étape 2.
 
 **Modèle Ollama retenu : `qwen2.5-coder:7b`** (installé). C'est le **défaut natif** du backend
 ollama de graphify (donc zéro override `OLLAMA_MODEL`), code-tuned : noms de communautés
@@ -116,31 +118,39 @@ graphify update .    # "re-extracting code files (no LLM needed)"
   opt-in. Voir la recette §Étape 2 ci-dessous. Pré-requis : paquet `mcp` dans l'env graphify.
 - **Étape 3 (codebase arbitraire)** : reste différée.
 
-## Étape 2 — recette de lancement (MCP HTTP, à valider)
+## Étape 2 — tool MCP pour jean-michel (✅ VALIDÉE)
 
+Câblage KISS, **zéro code cœur**. Port + token figés dans `.env`
+(`GRAPHIFY_MCP_PORT=8765`, `GRAPHIFY_MCP_TOKEN=graphify-local-dev`) et partagés par les deux
+côtés ; sécurité non critique (localhost). Auth confirmée compatible : `serve.py` accepte
+`Authorization: Bearer` (le défaut de notre `mcp_client`).
+
+Pré-requis (une fois) : `uv tool install "graphifyy[openai]" --with mcp --python 3.12`.
+
+Workflow 2 terminaux :
 ```bash
-# 1) ajouter le paquet mcp à l'env isolé de graphify
-uv tool install "graphifyy[openai]" --with mcp --python 3.12 --force
+# terminal A — construire (si besoin) puis servir le graphe en MCP HTTP
+./graphify.sh build       # ou: ./graphify.sh update   (graphe code, déterministe)
+./graphify.sh serve       # → http://127.0.0.1:8765/mcp  (port/token lus dans .env)
 
-# 2) (pré-requis) un graphe construit : graphify update .  (+ graphify label . pour les noms)
-
-# 3) servir le graphe en MCP Streamable HTTP, scopé à NOTRE repo, avec auth
-GRAPHIFY_API_KEY="$(openssl rand -hex 16)" \
-  python -m graphify.serve graphify-out/graph.json \
-    --transport http --host 127.0.0.1 --port 8080 --path /mcp --api-key "$GRAPHIFY_API_KEY"
+# terminal B — jean-michel ; le client MCP se connecte au démarrage
+./jm.sh --mode code
 ```
 
-Côté jean-michel (`mcp_servers.toml`, gitignoré ; plomberie MCP déjà en place) :
-```toml
-[servers.graphify]
-url = "http://127.0.0.1:8080/mcp"
-category = "code"            # => exposé à jean-michel + code-fetcher (mapping existant)
-auth_env = "GRAPHIFY_MCP_TOKEN"   # même valeur que GRAPHIFY_API_KEY ci-dessus
-```
-→ outils exposés en `mcp__graphify__{query_graph,get_node,get_neighbors,get_community,god_nodes,
-graph_stats,shortest_path,…}`, gatés par les grants existants. **À valider** : compat exacte du
-schéma d'auth (header) entre notre client MCP et `serve.py`, et fraîcheur du graphe (git hook
-`graphify hook install` ou `graphify update .` au commit).
+Config déjà en place : `[servers.graphify]` dans `mcp_servers.toml` (url `127.0.0.1:8765/mcp`,
+`category = "code"` → grantée à `jean-michel` + `code-fetcher`, `auth_env = "GRAPHIFY_MCP_TOKEN"`),
+et la même paire port/token dans `.env`. Serveur éteint ⇒ le client MCP no-op proprement.
+
+**Preuve (test de découverte + appel réel)** : jean-michel voit les 10 outils
+`mcp__graphify__{query_graph,get_node,get_neighbors,get_community,god_nodes,graph_stats,
+shortest_path,list_prs,get_pr_impact,triage_prs}`, et `graph_stats` renvoie
+`Nodes: 3750 / Edges: 6111 / Communities: 290 / EXTRACTED 92%`. Les requêtes tapent un
+`graph.json` pré-construit → **aucun LLM au runtime, déterministe**.
+
+Reste (qualité d'usage, pas blocage) : un **paradigme de routing** côté jean-michel/code-fetcher
+(« pour une question structurelle sur la codebase → outils `mcp__graphify__*` avant de grep »),
+et la **fraîcheur du graphe** (`graphify hook install` pour rebuild post-commit, ou `./graphify.sh
+update` à la demande).
 
 ## Commandes utiles
 ```bash
