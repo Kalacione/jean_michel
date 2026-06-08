@@ -132,7 +132,6 @@ def test_smoke_deep_simple_question(v2_db_for_smoke, tmp_path):
     from jeanmichel.config import UserProfile
     from jeanmichel.llm import OllamaClient
     from jeanmichel.orchestrator_v2 import load_agent_spec_v2, run_main_loop
-    from jeanmichel.prompts import render_user_memory_index
     from jeanmichel.tools import build_registry
 
     main_llm = OllamaClient()
@@ -146,13 +145,11 @@ def test_smoke_deep_simple_question(v2_db_for_smoke, tmp_path):
     conv_folder.mkdir()
 
     with db.connect() as conn:
-        user_memory_block, _ = render_user_memory_index(conn)
         agent = load_agent_spec_v2(
             conn,
             "jean-michel",
             mode="analyse",
             user_profile_text=UserProfile().render(),
-            user_memory_block=user_memory_block,
             user_language=user_lang,
         )
 
@@ -212,7 +209,6 @@ def test_smoke_code_mode_factorial(v2_db_for_smoke, tmp_path):
     from jeanmichel.config import CODE_MODEL, MODE_ROUTER_MODEL, UserProfile
     from jeanmichel.llm import OllamaClient
     from jeanmichel.orchestrator_v2 import load_agent_spec_v2, run_main_loop
-    from jeanmichel.prompts import render_user_memory_index
     from jeanmichel.tools import build_registry
 
     # The wiring under test : 'code' mode routes the main agent to CODE_MODEL.

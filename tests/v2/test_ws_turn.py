@@ -306,9 +306,9 @@ def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
                 content="",
                 tool_calls=[
                     ToolCall(
-                        name="manage_user_memory",
+                        name="manage_memory",
                         arguments={
-                            "action": "save", "type": "user", "code": "fav-lang",
+                            "action": "save", "scope": "user", "code": "fav-lang",
                             "title": "Fav lang", "description": "likes Rust",
                             "content": "The user likes Rust.",
                         },
@@ -332,12 +332,12 @@ def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
     with db_connect() as conn:
         alice_codes = {
             r["code"] for r in conn.execute(
-                "SELECT code FROM user_memory WHERE user_id=?", (alice_id,)
+                "SELECT code FROM memory WHERE scope='user' AND user_id=?", (alice_id,)
             )
         }
         cli_codes = {
             r["code"] for r in conn.execute(
-                "SELECT code FROM user_memory WHERE user_id=?", (db.cli_user_id(conn),)
+                "SELECT code FROM memory WHERE scope='user' AND user_id=?", (db.cli_user_id(conn),)
             )
         }
     assert "fav-lang" in alice_codes

@@ -22,7 +22,7 @@ from . import conv_history_scan as _conv_history_scan_mod
 from . import github as _github_mod
 from . import image_fetch as _image_fetch_mod
 from . import image_search as _image_search_mod
-from . import manage_user_memory as _manage_user_memory_mod
+from . import manage_memory as _manage_memory_mod
 from . import news as _news_mod
 from . import pypi as _pypi_mod
 from . import self_inspect_activity as _si_activity_mod
@@ -65,6 +65,7 @@ def build_registry(
     sandbox_image: str | None = None,
     agent_role: str = "",
     memory_user_id: int | None = None,
+    memory_project_id: int | None = None,
     vision_client: Any = None,
     extra_tools: list[ToolSpec] | None = None,
 ) -> dict[str, ToolSpec]:
@@ -84,8 +85,9 @@ def build_registry(
     ws_delfile_spec = _ws_delfile_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_deldir_spec = _ws_deldir_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     todo_write_spec = _todo_write_mod.make_spec(conv_folder)
-    # Bind user_memory to the current owner (None → reserved cli user).
-    mum_spec = _manage_user_memory_mod.make_spec(memory_user_id)
+    # Bind memory to the conversation context : owner (None → reserved cli user)
+    # + the conversation's project (None → no project ; project-scope notes denied).
+    mum_spec = _manage_memory_mod.make_spec(memory_user_id, memory_project_id)
     # Workspace-bound image tools : analyze_image reads the normalized derivative
     # and talks to a vision client (reuses the turn's main_llm when injected) ;
     # image_fetch downloads a web image into the workspace.

@@ -929,13 +929,17 @@ def load_agent_spec_v2(
     *,
     mode: str = "analyse",
     user_profile_text: str = "",
-    user_memory_block: str = "",
+    memory_user_id: int | None = None,
+    memory_project_id: int | None = None,
     user_language: str = "und",
 ) -> AgentSpec:
     """Build an `AgentSpec` from the DB (agent row + paradigms + grants + targets).
 
-    Caller (CLI / jm.sh) provides the pre-rendered user_memory index and the
-    user_profile text — the helper composes them into the system prompt.
+    The long-term memory block is rendered HERE (deterministically, by scope)
+    rather than by the caller : ``tool_codes`` for the tool-scope notes is the
+    agent's own ``tool_grants``, only known at this point. World + the user's
+    facts + the conversation's project + this agent's tool notes are composed
+    into the system prompt's ``## Human`` section.
 
     `model` resolution :
       1. `agents.model_override` if non-NULL (v2 per-agent override) ;
@@ -990,6 +994,16 @@ def load_agent_spec_v2(
             (r["code"], r["role"], r["mission"]) for r in target_rows
         ]
 
+    # Long-term memory : deterministic scope-driven inclusion. tool_codes = this
+    # agent's grants → tool-scope notes load automatically for whoever holds the
+    # tool (router AND subagents, since both pass through here).
+    memory_block, _ = _prompts.render_memory_block(
+        conn,
+        user_id=memory_user_id,
+        project_id=memory_project_id,
+        tool_codes=tool_grants,
+    )
+
     system_prompt = _prompts.render_system_prompt_v2(
         agent_code=row["code"],
         agent_name=row["name"],
@@ -997,7 +1011,7 @@ def load_agent_spec_v2(
         agent_mission=row["mission"],
         paradigms=paradigms,
         user_profile_text=user_profile_text,
-        user_memory_block=user_memory_block,
+        memory_block=memory_block,
         user_language=user_language,
         mode=mode,
         delegation_targets_meta=delegation_targets_meta,

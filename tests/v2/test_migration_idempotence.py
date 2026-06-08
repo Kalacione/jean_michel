@@ -60,6 +60,9 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_121_code_mode.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_122_workspace_file_ops.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_123_code_runner_node.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_124_projects.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_125_memory_scopes.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_126_memory_paradigms.sql")
     yield conn
     conn.close()
 
@@ -110,7 +113,8 @@ def test_v2_tables_are_present(v2_migrated_db):
         "categories",
         "paradigms",
         "paradigm_modes",
-        "user_memory",
+        "memory",
+        "projects",
     }
     missing = expected - tables
     assert missing == set(), f"missing v2 tables: {missing}"
@@ -140,35 +144,35 @@ def test_dead_tool_grants_removed(v2_migrated_db):
     assert rows == [], f"dead tool grants leaked: {[r['tool_code'] for r in rows]}"
 
 
-def test_manage_user_memory_granted_to_jean_michel(v2_migrated_db):
+def test_manage_memory_granted_to_jean_michel(v2_migrated_db):
     row = v2_migrated_db.execute(
         "SELECT 1 FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
-        "WHERE a.code = 'jean-michel' AND at.tool_code = 'manage_user_memory'"
+        "WHERE a.code = 'jean-michel' AND at.tool_code = 'manage_memory'"
     ).fetchone()
     assert row is not None
 
 
-def test_user_memory_indices_present(v2_migrated_db):
+def test_memory_indices_present(v2_migrated_db):
     indices = {
         r["name"]
         for r in v2_migrated_db.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='user_memory'"
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory'"
         ).fetchall()
     }
-    assert "idx_user_memory_type" in indices
-    assert "idx_user_memory_modified" in indices
+    # Partial unique indexes per scope + the recency index.
+    assert {"ux_memory_user", "ux_memory_world", "idx_memory_modified"} <= indices
 
 
 def test_new_paradigms_present_and_active(v2_migrated_db):
     rows = v2_migrated_db.execute(
         "SELECT code, active FROM paradigms WHERE code IN "
-        "('user_memory_discipline', 'nested_delegation_discipline', "
+        "('memory_discipline', 'nested_delegation_discipline', "
         "'report_back_format', 'workspace_progressive_write', "
         "'output_contract_no_inline_dump')"
     ).fetchall()
     by_code = {r["code"]: int(r["active"]) for r in rows}
     expected = {
-        "user_memory_discipline",
+        "memory_discipline",
         "nested_delegation_discipline",
         "report_back_format",
         "workspace_progressive_write",
@@ -180,7 +184,7 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 
 
 def test_total_active_paradigms_count(v2_migrated_db):
-    """Sanity : the migration chain produces 118 active paradigms.
+    """Sanity : the migration chain produces 119 active paradigms.
 
     104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
     + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
@@ -194,12 +198,14 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 2 from migrate_109_code_runner_routing_and_sandbox
         (code_runner_for_code_production_briefs, test_in_sandbox_when_runnable)
     + 1 from migrate_117_image_display_routing (show_images_inline)
-    + 1 from migrate_120_coding_decomposition (pdca_decompose_delegate_revise).
+    + 1 from migrate_120_coding_decomposition (pdca_decompose_delegate_revise)
+    + 1 from migrate_126_memory_paradigms (tool_note_discipline ;
+        user_memory_discipline is renamed to memory_discipline, not added).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 118
+    assert row["c"] == 119
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -313,15 +319,17 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
         ).fetchall()
     }
     # v2 tables present.
-    assert "user_memory" in tables
+    assert "memory" in tables
+    assert "projects" in tables
     # Legacy tables absent.
     assert "requests" not in tables
     assert "artifacts" not in tables
+    assert "user_memory" not in tables
     # Same paradigm count as via the migration chain.
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 118
+    assert n == 119
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -346,8 +354,11 @@ def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated
             "web_users_columns": sorted(
                 r["name"] for r in conn.execute("PRAGMA table_info(web_users)").fetchall()
             ),
-            "user_memory_columns": sorted(
-                r["name"] for r in conn.execute("PRAGMA table_info(user_memory)").fetchall()
+            "memory_columns": sorted(
+                r["name"] for r in conn.execute("PRAGMA table_info(memory)").fetchall()
+            ),
+            "projects_columns": sorted(
+                r["name"] for r in conn.execute("PRAGMA table_info(projects)").fetchall()
             ),
         }
 
@@ -357,9 +368,9 @@ def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated
 # ---- migrate_113 : user_memory isolation -----------------------------------
 
 
-def test_user_memory_has_user_id(v2_migrated_db):
-    cols = {r["name"] for r in v2_migrated_db.execute("PRAGMA table_info(user_memory)")}
-    assert "user_id" in cols
+def test_memory_has_scope_and_targets(v2_migrated_db):
+    cols = {r["name"] for r in v2_migrated_db.execute("PRAGMA table_info(memory)")}
+    assert {"scope", "user_id", "project_id", "tool_code"} <= cols
 
 
 def test_web_users_has_profile_columns(v2_migrated_db):

@@ -165,8 +165,8 @@ def render_event(
 
     elif isinstance(event, MemoryNearCapacity):
         console.print(
-            f"[{C_WARN}]⚠ user_memory at {event.current_count}/{event.limit} — "
-            "consider purging obsolete entries via manage_user_memory(action='delete')[/]"
+            f"[{C_WARN}]⚠ user memory at {event.current_count}/{event.limit} — "
+            "consider purging obsolete entries via manage_memory(action='delete')[/]"
         )
 
     elif isinstance(event, RequestCompleted):

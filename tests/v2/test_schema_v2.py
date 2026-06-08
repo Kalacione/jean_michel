@@ -26,7 +26,7 @@ V2_SOURCE_FILES: list[str] = [
     "src/jeanmichel/events.py",
     "src/jeanmichel/tokens.py",
     "src/jeanmichel/bootstrap.py",
-    "src/jeanmichel/tools/manage_user_memory.py",
+    "src/jeanmichel/tools/manage_memory.py",
     "src/jeanmichel/tools/delegate_to.py",
     "src/jeanmichel/tools/report_back.py",
 ]

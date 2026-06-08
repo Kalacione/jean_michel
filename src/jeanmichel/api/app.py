@@ -78,16 +78,20 @@ def create_app() -> Any:
         commit: str
 
     class MemorySaveRequest(BaseModel):
-        type: str
+        scope: str
         code: str
         title: str
         description: str
         content: str
+        project_id: int | None = None
+        tool_code: str | None = None
 
     class MemoryUpdateRequest(BaseModel):
         title: str | None = None
         description: str | None = None
         content: str | None = None
+        project_id: int | None = None
+        tool_code: str | None = None
 
     class ProfileUpdate(BaseModel):
         name: str | None = None
@@ -308,38 +312,90 @@ def create_app() -> Any:
             ) from exc
         return FileResponse(target, media_type=media_type)
 
-    # ---- user memory (read ; global, but auth-gated) ---------------------
+    # ---- long-term memory (scope-aware ; auth-gated) ---------------------
+    #
+    # Same service.memory functions as the manage_memory tool (single validation
+    # + SQL source). Target resolution : user-scope pins to the caller ; project
+    # / tool scopes take an explicit key (query param or body).
+    def _memory_http(exc: memory_svc.MemoryOpError) -> HTTPException:
+        status = {"already_exists": 409, "not_found": 404, "no_project": 409}.get(exc.code, 400)
+        return HTTPException(status_code=status, detail=exc.message)
+
+    def _mem_target(
+        scope: str, user_id: int, project_id: int | None, tool_code: str | None
+    ) -> dict[str, Any]:
+        if scope == "world":
+            return {}
+        if scope == "user":
+            return {"user_id": user_id}
+        if scope == "project":
+            if project_id is None:
+                raise HTTPException(status_code=400, detail="project_id required for scope=project")
+            return {"project_id": project_id}
+        if scope == "tool":
+            if not tool_code:
+                raise HTTPException(status_code=400, detail="tool_code required for scope=tool")
+            return {"tool_code": tool_code}
+        raise HTTPException(status_code=400, detail=f"invalid scope '{scope}'")
 
     @app.get("/api/memory")
     def list_memory(
-        type: str | None = None, user: dict = Depends(auth.current_user)
+        scope: str | None = None,
+        project_id: int | None = None,
+        tool_code: str | None = None,
+        user: dict = Depends(auth.current_user),
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
-                entries = memory_svc.list_(conn, user_id=user["id"], type_filter=type)
+                if scope is None:
+                    # Default browse : the caller's own facts.
+                    entries = memory_svc.list_(conn, scope="user", user_id=user["id"])
+                else:
+                    target = _mem_target(scope, user["id"], project_id, tool_code)
+                    entries = memory_svc.list_(conn, scope=scope, **target)
         except memory_svc.MemoryOpError as exc:
-            raise HTTPException(status_code=400, detail=exc.message) from exc
+            raise _memory_http(exc) from exc
         return {"entries": entries}
 
-    @app.get("/api/memory/{type}/{code}")
-    def recall_memory(
-        type: str, code: str, user: dict = Depends(auth.current_user)
+    @app.get("/api/memory/search")
+    def search_memory(
+        q: str,
+        scope: str | None = None,
+        project_id: int | None = None,
+        tool_code: str | None = None,
+        limit: int = memory_svc.DEFAULT_SEARCH_LIMIT,
+        user: dict = Depends(auth.current_user),
     ) -> dict[str, Any]:
-        with db.connect() as conn:
-            rows = memory_svc.recall(conn, user_id=user["id"], code=code)
-        match = next((r for r in rows if r["type"] == type), None)
-        if match is None:
-            raise HTTPException(status_code=404, detail=f"no {type}/{code} entry")
-        return {"entry": match}
+        try:
+            with db.connect() as conn:
+                target = (
+                    _mem_target(scope, user["id"], project_id, tool_code) if scope else {}
+                )
+                if scope is None:
+                    target = {"user_id": user["id"]}
+                    scope = "user"
+                results = memory_svc.search(conn, query=q, scope=scope, limit=limit, **target)
+        except memory_svc.MemoryOpError as exc:
+            raise _memory_http(exc) from exc
+        return {"results": results}
 
-    # Memory mutations — auth-gated but GLOBAL in v1 (shared across web users ;
-    # documented limitation). CRUD here is equivalent to the manage_user_memory
-    # tool (same service.memory functions, same validation + caps).
-    def _memory_http(exc: memory_svc.MemoryOpError) -> HTTPException:
-        status = {"already_exists": 409, "not_found": 404, "ambiguous": 409}.get(
-            exc.code, 400
-        )
-        return HTTPException(status_code=status, detail=exc.message)
+    @app.get("/api/memory/{scope}/{code}")
+    def recall_memory(
+        scope: str,
+        code: str,
+        project_id: int | None = None,
+        tool_code: str | None = None,
+        user: dict = Depends(auth.current_user),
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                target = _mem_target(scope, user["id"], project_id, tool_code)
+                row = memory_svc.recall(conn, scope=scope, code=code, **target)
+        except memory_svc.MemoryOpError as exc:
+            raise _memory_http(exc) from exc
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no {scope}/{code} entry")
+        return {"entry": row}
 
     @app.post("/api/memory", status_code=201)
     def save_memory(
@@ -347,48 +403,55 @@ def create_app() -> Any:
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
+                target = _mem_target(body.scope, user["id"], body.project_id, body.tool_code)
                 saved = memory_svc.save(
                     conn,
-                    user_id=user["id"],
-                    type_=body.type,
+                    scope=body.scope,
                     code=body.code,
                     title=body.title,
                     description=body.description,
                     content=body.content,
+                    **target,
                 )
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"saved": saved}
 
-    @app.patch("/api/memory/{type}/{code}")
+    @app.patch("/api/memory/{scope}/{code}")
     def update_memory(
-        type: str,
+        scope: str,
         code: str,
         body: MemoryUpdateRequest,
         user: dict = Depends(auth.current_user),
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
+                target = _mem_target(scope, user["id"], body.project_id, body.tool_code)
                 target_id = memory_svc.update(
                     conn,
-                    user_id=user["id"],
+                    scope=scope,
                     code=code,
-                    type_=type,
                     title=body.title,
                     description=body.description,
                     content=body.content,
+                    **target,
                 )
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"updated_id": target_id}
 
-    @app.delete("/api/memory/{type}/{code}")
+    @app.delete("/api/memory/{scope}/{code}")
     def delete_memory(
-        type: str, code: str, user: dict = Depends(auth.current_user)
+        scope: str,
+        code: str,
+        project_id: int | None = None,
+        tool_code: str | None = None,
+        user: dict = Depends(auth.current_user),
     ) -> dict[str, Any]:
         try:
             with db.connect() as conn:
-                target_id = memory_svc.delete(conn, user_id=user["id"], code=code, type_=type)
+                target = _mem_target(scope, user["id"], project_id, tool_code)
+                target_id = memory_svc.delete(conn, scope=scope, code=code, **target)
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"deleted_id": target_id}

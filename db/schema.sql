@@ -193,7 +193,28 @@ INSERT INTO paradigms VALUES(120,10,'subresearch_inline','Sub-research within a 
 INSERT INTO paradigms VALUES(121,34,'router_synthesis_discipline','Router synthesis discipline',unistr('- After a specialist returns via `report_back`, decide explicitly: follow up\u000a  with another delegation, or synthesize the answer for the user directly.\u000a- If the report includes sub_questions you want to follow up on, delegate to\u000a  the appropriate agent.\u000a- When all necessary research is done, produce the answer as an assistant\u000a  message without further tool calls. The orchestrator detects this as the\u000a  conversation''s end point.\u000a- Never re-delegate the same question without narrowing the scope.'),'Enforced also at the orchestrator level: if the router calls any tool other than plan_update/delegate_to/ask_human/return_to_user immediately after a specialist returns, a reminder is injected.',0,100,1,'2026-05-28T20:17:15Z','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(122,16,'source_admission_criteria','Source admission criteria for listing tasks',unistr('- When the briefing asks for a list of items (sources, tools, papers, products…), each entry must be a SPECIFIC, NAMED instance that the user could identify and use directly. Do not use category labels as entries unless the briefing explicitly asks for categories.\u000a- Each listed entry must be grounded in a tool_response from THIS research session. If you cannot point to the search result or page where the entry was surfaced, do not list it. Pre-existing knowledge about a name is not evidence that the name corresponds to what you claim about it.\u000a- The description column for each entry must add information that distinguishes THIS entry from the others (its angle, format, access mode, license, scope). Generic descriptions that merely paraphrase the entry name are a red flag — they signal you cannot actually characterize what makes the entry relevant.\u000a- When unsure whether an entry truly matches the brief''s constraints (e.g. public access, free tier, documented API, current availability), EXCLUDE it. A short, accurate list always beats a longer list padded with entries you cannot defend.\u000a- Brand recognition is not verification. Many well-known brands no longer offer what they once did, or offer it only under commercial contract. Always check the tool_response evidence, not your memory of the brand.'),'Generalised anti-hallucination paradigm for listing tasks. Targets: category-as-entry failure, brand-vs-product confusion, generic descriptions. Derived from comparison of 3 model outputs on a sourcing task, 2026-05-24.',0,55,1,'2026-05-28T20:17:15Z','2026-05-28T20:17:15Z');
 INSERT INTO paradigms VALUES(123,21,'comparator_output_contract','Comparator output contract',unistr('- Materialise the comparative table as a workspace file via workspace_create_file. Do not paste the table into report_back or into ask_human.\u000a- File name pattern: comparison_<subject_slug>_<HHMMSS>.md, where <subject_slug> is a short lowercase ASCII slug describing the comparison subject (use underscores, no spaces, no accents) and <HHMMSS> is the current UTC time as six digits. Example: comparison_ai_frameworks_142507.md. The timestamp is mandatory to avoid collisions when several comparisons run in parallel or in successive turns.\u000a- After the file is written, call report_back exactly once with:\u000a    - files_produced = ["<the relative path you just wrote>"]\u000a    - summary = one paragraph describing what the table contains and its main verdict\u000a    - confidence reflecting how solid the underlying data is\u000a  This is what makes the file discoverable by downstream agents (document-builder, critical-thinker, jean-michel). Skipping report_back strands the artifact.\u000a- If you cannot complete the comparison (missing data, blocked source), still call report_back with files_produced=[] (or the partial file path if any) and an explicit blockers list. Do not silently abort.'),'Comparator naturally produces a structured artifact (a table). Pasting it inline truncates badly in chat UIs and hides it from sibling agents. Forcing workspace_create_file + report_findings creates a clean handoff. Timestamped name avoids the obvious collision when the router re-asks the comparator on the same subject. Codified after observing a 2026-05-25 conversation where the comparator hit no_write_grant.',0,20,1,'2026-05-28T20:17:15Z','2026-05-28 20:17:15');
-INSERT INTO paradigms VALUES(124,29,'user_memory_discipline','User memory discipline',unistr('- Save a user_memory entry when the human reveals a durable fact about\u000a  themselves, their preferences, their projects, or their workflows.\u000a- Update an existing entry when a previously saved fact is contradicted\u000a  or refined by the conversation.\u000a- Delete an entry that has become irrelevant (e.g. mention of an abandoned\u000a  project, a corrected preference).\u000a- Recall the full content of an entry when the current conversation\u000a  references something that might be in memory.\u000a- Keep entries concise: title under 60 chars, description under 150 chars,\u000a  content under 1000 chars.'),unistr('Encadre l''usage du tool manage_user_memory par jean-michel. Discipline,\u000apas obligation mécanique — le hook PostToolUse peut proposer un save si le\u000aLLM oublie, sans forcer.'),0,60,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
+INSERT INTO paradigms VALUES(124,29,'memory_discipline','Memory discipline','- Save memory when something durable emerges: a fact about the human
+  (scope user), a project decision (scope project), a reusable lesson about a
+  tool (scope tool), or a globally useful fact (scope world).
+- Before saving, search existing memory (action=''search'') to avoid duplicates
+  and to catch a contradicting entry — extend/update the existing one instead.
+- Update an entry when the conversation refines or contradicts it; delete when
+  it becomes obsolete.
+- Recall (action=''recall'') the full body of an entry whose code you saw in the
+  memory index; search when you don''t know the code, before concluding you don''t
+  know something.
+- Keep entries concise: title < 60 chars, description < 150, content < 1000.
+- Use the note_for_<scope> shortcuts when adding a new note.','Frames jean-michel''s use of manage_memory. Discipline, not a
+mechanical must — the shadow consolidation pass proposes saves for the human to
+confirm; nothing is written unattended.',0,60,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
+INSERT INTO paradigms VALUES(143,29,'tool_note_discipline','Tool note discipline','- A tool note (scope=''tool'') captures a durable, reusable lesson about HOW
+  to use a specific tool well: a parameter that matters, a failure mode and its
+  fix, an input format the tool expects. Never a one-off result.
+- Key it by the tool name (tool_code) so it loads automatically for every agent
+  granted that tool.
+- Do not restate the tool''s own description or an existing paradigm — record
+  only what experience taught.','Distingue la mémoire tool (apprise, éditable au runtime, chargée par grant)
+des paradigmes (statiques, écrits en migration). Évite le doublon.',0,61,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(125,11,'nested_delegation_discipline','Nested delegation discipline',unistr('- The `delegate_to` tool descends the task tree — it never returns to a\u000a  higher-level caller. If a sub-task you encounter exceeds your scope,\u000a  delegate it yourself rather than passing it back up.\u000a- The orchestrator enforces a maximum tree depth via `MAX_DEPTH`. Within\u000a  that limit, descend freely if the sub-task warrants a dedicated specialist.\u000a- Each subagent receives its own fresh context — it does not see your\u000a  conversation history. Pass everything it needs in the briefing or via\u000a  support_files.\u000a- Do not delegate when you can solve the sub-task with a tool call. The\u000a  cost of a delegation is a full new LLM context.'),unistr('Pose le principe de délégation imbriquée v2 : un subagent peut spawn un\u000asub-subagent sans repasser par le parent. Aligne avec §5 du doc 06.'),0,20,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(126,22,'report_back_format','report_back format',unistr('- When concluding your work, call `report_back` with:\u000a  - summary: 1-3 sentences naming the headline finding. Not "I did X" —\u000a    the actual conclusion or the actual content of what you produced.\u000a  - files_produced: the workspace files you wrote, relative to the\u000a    workspace root.\u000a  - confidence: "low" | "medium" | "high" — your self-assessment of how\u000a    completely you delivered the briefing.\u000a  - low_confidence_reason: REQUIRED if confidence is "low". One synthetic\u000a    sentence explaining what is missing or uncertain. Not a recap of your\u000a    reasoning — just the gap.\u000a- Do not paste raw tool outputs into `summary`. Those belong in the\u000a  workspace files.'),unistr('Décrit le contrat du tool report_back, équivalent v2 de report_findings.\u000alow_confidence_reason est obligatoire si confidence=low (le hook\u000aOnDelegateReturn rejette sinon).'),0,20,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(127,31,'workspace_progressive_write','Workspace progressive write',unistr('- Persist findings to the workspace as you go, not at the end. After\u000a  every 3-4 information-gathering tool calls, write what you have so far:\u000a  - First time: `workspace_create_file(relative_path, content)`.\u000a  - Subsequent times: `workspace_append(relative_path, content)`.\u000a- Before starting research, check if a relevant workspace file already\u000a  exists via `workspace_list`. If yes, read it with `workspace_view` and\u000a  build on it rather than re-doing the work.\u000a- File naming convention: {agent-code}_{topic-slug}.{ext} — lowercase,\u000a  hyphens for spaces. Example: `wikipedia-specialist_ai-alignment.md`.\u000a- Never reference a workspace path in a briefing or `support_files`\u000a  unless you called `workspace_create_file` for that exact path in this\u000a  same execution. The file must physically exist.'),unistr('Fusion de workspace_as_shared_memory (id 103) et\u000awikipedia_persist_before_delegate (id 106). Discipline d''écriture\u000aprogressive du workspace, complétée par le hook PostToolUse\u000a(force-persist après N research calls) côté orchestrateur.'),0,5,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
@@ -486,6 +507,7 @@ INSERT INTO agent_paradigms VALUES(5,122);
 INSERT INTO agent_paradigms VALUES(9,122);
 INSERT INTO agent_paradigms VALUES(6,123);
 INSERT INTO agent_paradigms VALUES(1,124);
+INSERT INTO agent_paradigms VALUES(1,143);
 INSERT INTO agent_paradigms VALUES(12,125);
 INSERT INTO agent_paradigms VALUES(6,125);
 INSERT INTO agent_paradigms VALUES(8,125);
@@ -604,7 +626,7 @@ INSERT INTO agent_tools VALUES(12,'workspace_create_dir');
 INSERT INTO agent_tools VALUES(12,'workspace_delete_file');
 INSERT INTO agent_tools VALUES(12,'workspace_delete_dir');
 INSERT INTO agent_tools VALUES(18,'bash_sandbox');
-INSERT INTO agent_tools VALUES(18,'manage_user_memory');
+INSERT INTO agent_tools VALUES(18,'manage_memory');
 INSERT INTO agent_tools VALUES(18,'self_inspect_architecture');
 INSERT INTO agent_tools VALUES(18,'workspace_append');
 INSERT INTO agent_tools VALUES(18,'workspace_create_dir');
@@ -642,15 +664,15 @@ INSERT INTO agent_tools VALUES(9,'workspace_append');
 INSERT INTO agent_tools VALUES(10,'workspace_append');
 INSERT INTO agent_tools VALUES(11,'workspace_append');
 INSERT INTO agent_tools VALUES(12,'workspace_append');
-INSERT INTO agent_tools VALUES(12,'manage_user_memory');
+INSERT INTO agent_tools VALUES(12,'manage_memory');
 INSERT INTO agent_tools VALUES(5,'workspace_append');
 INSERT INTO agent_tools VALUES(8,'workspace_append');
 INSERT INTO agent_tools VALUES(13,'workspace_append');
-INSERT INTO agent_tools VALUES(1,'manage_user_memory');
-INSERT INTO agent_tools VALUES(15,'manage_user_memory');
+INSERT INTO agent_tools VALUES(1,'manage_memory');
+INSERT INTO agent_tools VALUES(15,'manage_memory');
 INSERT INTO agent_tools VALUES(15,'workspace_create_file');
 INSERT INTO agent_tools VALUES(15,'workspace_view');
-INSERT INTO agent_tools VALUES(16,'manage_user_memory');
+INSERT INTO agent_tools VALUES(16,'manage_memory');
 INSERT INTO agent_tools VALUES(16,'news_archive');
 INSERT INTO agent_tools VALUES(16,'news_latest');
 INSERT INTO agent_tools VALUES(16,'workspace_append');
@@ -661,7 +683,7 @@ INSERT INTO agent_tools VALUES(16,'web_fetch');
 INSERT INTO agent_tools VALUES(13,'web_fetch');
 INSERT INTO agent_tools VALUES(17,'github_search_code');
 INSERT INTO agent_tools VALUES(17,'github_search_repos');
-INSERT INTO agent_tools VALUES(17,'manage_user_memory');
+INSERT INTO agent_tools VALUES(17,'manage_memory');
 INSERT INTO agent_tools VALUES(17,'pypi_lookup');
 INSERT INTO agent_tools VALUES(17,'stackoverflow_search');
 INSERT INTO agent_tools VALUES(17,'web_fetch');
@@ -721,6 +743,7 @@ CREATE TABLE conversations (
                  CHECK (mode IN ('analyse','chat','vocal','code')),
   task_class     TEXT,                        -- 'single_fact' | 'medium_task' | 'deep_research'
   current_phase  TEXT,                        -- NULL | 'planner_done' | 'gather_done' | 'critic_done' | 'build_done'
+  project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,  -- migrate_124, nullable
   created_at     TEXT NOT NULL,
   modified_at    TEXT NOT NULL
 );
@@ -748,22 +771,73 @@ INSERT INTO agent_delegation_targets VALUES(1,'strategist','2026-05-28 20:17:15'
 INSERT INTO agent_delegation_targets VALUES(1,'news-specialist','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'code-fetcher','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(12,'code-fetcher','2026-05-28 20:17:15');
-CREATE TABLE user_memory (
-    id           INTEGER PRIMARY KEY,
-    user_id      INTEGER NOT NULL REFERENCES web_users(id),
-    type         TEXT NOT NULL CHECK (type IN ('user', 'feedback', 'project', 'reference')),
-    code         TEXT NOT NULL,
-    title        TEXT NOT NULL,
-    description  TEXT NOT NULL,  -- one-line hook, injected into the prompt index
-    content      TEXT NOT NULL,  -- full markdown body, loaded on demand via recall
-    created_at   TEXT NOT NULL,
-    modified_at  TEXT NOT NULL,
-    UNIQUE (user_id, type, code)
+-- Long-term memory (migrate_125). A single `scope` dimension drives deterministic
+-- prompt inclusion (world everywhere / user / project / tool). A CHECK enforces
+-- exactly one target key per scope. FTS5 (below) provides BM25-ranked recall.
+CREATE TABLE memory (
+  id          INTEGER PRIMARY KEY,
+  scope       TEXT NOT NULL CHECK (scope IN ('world', 'user', 'project', 'tool')),
+  user_id     INTEGER REFERENCES web_users(id) ON DELETE CASCADE,
+  project_id  INTEGER REFERENCES projects(id)  ON DELETE CASCADE,
+  tool_code   TEXT,
+  code        TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  description TEXT NOT NULL,  -- one-line hook, injected into the prompt index
+  content     TEXT NOT NULL,  -- full markdown body, loaded on demand via recall
+  created_at  TEXT NOT NULL,
+  modified_at TEXT NOT NULL,
+  CHECK (
+    (scope = 'world'   AND user_id IS NULL     AND project_id IS NULL     AND tool_code IS NULL) OR
+    (scope = 'user'    AND user_id IS NOT NULL AND project_id IS NULL     AND tool_code IS NULL) OR
+    (scope = 'project' AND user_id IS NULL     AND project_id IS NOT NULL AND tool_code IS NULL) OR
+    (scope = 'tool'    AND user_id IS NULL     AND project_id IS NULL     AND tool_code IS NOT NULL)
+  )
 );
 CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
-CREATE INDEX idx_user_memory_user ON user_memory(user_id);
-CREATE INDEX idx_user_memory_type ON user_memory(type);
-CREATE INDEX idx_user_memory_modified ON user_memory(modified_at DESC);
+CREATE UNIQUE INDEX ux_memory_world   ON memory(code)             WHERE scope = 'world';
+CREATE UNIQUE INDEX ux_memory_user    ON memory(user_id, code)    WHERE scope = 'user';
+CREATE UNIQUE INDEX ux_memory_project ON memory(project_id, code) WHERE scope = 'project';
+CREATE UNIQUE INDEX ux_memory_tool    ON memory(tool_code, code)  WHERE scope = 'tool';
+CREATE INDEX idx_memory_scope    ON memory(scope);
+CREATE INDEX idx_memory_user     ON memory(user_id);
+CREATE INDEX idx_memory_project  ON memory(project_id);
+CREATE INDEX idx_memory_tool     ON memory(tool_code);
+CREATE INDEX idx_memory_modified ON memory(modified_at DESC);
+
+-- FTS5 full-text index over memory (external content). BM25 ranking at query time.
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+  title, description, content,
+  content = 'memory', content_rowid = 'id'
+);
+CREATE TRIGGER memory_ai AFTER INSERT ON memory BEGIN
+  INSERT INTO memory_fts(rowid, title, description, content)
+  VALUES (new.id, new.title, new.description, new.content);
+END;
+CREATE TRIGGER memory_ad AFTER DELETE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, title, description, content)
+  VALUES ('delete', old.id, old.title, old.description, old.content);
+END;
+CREATE TRIGGER memory_au AFTER UPDATE ON memory BEGIN
+  INSERT INTO memory_fts(memory_fts, rowid, title, description, content)
+  VALUES ('delete', old.id, old.title, old.description, old.content);
+  INSERT INTO memory_fts(rowid, title, description, content)
+  VALUES (new.id, new.title, new.description, new.content);
+END;
+
+-- Projects (migrate_124) : owned by a web_user, group conversations.
+CREATE TABLE projects (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES web_users(id) ON DELETE CASCADE,
+  code        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  created_at  TEXT NOT NULL,
+  modified_at TEXT NOT NULL,
+  UNIQUE (user_id, code)
+);
+CREATE INDEX idx_projects_user ON projects(user_id);
+CREATE INDEX idx_conversations_project ON conversations(project_id);
 CREATE TABLE web_users (
   id            INTEGER PRIMARY KEY,
   username      TEXT UNIQUE NOT NULL,

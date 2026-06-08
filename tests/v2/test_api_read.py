@@ -23,7 +23,7 @@ from jeanmichel.api import app as api_app  # noqa: E402
 from jeanmichel.api import auth  # noqa: E402
 from jeanmichel.db import connect as db_connect  # noqa: E402
 from jeanmichel.tools._workspace import workspace_root_for  # noqa: E402
-from jeanmichel.tools.manage_user_memory import _handler as memory_handler  # noqa: E402
+from jeanmichel.tools.manage_memory import _handler as memory_handler  # noqa: E402
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -413,10 +413,10 @@ def test_memory_list_and_recall(client):
 def test_memory_filter_and_errors(client):
     _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    _save_via_api(client, token, type="feedback", code="kiss")
+    _save_via_api(client, token, code="kiss")
 
-    assert client.get("/api/memory", params={"type": "feedback"}, headers=_auth(token)).status_code == 200
-    assert client.get("/api/memory", params={"type": "garbage"}, headers=_auth(token)).status_code == 400
+    assert client.get("/api/memory", params={"scope": "user"}, headers=_auth(token)).status_code == 200
+    assert client.get("/api/memory", params={"scope": "garbage"}, headers=_auth(token)).status_code == 400
     assert client.get("/api/memory/user/ghost", headers=_auth(token)).status_code == 404
     assert client.get("/api/memory").status_code == 401  # auth required
 
@@ -425,7 +425,7 @@ def test_memory_filter_and_errors(client):
 
 
 def _save_via_api(client, token, **fields):
-    body = {"type": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
+    body = {"scope": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
     body.update(fields)
     return client.post("/api/memory", json=body, headers=_auth(token))
 
@@ -451,10 +451,10 @@ def test_memory_save_duplicate_conflict(client):
 def test_memory_save_validation(client):
     _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    assert _save_via_api(client, token, type="garbage").status_code == 400  # invalid_type
+    assert _save_via_api(client, token, scope="garbage").status_code == 400  # invalid_scope
     assert _save_via_api(client, token, title="x" * 61).status_code == 400  # title_too_long
     # Pydantic rejects a missing required field before reaching the service.
-    bad = client.post("/api/memory", json={"type": "user", "code": "y"}, headers=_auth(token))
+    bad = client.post("/api/memory", json={"scope": "user", "code": "y"}, headers=_auth(token))
     assert bad.status_code == 422
 
 
@@ -481,7 +481,7 @@ def test_memory_delete(client):
 
 
 def test_memory_mutations_require_auth(client):
-    body = {"type": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
+    body = {"scope": "user", "code": "x", "title": "t", "description": "d", "content": "c"}
     assert client.post("/api/memory", json=body).status_code == 401
     assert client.patch("/api/memory/user/x", json={"title": "n"}).status_code == 401
     assert client.delete("/api/memory/user/x").status_code == 401
@@ -493,14 +493,16 @@ def test_memory_api_equals_tool(client):
     token = _login(client, "alice", "pw")
     # API write (alice) -> visible to the tool when scoped to alice.
     _save_via_api(client, token, code="shared", content="api-written")
-    recalled = json.loads(memory_handler(action="recall", code="shared", user_id=alice_id))
+    recalled = json.loads(
+        memory_handler(action="recall", scope="user", code="shared", user_id=alice_id)
+    )
     assert recalled["entry"]["content"] == "api-written"
     # Tool write (alice) -> visible to the API.
     memory_handler(
-        action="save", type="feedback", code="tool-side",
+        action="save", scope="user", code="tool-side",
         title="t", description="d", content="tool-written", user_id=alice_id,
     )
-    api_entry = client.get("/api/memory/feedback/tool-side", headers=_auth(token)).json()["entry"]
+    api_entry = client.get("/api/memory/user/tool-side", headers=_auth(token)).json()["entry"]
     assert api_entry["content"] == "tool-written"
 
 

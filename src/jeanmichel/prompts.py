@@ -4,10 +4,11 @@ Three exposed surfaces :
 
 - ``DISPATCH_SYSTEM_PROMPT`` — static prompt for the Tier 0 dispatcher
   (cf. DevNotes/REVOLUCION/06_proposition_v2.md §3). JSON-forced output.
-- ``render_user_memory_index(conn, limit, warn_at)`` — Markdown block listing
-  the (type / code / description) of the most-recently-modified
-  ``user_memory`` entries. Injected into every agent's ``## Human`` section
-  by ``render_system_prompt_v2``.
+- ``render_memory_block(conn, *, user_id, project_id, tool_codes)`` — Markdown
+  block listing the (code : description) index of the long-term ``memory``
+  entries that DETERMINISTICALLY apply here : world (always) + the user's facts
+  + the conversation's project + the notes of the tools this agent is granted.
+  Injected into every agent's ``## Human`` section by ``render_system_prompt_v2``.
 - ``render_system_prompt_v2(*, …)`` — produces the system message used by
   the v2 main loop. Composition : identity + context (human + conversation)
   + paradigms (grouped by category) + role-specific output contract.
@@ -22,7 +23,13 @@ import logging
 import sqlite3
 from typing import TYPE_CHECKING
 
-from .config import USER_MEMORY_INDEX_LIMIT, USER_MEMORY_WARN_AT
+from .config import (
+    MEMORY_PROJECT_CAP,
+    MEMORY_TOOL_CAP_PER_TOOL,
+    MEMORY_USER_CAP,
+    MEMORY_WORLD_CAP,
+    USER_MEMORY_WARN_AT,
+)
 
 if TYPE_CHECKING:
     from .models import Paradigm
@@ -71,61 +78,103 @@ the list above."""
 
 
 # =============================================================================
-# user_memory index renderer
+# Long-term memory block renderer (deterministic, scope-driven inclusion)
 # =============================================================================
 
 
-def render_user_memory_index(
+def _memory_section(
+    conn: sqlite3.Connection, header: str, where: str, params: tuple, cap: int
+) -> list[str]:
+    """Render one ``## header`` index section (code : description), capped. [] if empty."""
+    rows = conn.execute(
+        f"SELECT code, description FROM memory WHERE {where} "
+        "ORDER BY modified_at DESC LIMIT ?",
+        (*params, cap),
+    ).fetchall()
+    if not rows:
+        return []
+    out = [f"## {header}"]
+    out.extend(f"- {r['code']} : {r['description']}" for r in rows)
+    return out
+
+
+def render_memory_block(
     conn: sqlite3.Connection,
+    *,
     user_id: int | None = None,
-    limit: int = USER_MEMORY_INDEX_LIMIT,
+    project_id: int | None = None,
+    tool_codes: frozenset[str] | set[str] | None = None,
     warn_at: int = USER_MEMORY_WARN_AT,
 ) -> tuple[str, int]:
-    """Render the user_memory index block + return the entry count, **for one user**.
+    """Render the long-term memory index block + return the user-scope entry count.
 
-    Scoped to ``user_id`` (``None`` → the reserved ``cli`` user). The block lists
-    ``[type] code : description`` of the most-recently-modified entries (capped at
-    ``limit``). Returns ``("", 0)`` when the user has no memory, or when the table
-    / ``cli`` user is missing (migrations not applied) — the caller decides
-    whether to inject.
+    Inclusion is 100 % deterministic (pure SQL by scope) — no LLM in this path :
+      - world   : always
+      - user    : the given ``user_id`` (``None`` → reserved ``cli`` user)
+      - project : the given ``project_id`` (skipped when None)
+      - tool    : entries whose ``tool_code`` is in ``tool_codes`` (the agent's grants)
+
+    Each section is an index (``code : description``) — never the full content,
+    which is loaded on demand via ``manage_memory(action='recall'|'search')``.
+    Returns ``("", 0)`` when nothing applies, or when the table is missing
+    (migrations not applied). The int is the user-scope count (for the warning).
     """
     from .db import cli_user_id
 
     try:
         uid = user_id if user_id is not None else cli_user_id(conn)
-        rows = conn.execute(
-            "SELECT type, code, description, modified_at "
-            "FROM user_memory WHERE user_id=? "
-            "ORDER BY modified_at DESC LIMIT ?",
-            (uid, limit),
-        ).fetchall()
+        sections: list[str] = []
+        sections += _memory_section(
+            conn, "World knowledge (long-term memory)", "scope='world'", (), MEMORY_WORLD_CAP
+        )
+        sections += _memory_section(
+            conn,
+            "Known facts about the user (long-term memory)",
+            "scope='user' AND user_id=?",
+            (uid,),
+            MEMORY_USER_CAP,
+        )
+        if project_id is not None:
+            sections += _memory_section(
+                conn,
+                "Project context (long-term memory)",
+                "scope='project' AND project_id=?",
+                (project_id,),
+                MEMORY_PROJECT_CAP,
+            )
+        if tool_codes:
+            placeholders = ",".join("?" * len(tool_codes))
+            cap = MEMORY_TOOL_CAP_PER_TOOL * len(tool_codes)
+            sections += _memory_section(
+                conn,
+                "Tool notes (how to use your tools)",
+                f"scope='tool' AND tool_code IN ({placeholders})",
+                tuple(sorted(tool_codes)),
+                cap,
+            )
+        user_count_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM memory WHERE scope='user' AND user_id=?", (uid,)
+        ).fetchone()
+        user_count = int(user_count_row["c"]) if user_count_row is not None else 0
     except (sqlite3.OperationalError, KeyError):
-        # Table or `cli` user missing (migration 101/113 not applied yet).
+        # Table or `cli` user missing (migrations not applied yet).
         return "", 0
 
-    if not rows:
+    if not sections:
         return "", 0
 
-    count_row = conn.execute(
-        "SELECT COUNT(*) AS c FROM user_memory WHERE user_id=?", (uid,)
-    ).fetchone()
-    total_count = int(count_row["c"]) if count_row is not None else len(rows)
-
-    lines: list[str] = ["## Known facts about the user (long-term memory)"]
-    for r in rows:
-        lines.append(f"- [{r['type']}] {r['code']} : {r['description']}")
-    lines.append("")
-    lines.append(
-        "Use `manage_user_memory(action='recall', code='<code>')` to load the "
-        "full body of an entry, `action='save'` to add a new fact, "
-        "`action='update'` to refine one. "
+    sections.append("")
+    sections.append(
+        "Use `manage_memory(action='recall', scope='<scope>', code='<code>')` to "
+        "load an entry's full body, `action='search'` to find related memory, "
+        "`action='save'` / `note_for_<scope>` to add, `action='update'` to refine."
     )
-    if total_count >= warn_at:
-        lines.append(
-            f"⚠ Memory near capacity ({total_count} / {limit} entries shown). "
+    if user_count >= warn_at:
+        sections.append(
+            f"⚠ User memory near capacity ({user_count} entries). "
             "Purge obsolete entries via `action='delete'`."
         )
-    return "\n".join(lines) + "\n", total_count
+    return "\n".join(sections) + "\n", user_count
 
 
 # =============================================================================
@@ -237,7 +286,7 @@ def render_system_prompt_v2(
     agent_mission: str,
     paradigms: list[Paradigm],
     user_profile_text: str = "",
-    user_memory_block: str = "",
+    memory_block: str = "",
     user_language: str = "und",
     mode: str = "analyse",
     delegation_targets_meta: list[tuple[str, str, str]] | None = None,
@@ -262,8 +311,8 @@ def render_system_prompt_v2(
     human_block_parts: list[str] = []
     if user_profile_text.strip():
         human_block_parts.append(user_profile_text.strip())
-    if user_memory_block.strip():
-        human_block_parts.append(user_memory_block.rstrip())
+    if memory_block.strip():
+        human_block_parts.append(memory_block.rstrip())
     human_block = (
         "\n\n".join(human_block_parts)
         if human_block_parts

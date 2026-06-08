@@ -36,7 +36,7 @@ from ..orchestrator_v2 import (
     load_agent_spec_v2,
     run_main_loop,
 )
-from ..prompts import render_user_memory_index
+from ..prompts import render_memory_block
 from ..tools import build_registry
 from .workspace import is_image, normalized_image_b64
 
@@ -44,6 +44,23 @@ _log = logging.getLogger(__name__)
 
 # Mirror the literal used by the CLI today (cf. config.USER_MEMORY_WARN_AT).
 _MEMORY_WARN_AT = 90
+
+
+def _conversation_project_id(conv_id: str) -> int | None:
+    """The project a conversation is attached to (migrate_124), or None.
+
+    Defensive : returns None if the column / table is absent (migrations not
+    applied) so the turn never breaks on a missing project association.
+    """
+    try:
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT project_id FROM conversations WHERE id=?", (conv_id,)
+            ).fetchone()
+        return row["project_id"] if row is not None else None
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("project_id lookup failed: %s", exc)
+        return None
 
 
 def _default_title(text: str, limit: int = 60) -> str:
@@ -222,29 +239,33 @@ def _run_deep_turn(
     images: list[str] | None = None,
 ) -> str:
     """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
+    project_id = _conversation_project_id(conv_id)
     with db.connect() as conn:
-        user_memory_block, count = render_user_memory_index(conn, memory_user_id)
-        if count >= _MEMORY_WARN_AT and event_emitter is not None:
-            event_emitter(MemoryNearCapacity(current_count=count, limit=100))
+        # Capacity warning is about the user's own memory. The agent-specific
+        # block (world/project/tool too) is rendered inside load_agent_spec_v2.
+        _, user_count = render_memory_block(conn, user_id=memory_user_id)
+        if user_count >= _MEMORY_WARN_AT and event_emitter is not None:
+            event_emitter(MemoryNearCapacity(current_count=user_count, limit=100))
         main_agent = load_agent_spec_v2(
             conn,
             "jean-michel",
             mode=mode,
             user_profile_text=profile.render(),
-            user_memory_block=user_memory_block,
+            memory_user_id=memory_user_id,
+            memory_project_id=project_id,
             user_language=user_lang,
         )
 
     def agent_resolver(code: str) -> AgentSpec | None:
         try:
             with db.connect() as conn:
-                u_mem, _ = render_user_memory_index(conn, memory_user_id)
                 return load_agent_spec_v2(
                     conn,
                     code,
                     mode=mode,
                     user_profile_text=profile.render(),
-                    user_memory_block=u_mem,
+                    memory_user_id=memory_user_id,
+                    memory_project_id=project_id,
                     user_language=user_lang,
                 )
         except Exception as exc:  # noqa: BLE001
@@ -278,6 +299,7 @@ def _run_deep_turn(
         sandbox_image=None,
         agent_role="router",
         memory_user_id=memory_user_id,
+        memory_project_id=project_id,
         vision_client=main_llm,
         extra_tools=mcp_specs,
     )

@@ -223,10 +223,16 @@ WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
 # ask_human prompt before giving up and letting the orchestrator conclude (S4).
 ASK_HUMAN_TIMEOUT_SECONDS = _int_env("JEANMICHEL_ASK_HUMAN_TIMEOUT", 300)
 
-# Mémoire long-terme utilisateur (cf. §10 doc 06). Limite et seuil d'alerte
-# sur l'index injecté dans le system prompt.
+# Mémoire long-terme (cf. §10 doc 06). Seuil d'alerte sur la mémoire user.
 USER_MEMORY_INDEX_LIMIT = _int_env("JEANMICHEL_USER_MEMORY_LIMIT", 100)
 USER_MEMORY_WARN_AT = _int_env("JEANMICHEL_USER_MEMORY_WARN_AT", 90)
+
+# Caps d'injection par scope dans le system prompt (index uniquement, jamais le
+# content). Bornent le budget de contexte ; l'inclusion reste déterministe.
+MEMORY_WORLD_CAP = _int_env("JEANMICHEL_MEMORY_WORLD_CAP", 20)
+MEMORY_USER_CAP = _int_env("JEANMICHEL_MEMORY_USER_CAP", 40)
+MEMORY_PROJECT_CAP = _int_env("JEANMICHEL_MEMORY_PROJECT_CAP", 30)
+MEMORY_TOOL_CAP_PER_TOOL = _int_env("JEANMICHEL_MEMORY_TOOL_CAP", 5)
 
 # Ratio du budget WORKING du parent alloué à un subagent par défaut.
 # 40 % par défaut, à tuner empiriquement (§12 doc 06).

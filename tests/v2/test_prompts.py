@@ -62,7 +62,7 @@ def base_kwargs():
         "agent_mission": "Receive the request and delegate.",
         "paradigms": [],
         "user_profile_text": "name: test",
-        "user_memory_block": "",
+        "memory_block": "",
         "user_language": "fr",
         "mode": "analyse",
     }
