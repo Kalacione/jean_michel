@@ -14,9 +14,6 @@ https://huggingface.co/yangheng/deberta-v3-base-absa-v1.1
 
 - injection date/heure et info user systematiques ?
 
-## Connectivite
-
-- compatibilite du systeme avec mcp
 
 ## recherches searXNG
 
