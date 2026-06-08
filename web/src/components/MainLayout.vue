@@ -10,6 +10,17 @@
       @click="conv.openWorkspace()"
     />
     <v-btn icon="mdi-brain" title="Mémoire" @click="memory = true" />
+    <v-badge
+      :content="conv.pendingMemory.length"
+      :model-value="conv.pendingMemory.length > 0"
+      color="primary"
+    >
+      <v-btn
+        icon="mdi-lightbulb-on-outline"
+        :title="`Suggestions mémoire (${conv.pendingMemory.length})`"
+        @click="review = true"
+      />
+    </v-badge>
     <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
     <v-btn icon="mdi-theme-light-dark" title="Thème" @click="$vuetify.theme.cycle()" />
     <v-chip class="ml-2" prepend-icon="mdi-account" variant="tonal">
@@ -37,6 +48,7 @@
   <AskHumanDialog />
   <WorkspaceDialog v-model="conv.wsOpen" :initial-path="conv.wsInitialPath" />
   <MemoryDialog v-model="memory" />
+  <MemoryReviewDialog v-model="review" />
   <ProfileDialog v-model="profile" />
 </template>
 
@@ -46,6 +58,7 @@
   import ChatPane from '@/components/ChatPane.vue'
   import ConversationsDrawer from '@/components/ConversationsDrawer.vue'
   import MemoryDialog from '@/components/MemoryDialog.vue'
+  import MemoryReviewDialog from '@/components/MemoryReviewDialog.vue'
   import ProfileDialog from '@/components/ProfileDialog.vue'
   import WorkspaceDialog from '@/components/WorkspaceDialog.vue'
   import { useAuthStore } from '@/stores/auth'
@@ -55,6 +68,7 @@
   const conv = useConvStore()
   const drawer = ref(true)
   const memory = ref(false)
+  const review = ref(false)
   const profile = ref(false)
 
   onMounted(() => conv.refresh())

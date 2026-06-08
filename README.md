@@ -164,7 +164,8 @@ Surface REST (sélection — détails dans `src/jeanmichel/api/app.py`) :
 | `GET`/`PATCH`/`DELETE` | `/api/conversations/{id}` | détails / rename / suppression cascade |
 | `GET` | `/api/conversations/{id}/{messages,events,state}` | lecture des artefacts |
 | `GET`/`POST` | `/api/conversations/{id}/workspace[/file,upload,download,zip]` | inspection + upload + download (zip ou fichier unitaire) |
-| `GET`/`POST`/`PATCH`/`DELETE` | `/api/memory[/{type}/{code}]` | CRUD `user_memory` (par user) |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/memory[/{scope}/{code}]` + `/api/memory/search` | CRUD + FTS de la mémoire scopée |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/api/projects[/{id}]` | CRUD projets (par user) |
 | `GET`/`PATCH` | `/api/profile` | profil du compte web courant |
 | `GET` | `/api/tts` | synthèse Piper streamée (consommée comme blob côté front) |
 | `WebSocket` | `/ws/conversations/{id}` | tour d'orchestration streamé live (events typés en JSON) |
@@ -201,8 +202,11 @@ Composants principaux :
   les précédentes restent en aperçu (puce triangulaire pour basculer).
 - `AskHumanDialog.vue` — aller-retour humain en cours de turn (le
   router peut demander une clarification, le UI met le turn en pause).
-- `MemoryDialog.vue` — CRUD `user_memory` côté UI (save / recall /
-  list / update / delete).
+- `MemoryDialog.vue` — CRUD de la mémoire scopée côté UI (filtre par scope,
+  recherche full-text, save / recall / update / delete).
+- `MemoryReviewDialog.vue` — revue des suggestions de consolidation (badge dans
+  la barre du haut) : accepter / éditer / étendre / ignorer, citation source visible.
+- `ProjectsDialog.vue` — gestion CRUD des projets (+ sélecteur à la création).
 - `WorkspaceDialog.vue` — arbre du workspace, lecture, download
   individuel ou zip, upload.
 - `ProfileDialog.vue` — édition du profil du compte web (nom, ville,
@@ -346,20 +350,50 @@ l'escalade de compaction :
 Garantie : même si l'autocompact échoue, un message synthétique de
 fallback permet au système de toujours produire une réponse.
 
-## Mémoire long-terme utilisateur
+## Mémoire long-terme (scopée)
 
-Table `user_memory` (cf. §10 doc 06). Quatre types : `user`, `feedback`,
-`project`, `reference`. Tool unique `manage_user_memory(action, …)` avec
-5 actions : `save`, `recall`, `list`, `update`, `delete`. Granté
-uniquement à `jean-michel`.
+Table `memory` (migrate_125, généralise l'ancienne `user_memory`). Une seule
+dimension **`scope`** pilote l'inclusion — `world` (global), `user` (sur
+l'humain), `project` (un projet), `tool` (note d'usage d'un outil) — avec un
+`CHECK` qui impose exactement une cible par scope. Tool unique
+`manage_memory(action, scope, …)` : `save` / `recall` / `search` / `list` /
+`update` / `delete` + raccourcis `note_for_world|user|project|tool`. Granté à
+`jean-michel` (et aux specialists qui en ont besoin).
 
-L'index (type + code + description) est injecté automatiquement dans le
-bloc `## Human` du system prompt — le LLM voit ce dont il se souvient
-sans charger les contenus complets. Limite 100 entrées affichées,
-warning à 90.
+**Recherche full-text déterministe** : table FTS5 `memory_fts` + triggers de
+synchro, ranking **BM25** (`action='search'`). Sert le rappel *et* la détection
+de doublon/contradiction au moment de la consolidation.
 
-Bootstrap depuis `cli_profile.toml` au premier démarrage : crée une
-entrée `user/personal-profile` si la table est vide.
+**Inclusion 100 % déterministe** (aucun LLM dans ce chemin) :
+`prompts.render_memory_block`, appelé dans `load_agent_spec_v2`, injecte dans le
+bloc `## Human` un *index* (`code : description`, jamais le contenu) de : world
+(partout) + la mémoire de l'utilisateur + le projet de la conversation + les
+notes des outils **grantés à cet agent** (router ET subagents). Caps par scope
+(`config.MEMORY_*_CAP`), warning de capacité.
+
+Bootstrap depuis `cli_profile.toml` au premier démarrage : crée une entrée
+`scope='user'`, `code='personal-profile'` si l'utilisateur n'a aucune mémoire.
+
+### Projets
+
+Table `projects` (migrate_124) possédée par un user ; `conversations.project_id`
+(nullable, `ON DELETE SET NULL`) rattache une conversation à **0 ou 1** projet
+(1 projet → N conversations). CLI : `--project <code>` (créé à la volée). Web :
+gestion CRUD + sélecteur à la création (`ProjectsDialog.vue`). La mémoire
+`scope='project'` est injectée pour les conversations du projet.
+
+### Consolidation en *shadow*
+
+Après chaque tour **DEEP**, une passe LLM tourne **en arrière-plan, une fois la
+réponse émise** (pendant que l'utilisateur lit) : elle propose des mémoires
+candidates. Chaque proposition est **vérifiée déterministiquement** — une
+citation source (`grounding_quote`) doit apparaître mot pour mot dans la
+conversation, sinon la candidate est rejetée (anti-hallucination) — puis
+confrontée à la mémoire existante par recherche FTS (doublon → *extend*,
+similaire → *review*). **Rien n'est écrit sans confirmation humaine** : les
+candidates s'accumulent dans `pending_memory.json` et sont revues en fin de tour
+(CLI : commande `/memo` ; web : event `MemoryConsolidationProposed` → badge +
+`MemoryReviewDialog.vue`). Moteur : `src/jeanmichel/service/consolidation.py`.
 
 ## Persistance v2
 
@@ -723,11 +757,17 @@ Migrations v2 sous `db/migrations/` :
   file ops (`workspace_create_dir`/`delete_file`/`delete_dir`, 122), agent
   `code-runner-node` (sandbox `node-alpine`, modèle `qwen3-coder`, 123).
   Cf. [DevNotes/ORCHESTRATOR/](DevNotes/ORCHESTRATOR/).
+- `migrate_124`→`126` — **mémoire scopée + projets + consolidation** : table
+  `projects` + `conversations.project_id` (124) ; `user_memory` → `memory` avec
+  dimension `scope` (world/user/project/tool), index partiels d'unicité, FTS5 +
+  BM25, migration des rows existantes en `scope='user'` (125) ; renommage tool
+  `manage_user_memory` → `manage_memory`, paradigmes `memory_discipline` +
+  `tool_note_discipline` (126).
 
 Pour migrer une instance v1 existante :
 
 ```bash
-for m in $(seq 100 123); do
+for m in $(seq 100 126); do
   sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
 done
 ```
@@ -814,7 +854,7 @@ jeanmichel/
 │       ├── delegate_to.py    # schema (control verb)
 │       ├── report_back.py    # schema + validation (+ suggested_todo_updates)
 │       ├── todo_write.py      # TODO plat (mode code, PDCA)
-│       ├── manage_user_memory.py
+│       ├── manage_memory.py
 │       ├── clock.py, weather.py, wikipedia.py, web_search.py, web_fetch.py
 │       ├── news.py, github.py, stackoverflow.py, pypi.py
 │       ├── image_search.py, image_fetch.py, analyze_image.py  # capacités image

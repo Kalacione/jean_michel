@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,7 @@ from .events import (
     WorkingBudgetUpdate,
 )
 from .llm import OllamaClient
+from .service import consolidation as consolidation_svc
 from .service import conversation as conversation_svc
 from .service import turn_runner
 
@@ -253,6 +255,7 @@ def run_one_turn(
     console: Console,
     ask_human_cb: Callable[[str, str], str],
     initial_messages: list[dict] | None,
+    consolidate: bool = False,
 ) -> str:
     """Process one user turn end-to-end.
 
@@ -293,8 +296,11 @@ def run_one_turn(
             status.start()
 
     # Print the Tier-0 routing line once the dispatch decision is known.
+    was_deep = {"v": False}
+
     def on_dispatch(decision: Any) -> None:
         status.stop()
+        was_deep["v"] = decision.intent != "alexa"
         try:
             if decision.intent == "alexa":
                 console.print(
@@ -351,6 +357,18 @@ def run_one_turn(
                 "set JEANMICHEL_VOICE_MODEL to a Piper .onnx and ensure "
                 "paplay/aplay/ffplay is installed (see voice_models/README.md).[/]"
             )
+
+    # Shadow consolidation : after the answer is shown (the user reads/thinks),
+    # introspect in the background to propose durable memories. Non-blocking,
+    # best-effort, DEEP turns only (ALEXA single-facts hold nothing to remember).
+    # Results land in pending_memory.json ; the loop surfaces them at the next prompt.
+    if consolidate and was_deep["v"]:
+        threading.Thread(
+            target=consolidation_svc.run_shadow,
+            args=(conv_folder, conv_id),
+            kwargs={"llm": main_llm},
+            daemon=True,
+        ).start()
 
     return answer
 
@@ -476,6 +494,81 @@ def _resolve_cli_project(code: str, console: Console) -> int | None:
         return None
 
 
+def _memory_recap(console: Console, conv_folder: Path) -> None:
+    """One-line nudge if the shadow pass stashed memory candidates to review."""
+    pending = consolidation_svc.load_pending(conv_folder)
+    if pending:
+        console.print(
+            f"[dim]💡 {len(pending)} élément(s) à mémoriser — tape [/]"
+            f"[{C_TOOL}]/memo[/][dim] pour revoir.[/]"
+        )
+
+
+def review_pending(console: Console, session: PromptSession, conv_folder: Path) -> None:
+    """Interactive review of pending memory candidates : accept / edit / extend / drop.
+
+    Human-in-the-loop : nothing is written until the user confirms each item.
+    Grounded candidates show their source quote ; existing matches are surfaced
+    so the user can extend rather than duplicate."""
+    pending = consolidation_svc.load_pending(conv_folder)
+    if not pending:
+        console.print("[dim]Aucune suggestion mémoire en attente.[/]")
+        return
+
+    with db.connect() as conn:
+        uid = db.cli_user_id(conn)
+
+    remaining: list[dict] = []
+    for i, c in enumerate(pending):
+        target = c.get("tool_code") or (f"project#{c['project_id']}" if c.get("project_id") else "")
+        body = [
+            f"[bold]\\[{c['scope']}] {c['code']}[/]" + (f"  ·  {target}" if target else ""),
+            f"[bold]{c['title']}[/] — {c['description']}",
+            "",
+            c["content"],
+            "",
+            f"[dim]source : “{c['grounding_quote']}”[/]",
+        ]
+        if c.get("existing_matches"):
+            sim = ", ".join(m["code"] for m in c["existing_matches"])
+            body.append(f"[{C_WARN}]similaires existants : {sim}[/]")
+        console.print(Panel(Group(*[Text.from_markup(x) if isinstance(x, str) else x for x in body]),
+                            title=f"Suggestion {i + 1}/{len(pending)}", border_style="cyan"))
+
+        default = "x" if c["suggested_action"] == "extend" else "s"
+        choice = session.prompt(
+            HTML(f"<ansiyellow>[s]auver / [e]diter / e[x]tendre / [d]rop / [q]uitter "
+                 f"(défaut {default})</ansiyellow>: ")
+        ).strip().lower() or default
+
+        if choice == "q":
+            remaining.extend(pending[i:])  # keep this one and the rest
+            break
+        if choice == "d":
+            continue  # drop → not saved, not kept
+
+        title = c["title"]
+        description = c["description"]
+        content = c["content"]
+        if choice == "e":
+            title = (session.prompt(HTML("<ansicyan>titre</ansicyan>: "), default=title) or title).strip()
+            description = (session.prompt(HTML("<ansicyan>description</ansicyan>: "), default=description) or description).strip()
+            content = (session.prompt(HTML("<ansicyan>contenu</ansicyan>: "), default=content, multiline=True) or content).strip()
+        action = "extend" if choice == "x" else "save"
+        try:
+            with db.connect() as conn:
+                consolidation_svc.apply_candidate(
+                    conn, c, action=action, user_id=uid,
+                    title=title, description=description, content=content,
+                )
+            console.print(f"[{C_FINAL}]✓ {action} {c['scope']}/{c['code']}[/]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[{C_WARN}]✖ {exc}[/]")
+            remaining.append(c)  # keep it so the user can retry
+
+    consolidation_svc.save_pending(conv_folder, remaining)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -579,6 +672,9 @@ def main(argv: list[str] | None = None) -> int:
     # is NOT caught by `except Exception` and used to leak active rows in DB.
     try:
         while True:
+            # End-of-turn nudge : surface any memory candidates the shadow pass
+            # stashed (it ran while the user read the previous answer).
+            _memory_recap(console, conv_folder)
             try:
                 user_input = session.prompt(
                     HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
@@ -588,9 +684,13 @@ def main(argv: list[str] | None = None) -> int:
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]bye.[/]")
                 return 0
-            if user_input.strip().lower() in {"exit", "quit"}:
+            cmd = user_input.strip().lower()
+            if cmd in {"exit", "quit"}:
                 console.print("[dim]bye.[/]")
                 return 0
+            if cmd in {"/memo", "/memory"}:
+                review_pending(console, session, conv_folder)
+                continue
             if not user_input.strip():
                 continue
 
@@ -606,6 +706,7 @@ def main(argv: list[str] | None = None) -> int:
                     console=console,
                     ask_human_cb=ask_human_cb,
                     initial_messages=initial_messages,
+                    consolidate=True,
                 )
             except KeyboardInterrupt:
                 # User aborted mid-turn (Ctrl-C). Close cleanly via the

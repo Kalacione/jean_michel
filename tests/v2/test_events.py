@@ -28,7 +28,7 @@ from jeanmichel.events import (
 # ---- 12 event types are registered ---------------------------------------
 
 
-def test_event_catalogue_has_twelve_entries():
+def test_event_catalogue_has_thirteen_entries():
     expected = {
         "RequestStarted",
         "LLMCallStarted",
@@ -42,9 +42,10 @@ def test_event_catalogue_has_twelve_entries():
         "MemoryNearCapacity",
         "RequestCompleted",
         "AgentThinking",
+        "MemoryConsolidationProposed",
     }
     assert set(EVENT_CLASSES.keys()) == expected
-    assert len(EVENT_CLASSES) == 12
+    assert len(EVENT_CLASSES) == 13
 
 
 # ---- Each event has utc auto-populated -----------------------------------

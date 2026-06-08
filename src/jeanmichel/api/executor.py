@@ -23,7 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from .. import config, persistence, voice
+from ..events import MemoryConsolidationProposed
 from ..llm import OllamaClient
+from ..service import consolidation as consolidation_svc
 from ..service import turn_runner
 
 # One turn at a time across the whole daemon. asyncio.Lock binds to the running
@@ -83,7 +85,10 @@ async def run_turn_streaming(
                 msg["speak"] = phrase
         loop.call_soon_threadsafe(event_queue.put_nowait, msg)
 
+    was_deep = {"v": False}
+
     def on_dispatch(decision: Any) -> None:
+        was_deep["v"] = decision.intent != "alexa"
         loop.call_soon_threadsafe(
             event_queue.put_nowait,
             {
@@ -126,6 +131,19 @@ async def run_turn_streaming(
                 attachments=attachments,
             )
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
+            # Shadow consolidation : the answer is already on its way to the
+            # client ; introspect (DEEP turns only) and surface grounded memory
+            # candidates as a typed event. Best-effort — run_shadow never raises.
+            if was_deep["v"]:
+                cands = consolidation_svc.run_shadow(
+                    folder, conv_id, llm=main_llm, user_id=memory_user_id
+                )
+                if cands:
+                    ev = MemoryConsolidationProposed(count=len(cands), candidates=cands)
+                    persistence.append_event(folder, ev)
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait, {"type": "event", "event": ev.to_dict()}
+                    )
         except Exception as exc:  # noqa: BLE001
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "detail": str(exc)})
         finally:

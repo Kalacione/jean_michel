@@ -1,0 +1,301 @@
+"""End-of-turn memory consolidation — the *shadow* pass.
+
+Runs AFTER the response is delivered (while the human reads/thinks). The LLM
+proposes candidate memories from the conversation ; every proposal is then
+verified DETERMINISTICALLY before a human ever sees it :
+
+  1. **Grounding** — each candidate must carry a ``grounding_quote`` that is a
+     verbatim (whitespace/case-normalized) excerpt of the conversation. A
+     candidate whose quote is not found is dropped. This is the anti-hallucination
+     gate : the LLM cannot invent a fact "to please" without a real source.
+  2. **Dedup / contradiction** — for each survivor we run a deterministic FTS
+     search in its target scope and attach the existing matches (BM25-ranked),
+     so the human can *extend* an existing entry rather than duplicate it.
+
+Nothing is ever written here. Candidates accumulate in ``pending_memory.json``
+in the conversation folder ; the CLI / web review UI applies the human's choice
+via ``service.memory``.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any
+
+from .. import db, persistence
+from . import memory
+
+_log = logging.getLogger(__name__)
+
+PENDING_FILE = "pending_memory.json"
+MAX_CANDIDATES = 6
+MIN_QUOTE_CHARS = 12          # too-short quotes can't be reliably grounded
+MAX_TRANSCRIPT_CHARS = 8_000  # cap the transcript fed to the LLM
+
+CONSOLIDATION_SYSTEM_PROMPT = """You extract durable, reusable facts worth remembering long-term from a conversation. Reply with strict JSON of shape:
+{"candidates": [{"scope": "...", "code": "...", "title": "...", "description": "...", "content": "...", "grounding_quote": "...", "tool_code": "..."}]}
+
+Rules:
+- Only propose a fact that is DURABLE and reusable across future conversations. Skip one-off task details, transient state, and anything already obvious.
+- `scope`: "user" (a stable fact/preference about the human), "project" (a decision/constraint of the current project), "tool" (a reusable lesson on how to use a tool — set `tool_code`), or "world" (a globally useful fact).
+- `grounding_quote`: a VERBATIM excerpt copied from the conversation that supports the fact. If you cannot quote it, do not propose it. Never paraphrase the quote.
+- `code`: a short kebab-case slug (e.g. "prefers-terse-answers"). No spaces.
+- Keep it concise: title <= 60 chars, description <= 150, content <= 1000.
+- If nothing is worth remembering, return {"candidates": []}. Do not invent facts to be helpful.
+Output English only."""
+
+
+def _norm(s: str) -> str:
+    """Lowercase + collapse whitespace, for robust substring grounding checks."""
+    return re.sub(r"\s+", " ", (s or "").lower()).strip()
+
+
+def _transcript(messages: list[dict[str, Any]]) -> str:
+    """Render the user/assistant turns as a plain transcript (most recent kept)."""
+    lines: list[str] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            lines.append(f"{role}: {content.strip()}")
+    text = "\n".join(lines)
+    if len(text) > MAX_TRANSCRIPT_CHARS:
+        text = text[-MAX_TRANSCRIPT_CHARS:]  # keep the most recent context
+    return text
+
+
+def _clamp(s: str, n: int) -> str:
+    s = (s or "").strip()
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _target_for(scope: str, *, project_id: int | None, tool_code: str | None) -> dict[str, Any] | None:
+    """Concrete service target for a scope, or None if it can't be satisfied here."""
+    if scope == "world":
+        return {}
+    if scope == "user":
+        return {}  # filled with user_id by the caller
+    if scope == "project":
+        return {"project_id": project_id} if project_id is not None else None
+    if scope == "tool":
+        return {"tool_code": tool_code} if tool_code else None
+    return None
+
+
+def propose(
+    conn: Any,
+    messages: list[dict[str, Any]],
+    *,
+    llm: Any,
+    user_id: int,
+    project_id: int | None = None,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Analyse a conversation and return verified memory candidates (unsaved).
+
+    Deterministic guarantees : every returned candidate is grounded in the
+    transcript, has a valid scope/target/code, and carries the existing FTS
+    matches in its scope (``existing_matches`` + ``suggested_action``).
+    """
+    transcript = _transcript(messages)
+    if len(_norm(transcript)) < MIN_QUOTE_CHARS:
+        return []
+
+    try:
+        resp = llm.chat_messages(
+            messages=[
+                {"role": "system", "content": CONSOLIDATION_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Conversation transcript:\n\n{transcript}"},
+            ],
+            tools=[],
+            temperature=0.0,
+            thinking=False,
+            model=model,
+            format="json",
+        )
+        data = json.loads(resp.content or "{}")
+        raw = data.get("candidates", [])
+    except Exception as exc:  # noqa: BLE001 — best-effort ; the turn already succeeded
+        _log.debug("consolidation propose failed: %s", exc)
+        return []
+
+    norm_transcript = _norm(transcript)
+    out: list[dict[str, Any]] = []
+    for c in raw if isinstance(raw, list) else []:
+        if not isinstance(c, dict):
+            continue
+        scope = c.get("scope")
+        if scope not in memory.VALID_SCOPES:
+            continue
+        code = (c.get("code") or "").strip()
+        title = c.get("title") or ""
+        description = c.get("description") or ""
+        content = c.get("content") or ""
+        quote = c.get("grounding_quote") or ""
+        tool_code = (c.get("tool_code") or "").strip() or None
+
+        # Code must be a valid kebab slug.
+        if not code or " " in code:
+            continue
+        # Grounding gate : the quote must really appear in the conversation.
+        nq = _norm(quote)
+        if len(nq) < MIN_QUOTE_CHARS or nq not in norm_transcript:
+            continue
+
+        target = _target_for(scope, project_id=project_id, tool_code=tool_code)
+        if target is None:
+            continue  # scope can't be satisfied in this conversation (e.g. project w/o project)
+        if scope == "user":
+            target = {"user_id": user_id}
+
+        title = _clamp(title, memory.MAX_TITLE_CHARS)
+        description = _clamp(description, memory.MAX_DESCRIPTION_CHARS)
+        content = _clamp(content, memory.MAX_CONTENT_CHARS)
+        if not (title and description and content):
+            continue
+
+        # Deterministic dedup / contradiction surfacing.
+        existing = memory.recall(conn, scope=scope, code=code, **target)
+        try:
+            matches = memory.search(
+                conn, query=f"{title} {description}", scope=scope, limit=3, **target
+            )
+        except memory.MemoryOpError:
+            matches = []
+        if existing is not None:
+            action = "extend"
+        elif matches:
+            action = "review"
+        else:
+            action = "new"
+
+        out.append({
+            "scope": scope,
+            "code": code,
+            "title": title,
+            "description": description,
+            "content": content,
+            "grounding_quote": quote.strip(),
+            "tool_code": tool_code,
+            "project_id": project_id if scope == "project" else None,
+            "suggested_action": action,
+            "existing_matches": [
+                {k: m.get(k) for k in ("code", "title", "description", "score")} for m in matches
+            ],
+        })
+        if len(out) >= MAX_CANDIDATES:
+            break
+    return out
+
+
+# ---- pending persistence (per conversation) -------------------------------
+
+def _pending_path(conv_folder: Path) -> Path:
+    return conv_folder / PENDING_FILE
+
+
+def load_pending(conv_folder: Path) -> list[dict[str, Any]]:
+    path = _pending_path(conv_folder)
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def save_pending(conv_folder: Path, candidates: list[dict[str, Any]]) -> None:
+    persistence._atomic_write_text(
+        _pending_path(conv_folder), json.dumps(candidates, ensure_ascii=False, indent=2)
+    )
+
+
+def _key(c: dict[str, Any]) -> tuple:
+    return (c.get("scope"), c.get("code"), c.get("project_id"), c.get("tool_code"))
+
+
+def add_pending(conv_folder: Path, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge ``new`` into the pending file (dedup by scope/code/target), newest wins."""
+    existing = load_pending(conv_folder)
+    by_key = {_key(c): c for c in existing}
+    for c in new:
+        by_key[_key(c)] = c
+    merged = list(by_key.values())
+    save_pending(conv_folder, merged)
+    return merged
+
+
+def clear_pending(conv_folder: Path) -> None:
+    _pending_path(conv_folder).unlink(missing_ok=True)
+
+
+# ---- shadow entry point (called by the CLI / API after the response) ------
+
+def run_shadow(
+    conv_folder: Path,
+    conv_id: str,
+    *,
+    llm: Any,
+    user_id: int | None = None,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Self-contained shadow pass : propose + stash to pending. Returns NEW candidates.
+
+    Best-effort : never raises (the turn already succeeded). Resolves the
+    conversation's project + the memory owner itself, so callers only inject
+    the conversation handle + an LLM.
+    """
+    try:
+        messages = persistence.load_messages(conv_folder)
+        with db.connect() as conn:
+            uid = user_id if user_id is not None else db.cli_user_id(conn)
+            row = conn.execute(
+                "SELECT project_id FROM conversations WHERE id=?", (conv_id,)
+            ).fetchone()
+            project_id = row["project_id"] if row is not None else None
+            candidates = propose(
+                conn, messages, llm=llm, user_id=uid, project_id=project_id, model=model
+            )
+        if candidates:
+            add_pending(conv_folder, candidates)
+        return candidates
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("shadow consolidation failed: %s", exc)
+        return []
+
+
+def apply_candidate(
+    conn: Any,
+    candidate: dict[str, Any],
+    *,
+    action: str,
+    user_id: int,
+    title: str | None = None,
+    description: str | None = None,
+    content: str | None = None,
+) -> dict[str, Any]:
+    """Write an (optionally edited) candidate to memory. ``action`` is 'save' or 'extend'.
+
+    Reuses ``service.memory`` (single validation source). For 'extend' it updates
+    the existing entry sharing the candidate's (scope, target, code)."""
+    scope = candidate["scope"]
+    target: dict[str, Any] = {}
+    if scope == "user":
+        target = {"user_id": user_id}
+    elif scope == "project":
+        target = {"project_id": candidate.get("project_id")}
+    elif scope == "tool":
+        target = {"tool_code": candidate.get("tool_code")}
+    t = title if title is not None else candidate["title"]
+    d = description if description is not None else candidate["description"]
+    ct = content if content is not None else candidate["content"]
+    if action == "extend":
+        memory.update(conn, scope=scope, code=candidate["code"],
+                      title=t, description=d, content=ct, **target)
+        return {"action": "extend", "scope": scope, "code": candidate["code"]}
+    saved = memory.save(conn, scope=scope, code=candidate["code"],
+                        title=t, description=d, content=ct, **target)
+    return {"action": "save", **saved}

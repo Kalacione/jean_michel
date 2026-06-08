@@ -17,6 +17,7 @@ export const useConvStore = defineStore('conversations', () => {
   const wsFiles = ref([]) // workspace file paths of the current conversation
   const wsOpen = ref(false) // WorkspaceDialog open state (shared across components)
   const wsInitialPath = ref('') // file to auto-open when the WorkspaceDialog opens
+  const pendingMemory = ref([]) // shadow-consolidation candidates awaiting review
 
   let turnWs = null
 
@@ -88,6 +89,7 @@ export const useConvStore = defineStore('conversations', () => {
     closeWs()
     currentId.value = id
     error.value = ''
+    pendingMemory.value = []
     const meta = list.value.find(c => c.id === id)
     vocal.value = meta?.mode === 'vocal'
     const loaded = (await api.messages(id)).messages
@@ -107,6 +109,10 @@ export const useConvStore = defineStore('conversations', () => {
       event: m => {
         trace.value.push(m)
         if (vocal.value && m.speak) speak(m.speak)
+        // Shadow consolidation result : surface candidates for human review.
+        if (m.event?.type === 'MemoryConsolidationProposed') {
+          pendingMemory.value = m.event.candidates || []
+        }
       },
       ask_human: m => { askHuman.value = { question: m.question, why: m.why } },
       queued: () => { queued.value = true },
@@ -209,11 +215,15 @@ export const useConvStore = defineStore('conversations', () => {
     askHuman.value = null
   }
 
+  function dismissMemory (candidate) {
+    pendingMemory.value = pendingMemory.value.filter(c => c !== candidate)
+  }
+
   return {
     list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
-    wsFiles, wsOpen, wsInitialPath,
+    wsFiles, wsOpen, wsInitialPath, pendingMemory,
     refresh, create, select, sendTurn, answer, rename, remove, reset,
-    fetchWsFiles, openWorkspace,
+    fetchWsFiles, openWorkspace, dismissMemory,
     loadSnapshots, revert, fork, reloadCurrent,
   }
 })

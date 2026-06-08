@@ -225,13 +225,11 @@ def test_smoke_code_mode_factorial(v2_db_for_smoke, tmp_path):
     conv_folder.mkdir()
 
     with db.connect() as conn:
-        user_memory_block, _ = render_user_memory_index(conn)
         agent = load_agent_spec_v2(
             conn,
             "jean-michel",
             mode="code",
             user_profile_text=UserProfile().render(),
-            user_memory_block=user_memory_block,
             user_language=user_lang,
         )
         # Mirror turn_runner : 'code' mode swaps the router onto CODE_MODEL.
