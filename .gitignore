@@ -124,3 +124,6 @@ dist/
 **/dist/
 build/
 **/build/
+
+# graphify build artifacts (regenerate with: graphify update .)
+graphify-out/
