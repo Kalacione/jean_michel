@@ -2,7 +2,14 @@
 
 **Date** : 2026-06-08 · **Version testée** : graphify `0.8.35` · **Verdict : GO comme outil dev
 local** (extraction code-only déterministe + nommage des communautés 100 % local via Ollama,
-validés). Étape 2 (tool MCP pour jean-michel) reste à revalider — voir blocage ci-dessous.
+validés). **Étape 2 (tool MCP pour jean-michel) : VIABLE** — le serveur MCP HTTP existe bien
+(`python -m graphify.serve … --transport http`), juste pas exposé dans `--help`. Voir §Étape 2.
+
+**Modèle Ollama retenu : `qwen2.5-coder:7b`** (installé). C'est le **défaut natif** du backend
+ollama de graphify (donc zéro override `OLLAMA_MODEL`), code-tuned : noms de communautés
+précis et en anglais propre (« Main Agent Loop », « Persistence Layer », « Request Dispatcher »,
+« Git Snapshots for Conversations », « ALEXA Decision Execution »…), ~48 s pour 290 communautés.
+Nettement meilleur que `granite4.1:8b` (qui glissait en franglais). ~4.7 Go, local, gratuit.
 
 ## Setup retenu
 
@@ -35,10 +42,11 @@ ignorés dans la 0.8.35 — ne PAS compter dessus) :
 export PATH="$HOME/.local/bin:$PATH"
 unset OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY   # aucune clé cloud (sinon graphify les préfère)
 export OLLAMA_BASE_URL="http://localhost:11434/v1"      # sa PRÉSENCE => detect_backend() choisit 'ollama'
-export OLLAMA_MODEL="granite4.1:8b"                     # réutilise notre modèle local (override du défaut)
+# OLLAMA_MODEL : inutile désormais — qwen2.5-coder:7b est le DÉFAUT du backend ollama, et il est installé.
+# (override possible : export OLLAMA_MODEL="granite4.1:8b" pour réutiliser le modèle dispatcher.)
 
 graphify update .          # 1) graphe code-only déterministe (tree-sitter, no LLM) — ~5 s
-graphify label .           # 2) nomme les communautés via Ollama local — ~50 s, 0 token cloud
+graphify label .           # 2) nomme les communautés via Ollama local (qwen2.5-coder:7b) — ~48 s, 0 token cloud
 ```
 
 Pourquoi ces 2 vars précisément (lu dans `graphify/llm.py`) :
@@ -80,9 +88,9 @@ graphify update .    # "re-extracting code files (no LLM needed)"
 
 1. **Communautés non nommées sans LLM** — ⟶ **RÉSOLU localement** : sans backend, les 290
    communautés restent `Community N`. Mais le nommage tourne **100 % en local via Ollama**
-   (granite4.1:8b, ~50 s, 0 token cloud) — voir la recette validée ci-dessus. Donc plus une
+   (`qwen2.5-coder:7b`, ~48 s, 0 token cloud) — voir la recette validée ci-dessus. Donc plus une
    vraie limitation pour nous. (Piège : `--backend ollama`/`--model` sur `label` sont ignorés
-   dans la 0.8.35 ; utiliser les variables d'env `OLLAMA_BASE_URL` + `OLLAMA_MODEL`.)
+   dans la 0.8.35 ; utiliser les variables d'env `OLLAMA_BASE_URL` (+ `OLLAMA_MODEL` si override).)
 2. **Ambiguïté de labels** sur `path`/`affected` : `affected "ConversationState"` → « No unique
    node match » (def + références multiples). Il faut viser un label unique ou l'ID de node
    (`jeanmichel_orchestrator_v2_run_main_loop`). Friction réelle pour un usage agent/LLM.
@@ -90,34 +98,58 @@ graphify update .    # "re-extracting code files (no LLM needed)"
    ramène des nœuds Markdown (HOWTO, `docs/system_prompts/claude-code.md`) mêlés au code.
    Pour un graphe purement structurel, exclure aussi `*.md`/`docs/` du `.graphifyignore` ;
    sinon accepter que les docs ajoutent du contexte navigationnel.
-4. **⚠ Bloquant pour l'étape 2 (MCP)** : la CLI `0.8.35` n'expose **PAS** de commande `serve`
-   ni de flag `--mcp`/`--transport` (vérifié : absent de `--help`). Le « serveur MCP HTTP »
-   évoqué par des sources tierces n'est donc pas disponible tel quel dans cette version.
-   L'intégration MCP de l'étape 2 doit être **revalidée** : identifier la vraie version/commande
-   (`python -m graphify.serve` ? skill-based hooks ? version plus récente ?) AVANT de s'engager.
-   La voie « skill IDE » (`graphify install --platform claude`) écrit un hook PreToolUse dans
-   `CLAUDE.md` — non pertinent pour notre orchestrateur maison.
+4. **Étape 2 (MCP) — PAS bloquée** (correction d'une conclusion hâtive) : le serveur MCP
+   n'est pas une sous-commande CLI mais le **module** `graphify/serve.py`, lançable via
+   `python -m graphify.serve …`. Il supporte `--transport http` (Streamable HTTP) — voir §Étape 2.
+   Seul prérequis : ajouter le paquet `mcp` à l'env (`uv tool install "graphifyy[openai]"
+   --with mcp` ; `import mcp` échoue sinon). La voie « skill IDE » (`graphify install`) écrit un
+   hook PreToolUse dans `CLAUDE.md` — non pertinent pour notre orchestrateur maison ; on vise
+   le serveur HTTP + notre client MCP existant.
 
 ## Recommandation
 
 - **Adopter comme outil DEV local maintenant** : `graphify update .` à la demande pour
   naviguer/auditer notre propre codebase (God Nodes, cycles, `explain`/`path`/`affected`).
   Coût ~0, déterministe, local. Le `.graphifyignore` est committé ; `graphify-out/` ignoré.
-- **Étape 2 (MCP pour jean-michel) : NE PAS lancer en l'état.** Bloquée par l'absence de
-  serveur MCP HTTP dans la version installée. À rouvrir seulement après avoir confirmé une
-  commande `serve --transport http` réelle (sinon il faudrait wrapper la CLI
-  `query`/`path`/`explain`/`affected` dans un tool natif — option de repli, plus de code).
+- **Étape 2 (MCP pour jean-michel) : VIABLE, à prototyper.** Le serveur MCP HTTP existe
+  (`graphify/serve.py`). Aucun code cœur nouveau côté jean-michel — on réutilise le client MCP
+  opt-in. Voir la recette §Étape 2 ci-dessous. Pré-requis : paquet `mcp` dans l'env graphify.
 - **Étape 3 (codebase arbitraire)** : reste différée.
+
+## Étape 2 — recette de lancement (MCP HTTP, à valider)
+
+```bash
+# 1) ajouter le paquet mcp à l'env isolé de graphify
+uv tool install "graphifyy[openai]" --with mcp --python 3.12 --force
+
+# 2) (pré-requis) un graphe construit : graphify update .  (+ graphify label . pour les noms)
+
+# 3) servir le graphe en MCP Streamable HTTP, scopé à NOTRE repo, avec auth
+GRAPHIFY_API_KEY="$(openssl rand -hex 16)" \
+  python -m graphify.serve graphify-out/graph.json \
+    --transport http --host 127.0.0.1 --port 8080 --path /mcp --api-key "$GRAPHIFY_API_KEY"
+```
+
+Côté jean-michel (`mcp_servers.toml`, gitignoré ; plomberie MCP déjà en place) :
+```toml
+[servers.graphify]
+url = "http://127.0.0.1:8080/mcp"
+category = "code"            # => exposé à jean-michel + code-fetcher (mapping existant)
+auth_env = "GRAPHIFY_MCP_TOKEN"   # même valeur que GRAPHIFY_API_KEY ci-dessus
+```
+→ outils exposés en `mcp__graphify__{query_graph,get_node,get_neighbors,get_community,god_nodes,
+graph_stats,shortest_path,…}`, gatés par les grants existants. **À valider** : compat exacte du
+schéma d'auth (header) entre notre client MCP et `serve.py`, et fraîcheur du graphe (git hook
+`graphify hook install` ou `graphify update .` au commit).
 
 ## Commandes utiles
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-# naming local (optionnel) — 2 vars suffisent, pas de clé cloud :
+# naming local (optionnel) — 1 var suffit (modèle défaut qwen2.5-coder:7b installé), pas de clé cloud :
 export OLLAMA_BASE_URL="http://localhost:11434/v1"
-export OLLAMA_MODEL="granite4.1:8b"
 
 graphify update .                      # rebuild code graph (tree-sitter, no LLM) — déterministe
-graphify label .                       # nomme les communautés via Ollama local (~50 s)
+graphify label .                       # nomme les communautés via Ollama local (qwen2.5-coder:7b, ~48 s)
 graphify explain "run_main_loop()"     # node + voisins typés
 graphify path "A()" "B()"              # plus court chemin
 graphify affected "X()"                # impact inverse (label unique requis)
