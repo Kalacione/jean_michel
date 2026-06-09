@@ -64,6 +64,14 @@ class _ServerCfg:
     auth_scheme: str = "Bearer"
     tools: tuple[str, ...] | None = None
     timeout_seconds: int | None = None
+    enabled_env: str | None = None  # if set, connect ONLY when this env var is truthy
+
+    def disabled(self) -> bool:
+        """A gated server is off unless its ``enabled_env`` is truthy (opt-in)."""
+        if not self.enabled_env:
+            return False
+        val = (os.environ.get(self.enabled_env) or "").strip().lower()
+        return val in ("", "0", "false", "no", "off")
 
     def auth_missing(self) -> bool:
         return bool(self.auth_env) and not os.environ.get(self.auth_env)
@@ -110,6 +118,7 @@ def _load_config() -> tuple[dict[str, _ServerCfg], dict[str, list[str]]]:
             auth_scheme=s.get("auth_scheme", "Bearer"),
             tools=tuple(tools) if tools else None,
             timeout_seconds=s.get("timeout_seconds"),
+            enabled_env=s.get("enabled_env"),
         )
     categories = {k: list(v) for k, v in (data.get("categories") or {}).items()}
     return servers, categories
@@ -165,6 +174,9 @@ class MCPManager:
         self._stop_event = asyncio.Event()
         ready: list[asyncio.Event] = []
         for cfg in self._servers.values():
+            if cfg.disabled():
+                _log.debug("mcp: %s gated off (%s not truthy); skipping.", cfg.name, cfg.enabled_env)
+                continue
             ev = asyncio.Event()
             ready.append(ev)
             self._loop.create_task(self._holder(cfg, ev))  # type: ignore[union-attr]

@@ -40,6 +40,7 @@ auth_env = "GITHUB_MCP_TOKEN"                # set the value in .env (a GitHub P
 url = "http://127.0.0.1:8765/mcp"
 category = "code"
 auth_env = "GRAPHIFY_MCP_TOKEN"
+enabled_env = "JEANMICHEL_GRAPHIFY_ENABLED"  # contacté UNIQUEMENT si cette var est vraie (opt-in par projet)
 
 # ---- Category → agents ------------------------------------------------------
 # Which agents receive each category's servers. Adding a new server in an

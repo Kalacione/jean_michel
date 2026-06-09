@@ -55,3 +55,49 @@ def test_unmapped_agent_payload_excludes_mcp(tmp_db_v2, monkeypatch):
     assert "mcp__fake__do" in registry
     payload_names = {p["function"]["name"] for p in _build_tools_payload(ma, registry)}
     assert "mcp__fake__do" not in payload_names
+
+
+# ---- enabled_env gating + tool-gated paradigms (graphify) -------------------
+
+def _graphify_manager() -> MCPManager:
+    """Fake manager exposing mcp__graphify__query_graph in category 'code'
+    (→ granted to jean-michel + code-fetcher)."""
+    servers = {"graphify": _ServerCfg(name="graphify", url="x", category="code")}
+    mgr = MCPManager(servers, {"code": ["jean-michel", "code-fetcher"]})
+    mgr._build_specs(
+        servers["graphify"],
+        [SimpleNamespace(name="query_graph", description="d", inputSchema={"type": "object"})],
+    )
+    return mgr
+
+
+def test_enabled_env_gates_server(monkeypatch):
+    cfg = _ServerCfg(name="g", url="x", category="code", enabled_env="JM_GPF_X")
+    monkeypatch.delenv("JM_GPF_X", raising=False)
+    assert cfg.disabled() is True          # unset → off
+    monkeypatch.setenv("JM_GPF_X", "0")
+    assert cfg.disabled() is True          # falsy → off
+    monkeypatch.setenv("JM_GPF_X", "1")
+    assert cfg.disabled() is False         # truthy → on
+    monkeypatch.setenv("JM_GPF_X", "true")
+    assert cfg.disabled() is False
+    # No enabled_env declared → never gated.
+    assert _ServerCfg(name="g", url="x", category="code").disabled() is False
+
+
+def test_graphify_paradigm_hidden_without_tool(tmp_db_v2):
+    """requires_tool gate : the graphify paradigm is absent when no graphify tool is granted."""
+    with db.connect() as conn:
+        jm = load_agent_spec_v2(conn, "jean-michel", mode="code")
+    assert "mcp__graphify__" not in jm.system_prompt
+
+
+def test_graphify_paradigm_shown_with_tool(tmp_db_v2, monkeypatch):
+    """When the graphify tool is granted this session, its routing paradigm appears."""
+    monkeypatch.setattr(mcp_client, "_manager", _graphify_manager())
+    with db.connect() as conn:
+        jm = load_agent_spec_v2(conn, "jean-michel", mode="code")
+        cf = load_agent_spec_v2(conn, "code-fetcher", mode="code")
+    assert "mcp__graphify__query_graph" in jm.tool_grants
+    assert "mcp__graphify__" in jm.system_prompt          # paradigm content injected
+    assert "mcp__graphify__" in cf.system_prompt          # bound to code-fetcher too

@@ -976,6 +976,14 @@ def load_agent_spec_v2(
     # gate (PreToolUse) + the LLM tools payload both read tool_grants.
     from . import mcp_client
     tool_grants = tool_grants | mcp_client.get_manager().granted_tool_names_for(agent_code)
+    # Tool-gated paradigms : a paradigm with `requires_tool` is injected ONLY when
+    # the agent actually has a matching tool this session (e.g. the graphify routing
+    # paradigm appears only when `mcp__graphify__*` tools are available). Keeps
+    # prompts honest — no advice about tools the agent can't call.
+    paradigms = [
+        p for p in paradigms
+        if not p.requires_tool or any(t.startswith(p.requires_tool) for t in tool_grants)
+    ]
     delegation_targets = frozenset(_db.load_delegation_targets(conn, row["id"]))
 
     # Load (code, role, mission) for each delegation target so the system

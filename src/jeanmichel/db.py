@@ -60,24 +60,37 @@ def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
 
 # ---- Paradigms ------------------------------------------------------------
 
-def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int, mode: str) -> list[Paradigm]:
-    """Globals + paradigms explicitly bound to this agent, filtered by mode, ordered."""
-    rows = conn.execute(
-        """
+_PARADIGM_SELECT = """
         SELECT s.code AS section_code, c.code AS category_code, c.title AS category_title,
-               p.code, p.title, p.content
+               p.code, p.title, p.content{requires_tool}
         FROM paradigms p
         JOIN categories c ON c.id = p.category_id
         JOIN sections   s ON s.id = c.section_id
+        {join}
         WHERE p.active = 1 AND c.active = 1 AND s.active = 1
           AND ( p.is_global = 1
                 OR p.id IN (SELECT paradigm_id FROM agent_paradigms WHERE agent_id = ?) )
           AND ( NOT EXISTS (SELECT 1 FROM paradigm_modes pm WHERE pm.paradigm_id = p.id)
                 OR EXISTS  (SELECT 1 FROM paradigm_modes pm WHERE pm.paradigm_id = p.id AND pm.mode = ?) )
         ORDER BY s.order_priority, c.order_priority, p.order_priority, p.id
-        """,
-        (agent_id, mode),
-    ).fetchall()
+        """
+
+
+def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int, mode: str) -> list[Paradigm]:
+    """Globals + paradigms explicitly bound to this agent, filtered by mode, ordered.
+
+    Carries ``requires_tool`` (from the optional ``paradigm_requires_tool`` table) so
+    the caller can gate a paradigm on the agent actually having that tool. Falls back
+    to the un-gated query when the table is absent (migrate_127 not yet applied)."""
+    try:
+        sql = _PARADIGM_SELECT.format(
+            requires_tool=", prt.tool_prefix AS requires_tool",
+            join="LEFT JOIN paradigm_requires_tool prt ON prt.paradigm_id = p.id",
+        )
+        rows = conn.execute(sql, (agent_id, mode)).fetchall()
+    except sqlite3.OperationalError:
+        sql = _PARADIGM_SELECT.format(requires_tool="", join="")
+        rows = conn.execute(sql, (agent_id, mode)).fetchall()
     return [Paradigm(**dict(r)) for r in rows]
 
 

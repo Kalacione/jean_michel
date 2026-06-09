@@ -27,6 +27,7 @@ class Paradigm:
     code: str
     title: str
     content: str
+    requires_tool: str | None = None  # only inject when a granted tool starts with this prefix
 
 
 @dataclass

@@ -63,6 +63,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_124_projects.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_125_memory_scopes.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_126_memory_paradigms.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_127_graphify_paradigm.sql")
     yield conn
     conn.close()
 
@@ -184,7 +185,7 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 
 
 def test_total_active_paradigms_count(v2_migrated_db):
-    """Sanity : the migration chain produces 119 active paradigms.
+    """Sanity : the migration chain produces 120 active paradigms.
 
     104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
     + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
@@ -200,12 +201,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_117_image_display_routing (show_images_inline)
     + 1 from migrate_120_coding_decomposition (pdca_decompose_delegate_revise)
     + 1 from migrate_126_memory_paradigms (tool_note_discipline ;
-        user_memory_discipline is renamed to memory_discipline, not added).
+        user_memory_discipline is renamed to memory_discipline, not added)
+    + 1 from migrate_127_graphify_paradigm (graphify_codebase_navigation).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 119
+    assert row["c"] == 120
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -329,7 +331,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 119
+    assert n == 120
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
