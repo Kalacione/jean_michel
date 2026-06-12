@@ -173,7 +173,10 @@ def _graphify_slice(identifiers: list[str]) -> str:
         out = (proc.stdout or "").strip()
         if proc.returncode == 0 and out and "no unique node" not in out.lower():
             blocks.append(f"### {ident}\n" + "\n".join(out.splitlines()[:25]))
-    return "\n\n".join(blocks)
+    if not blocks:
+        return ""
+    # The graph reflects the last build/commit; uncommitted edits live in the diff slice.
+    return "\n\n".join(blocks) + "\n\n(graph = last committed state; see 'Recent changes' for newer edits)"
 
 
 def build_context_packet(

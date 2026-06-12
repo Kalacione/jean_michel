@@ -668,6 +668,11 @@ INSERT INTO agent_tools VALUES(18,'repo_write');
 INSERT INTO agent_tools VALUES(17,'repo_read');
 INSERT INTO agent_tools VALUES(17,'repo_grep');
 INSERT INTO agent_tools VALUES(17,'repo_glob');
+-- migrate_129: structured test runner + code-graph refresh for the coding workers.
+INSERT INTO agent_tools VALUES(12,'repo_test');
+INSERT INTO agent_tools VALUES(12,'repo_graph_refresh');
+INSERT INTO agent_tools VALUES(18,'repo_test');
+INSERT INTO agent_tools VALUES(18,'repo_graph_refresh');
 INSERT INTO agent_tools VALUES(2,'workspace_list');
 INSERT INTO agent_tools VALUES(2,'workspace_view');
 INSERT INTO agent_tools VALUES(3,'workspace_list');

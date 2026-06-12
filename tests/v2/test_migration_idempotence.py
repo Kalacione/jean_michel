@@ -65,6 +65,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_126_memory_paradigms.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_127_graphify_paradigm.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_129_repo_test.sql")
     yield conn
     conn.close()
 
@@ -491,13 +492,29 @@ def test_repo_tools_granted(v2_migrated_db, v2_consolidated_db):
         assert "code-fetcher" not in codes("repo_write")
 
 
+_P1_REPO_TOOLS = "('repo_read','repo_grep','repo_glob','repo_edit','repo_write')"
+
+
 def test_migrate_128_idempotent(v2_migrated_db):
     """migrate_128 (INSERT OR IGNORE) can be re-applied without duplicate grants."""
-    n1 = v2_migrated_db.execute(
-        "SELECT COUNT(*) AS c FROM agent_tools WHERE tool_code LIKE 'repo_%'"
-    ).fetchone()["c"]
+    q = f"SELECT COUNT(*) AS c FROM agent_tools WHERE tool_code IN {_P1_REPO_TOOLS}"
+    n1 = v2_migrated_db.execute(q).fetchone()["c"]
     _apply_sql(v2_migrated_db, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
-    n2 = v2_migrated_db.execute(
-        "SELECT COUNT(*) AS c FROM agent_tools WHERE tool_code LIKE 'repo_%'"
-    ).fetchone()["c"]
+    n2 = v2_migrated_db.execute(q).fetchone()["c"]
     assert n1 == n2 == 13  # 5 (code-runner) + 5 (code-runner-node) + 3 (code-fetcher)
+
+
+def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
+    """migrate_129 + schema.sql grant repo_test + repo_graph_refresh to the workers only."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        def codes(tool):
+            return {
+                r["code"]
+                for r in db.execute(
+                    "SELECT a.code FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
+                    "WHERE at.tool_code = ?", (tool,)
+                )
+            }
+        for tool in ("repo_test", "repo_graph_refresh"):
+            assert codes(tool) >= {"code-runner", "code-runner-node"}, tool
+            assert "code-fetcher" not in codes(tool), tool  # lookup agent doesn't run code
