@@ -1,5 +1,108 @@
 # Plan — Jean-Michel : intervention codebase réelle + contexte déterministe + délibération dialectique
 
+> ## ✅ STATUT 2026-06-12 — P0→P6 LIVRÉS (709 tests verts, opt-in `CODE_WORKTREE_ENABLED`)
+>
+> | Phase | Pièces clés (livrées + testées) |
+> |---|---|
+> | **P0** | `worktree.py` + config `PROJECT_ROOT`/`REPO_PROTECTED_PATHS` + câblage `conversation.py` |
+> | **P1** | `repo_read/grep/glob/edit/write` (`_repo.py`) + gates read-before-edit/fraîcheur/protected · migrate_128 |
+> | **P2** | `context_packet.py` (CRP) câblé dans `spawn_subagent` |
+> | **P3** | `repo_test` (structuré) + `repo_graph_refresh` + graphify→code-runner · migrate_129 |
+> | **P4** | paradigmes `repo_intervention_discipline` + `prefer_repo_tools_over_bash` (code-mode, 2 workers) · migrate_130 |
+> | **P5** | `critical-coder` + `sergent-kiss` + `deliberation.py` (amont+aval, REWORK≤2) · migrate_131 |
+> | **P6** | `--synoptic` + `--orchestrator-map` (docs générés) · fix comparator (migrate_132) · **summarizer CONSERVÉ** |
+>
+> **Ajouts hors-plan (session) :** graphify auto-start aussi en `--serve` (parité CLI) ; `--help` complété ;
+> conflit de port 8765 corrigé (paradigm-matrix → 8770) ; `repo_test` auto-détecte l'interpréteur ;
+> conftest épingle `CODE_WORKTREE_ENABLED=off` (déterminisme suite). **Tout non committé** (commit manuel, phase/phase).
+>
+> ### Reste à faire
+> 1. **Validation E2E réelle — LE test de la thèse** : Ollama + `CODE_WORKTREE_ENABLED=1` + graphify servi,
+>    une vraie petite feature multi-fichiers en `--mode code`. Tableau de bord : `--synoptic` + `--orchestrator-map`.
+>    Puis rejouer avec un **codeur plus petit** → valider « contexte solide ⇒ petit modèle suffit ».
+> 2. **Tuning post-observation** : seuils `complexity_probe` ; `sergent-kiss` `model_override` (NULL aujourd'hui) ;
+>    diff aval (actuellement diff worktree complet → affiner au delta du step si bruyant).
+> 3. **Non-régression** : rejouer hors mode code (research/chat/vocal/comparaison) → zéro fuite.
+> 4. **Optionnel** : auditer/rafraîchir la GUI `paradigm-matrix` (signalée « peut-être pas à jour »).
+
+---
+
+# ROUND 2 — plan d'exécution (2026-06-12)
+
+Quatre chantiers décidés avec l'utilisateur : commits, refresh paradigm-matrix, et **2 docs**
+(prép E2E/tuning + design « brancher un repo » — *design only ce tour, impl. plus tard*).
+
+## W1 — Commits (branche `new_thinking` ; JAMAIS de trailer `Co-Authored-By`)
+
+P0–P5 sont déjà committés. Le non-committé (P6 + finitions session) part en **2 commits à fichiers
+disjoints** (pas de `git add -p`, non supporté) :
+
+- **Commit A** — *« P6 : synoptic + carte déterminisme orchestrateur (générés) + fix whitelist comparator + finitions jm.sh »*
+  `src/jeanmichel/synoptic.py`, `orchestrator_map.py`, `tests/v2/test_synoptic.py`,
+  `test_orchestrator_map.py`, `docs/agents_synoptic.md`, `docs/orchestrator_determinism.md`,
+  `db/migrations/migrate_132_comparator_delegation.sql`, `db/schema.sql`,
+  `tests/v2/test_migration_idempotence.py`, `README.md`, `jm.sh`, `debug/paradigm_matrix.py`.
+  (jm.sh porte `--synoptic`/`--orchestrator-map` + auto-start graphify en `--serve` + fix help/port.)
+- **Commit B** — *« repo_test : auto-détection de l'interpréteur + bloc code-mode .env.example + pin déterminisme suite »*
+  `src/jeanmichel/config.py`, `src/jeanmichel/tools/repo_test.py`, `tests/v2/test_repo_test_tool.py`,
+  `tests/v2/conftest.py`, `.env.example`.
+- `.env` (live) est **gitignored** → `CODE_WORKTREE_ENABLED=1` n'est pas committé (correct).
+- `pytest tests/v2` doit être vert avant (709/5). Messages courts, FR, sans trailer.
+
+## W2 — Refresh paradigm-matrix (`debug/paradigm_matrix.py`)
+
+La GUI lit la DB en live (agents 19/20 + paradigmes 147/148 apparaissent déjà) mais :
+- **CRITIQUE** : l'UI code en dur 3 modes → le mode **`code` est invisible** (paradigmes 142,145-148
+  perdent leur toggle). Ajouter `'code'` à `MODES_LIST` + `MODES_SHORT` (`Cd`) + rendre la 4ᵉ colonne
+  (le read/write de `paradigm_modes` est déjà générique). Anchors : ~501-502, 508-511, 549-555.
+- **IMPORTANT** : exposer `agents.model_override` (SELECT l.39 + affichage colonne/tooltip).
+- *Optionnel* : afficher `paradigm_requires_tool` (lecture seule, ex. graphify) + grouper par rôle.
+- *Vérif* : `./jm.sh --paradigm-matrix` (port 8770) → les paradigmes code montrent `Cd`, model_override visible.
+
+## W3 — Doc `docs/20260612_improve_thinking/E2E_and_tuning.md` (pour ne pas oublier)
+
+- **Protocole E2E réel** : `CODE_WORKTREE_ENABLED=1` (déjà) + graphify auto-servi (CLI), une vraie
+  petite feature multi-fichiers en `--mode code` sur le repo. Checklist d'observation (worktree
+  `jm/conv-id` créé · tree live propre · Context Packet dans le briefing worker · gate read-before-edit ·
+  `repo_test` structuré · délibération tracée dans `events.jsonl` sur step dur · diff revu + `kiss_review`).
+  Tableau de bord : `--synoptic` + `--orchestrator-map`.
+- **Test de la thèse petit modèle** : rejouer la même tâche avec `code-runner.model_override` rétréci.
+- **Checklist de tuning** (post-observation) : seuils `complexity_probe` (`_HARD_KEYWORDS`, ≥N fichiers) ·
+  `sergent-kiss.model_override` (NULL → plus fort si faible) · scope du diff aval (worktree complet →
+  delta du step) · coût délibération vs valeur · caps des tranches CRP.
+
+## W4 — Doc `docs/20260612_improve_thinking/branchable_repo_design.md` (design, impl. plus tard)
+
+« Brancher un repo » dynamiquement — **décision : attache au niveau PROJET** (convs code héritent ;
+fallback `PROJECT_ROOT` → rétro-compatible ; CLI inchangé).
+
+- **Stockage** : `migrate_133` → `projects.code_repo TEXT DEFAULT ''` + `projects.repo_kind TEXT
+  CHECK(repo_kind IN ('local','ssh')) DEFAULT 'local'` ; miroir `schema.sql` ; `db.create_project/
+  update_project/get_project` + `service/project.py`.
+- **Matérialisation** (`worktree.py`) : `create_worktree(conv_folder, conv_id, source, kind)` —
+  *local* → worktree depuis le chemin ; *ssh* → **clone caché par projet** (`repos-cache/<project_id>/repo`,
+  hors `conversations/`, lock anti-course) puis worktree depuis le clone. `source` vide → `config.PROJECT_ROOT`.
+- **Threading** : `conversation.create_conversation` lit `code_repo`/`repo_kind` du projet → `worktree`.
+  `repo_test._default_python`, `repo_graph_refresh`, `context_packet._graphify_slice` : pointer sur la
+  **racine du worktree** (le checkout EST le repo) au lieu de `config.PROJECT_ROOT`. Les outils repo
+  (`_repo.worktree_root(conv_folder)`) sont déjà per-conv → inchangés.
+- **API + front** : `ProjectSaveRequest`/`ProjectUpdateRequest` (api/app.py) + champ
+  « Dépôt de code (chemin local ou URL SSH) » + select kind dans `web/src/components/ProjectsDialog.vue`
+  (le drawer de conv montre juste mode+projet, hérite).
+- **SSH/sécurité** : clone via clés ssh de l'hôte ; outils repo tournent sur l'hôte (repo de confiance,
+  posé par le propriétaire du projet) ; documenter le prérequis clés ; échecs de clone → dégradation propre.
+- **Bonus git** (todo.md) : outil lecture seule `repo_git` (log/diff/blame/show) pour l'historique en mode repo.
+- **Bug à corriger au passage** : `db.list_conversations_for_user` (SELECT ~l.318) omet `project_id`.
+- *Numéro de migration libre* : `migrate_133` (132 = comparator).
+
+## Vérification (Round 2)
+
+- W1 : `git log --oneline -3` montre les 2 commits sans trailer ; `git status` propre ; `pytest tests/v2` vert (709/5).
+- W2 : `./jm.sh --paradigm-matrix` rend le mode `code` + `model_override` ; aucune régression d'édition (agent_paradigms/paradigm_modes).
+- W3/W4 : les 2 docs existent sous `docs/20260612_improve_thinking/`, scannables, et capturent protocole + design.
+
+---
+
 ## Context (pourquoi)
 
 Jean-Michel fonctionne : orchestrateur PDCA, workers à contexte frais, TODO vivant, sandbox
