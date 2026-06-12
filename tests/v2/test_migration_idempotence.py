@@ -67,6 +67,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_129_repo_test.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_130_code_paradigms.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_131_deliberation.sql")
     yield conn
     conn.close()
 
@@ -207,12 +208,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
         user_memory_discipline is renamed to memory_discipline, not added)
     + 1 from migrate_127_graphify_paradigm (graphify_codebase_navigation)
     + 2 from migrate_130_code_paradigms (repo_intervention_discipline,
-                                         prefer_repo_tools_over_bash).
+                                         prefer_repo_tools_over_bash)
+    + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 122
+    assert row["c"] == 124
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -336,7 +338,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 122
+    assert n == 124
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):

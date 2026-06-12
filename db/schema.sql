@@ -235,6 +235,8 @@ INSERT INTO paradigms VALUES(141,35,'show_images_inline','Show found images inli
 INSERT INTO paradigms VALUES(142,35,'pdca_decompose_delegate_revise','Decompose, delegate, and revise the plan (PDCA)','For a complex or multi-step task (especially coding or work spanning several files), run a PLAN-DO-CHECK-ACT loop tracked by a living TODO; do not improvise delegations and never write the code yourself. PLAN: look at the sources first (read the workspace, delegate a lookup to code-fetcher if needed), then call todo_write(goal, items) to decompose into 3-7 scoped steps with exactly ONE step in_progress. DO: delegate the in_progress step with delegate_to to the right worker (code-runner to write and run code, code-fetcher for lookups), with a precise briefing (goal, constraints, expected output) plus the relevant support_files — one step per delegation, since each worker starts from a fresh context. CHECK: read the worker''s report_back (summary, confidence); judge whether it succeeded or surfaced new work. ACT: call todo_write again to mark that step done, set the next one in_progress, and fold in any suggested_todo_updates the worker returned (add, re-scope, reorder, or retry) — keeping the plan current after each return is the #1 quality lever. Repeat until all steps are done (the plan then clears), then write the final answer yourself.','Migration 120: core of the coding orchestrator — methodical decomposition plus living-TODO revision on every worker return (the #1 quality lever).',0,37,1,'2026-06-01 00:00:00','2026-06-01 00:00:00');
 INSERT INTO paradigms VALUES(145,14,'repo_intervention_discipline','Repo intervention discipline','When intervening on the real codebase (code mode, repo_* tools): ORIENT first — locate the exact code and its callers with repo_grep / repo_glob, the graphify graph, and the reconstructed context, before editing; do not guess file paths. READ before edit — repo_read a file before repo_edit / repo_write on it (the edit is refused otherwise); build old_str verbatim from the read and never include the line-number prefix. SMALLEST diff that works — change only what the task requires; do not refactor, rename, reformat, or improve code you were not asked to touch; a fix does not need surrounding cleanup; do not add comments, docstrings, or type hints to code you did not change. TEST after editing — run repo_test before reporting the step done; if it fails, read the failures and fix them, never report success on a red suite. After a STRUCTURAL change (a new, renamed, or moved function, class, or module) call repo_graph_refresh so later graph lookups stay accurate. SECURITY — never introduce command injection, hardcoded secrets, or unsafe deserialization; if you notice insecure code you wrote, fix it immediately.','P4: deterministic code-intervention discipline (read-before-edit, minimal diff, test-after, graph-refresh) — the behavioural complement to the repo_* tools and their gates.',0,38,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
 INSERT INTO paradigms VALUES(146,29,'prefer_repo_tools_over_bash','Prefer repo tools over bash','Prefer the dedicated repo_* tools over bash_sandbox for files: to READ use repo_read (not cat, head, or sed), to SEARCH use repo_grep (not grep or rg), to FIND files use repo_glob (not find or ls), to EDIT use repo_edit or repo_write (not sed or echo redirection). Use bash_sandbox for what it is for: RUNNING code and commands, not reading or rewriting files. Reference code locations as path:line so they are navigable.','P4: steer coding workers to the deterministic, auditable host tools instead of opaque bash file operations.',0,39,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
+INSERT INTO paradigms VALUES(147,28,'critical_coder_method','Critical coder method','You inspect a coding approach or a diff from ONE assigned angle (stated at the top of your briefing: thesis, antithesis, synthesis, or a review angle). Verify claims against the REAL code — use repo_read, repo_grep, repo_glob, and the graph rather than assuming. Surface unstated assumptions, concrete failure modes, simpler alternatives, and side effects on callers (cite path:line). You do NOT write or run code; you return a focused critical analysis via report_back. Stay on your assigned angle — do not try to cover all of them at once.','P5: critical-coder method — generalises the critical-thinker discipline to code, one angle per pass, grounded in the real code.',0,40,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
+INSERT INTO paradigms VALUES(148,12,'sergent_kiss_gate','Sergent KISS gate','You are the anti-over-engineering gate. You receive a proposed approach (or a diff) together with its critiques. Decide whether it is the SIMPLEST design that solves EXACTLY what was asked: no speculative generality, no features that were not requested, no abstraction or layer that does not earn its keep. Verdict via report_back: confidence=high or medium means PASS (appropriately simple); confidence=low means REWORK — put the specific cuts to make in low_confidence_reason (drop this layer, inline this helper, delete this option). If the task was trivial enough that this deliberation was unnecessary, say so. Be brief and decisive.','P5: the KISS gate — turns over-engineering into a structured PASS/REWORK verdict via report_back confidence (no hallucinated score, cf. convergence_gate lesson).',0,41,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
 INSERT INTO paradigms VALUES(144,29,'graphify_codebase_navigation','Graphify codebase navigation','- This repo has a queryable structure graph exposed by the graphify MCP tools
   (mcp__graphify__*). For STRUCTURAL questions about the codebase — who calls X, what
   breaks if I change X, where does a symbol/feature live, how do modules connect — query
@@ -284,6 +286,8 @@ INSERT INTO paradigm_modes VALUES(85,'chat');
 INSERT INTO paradigm_modes VALUES(85,'vocal');
 INSERT INTO paradigm_modes VALUES(145,'code');
 INSERT INTO paradigm_modes VALUES(146,'code');
+INSERT INTO paradigm_modes VALUES(147,'code');
+INSERT INTO paradigm_modes VALUES(148,'code');
 CREATE TABLE agents (
   id             INTEGER PRIMARY KEY,
   code           TEXT UNIQUE NOT NULL,
@@ -315,6 +319,8 @@ INSERT INTO agents VALUES(15,'strategist','Strategist','specialist','Decompose a
 INSERT INTO agents VALUES(16,'news-specialist','News specialist','specialist','Primary owner of press coverage and news articles. Use `news_latest` for recent items (past 48 h window) or `news_archive` for dated questions (date range). Filter by keyword, language, country, category or source domain. Each call returns up to 10 articles with title, source, date and URL. Follow up with `web_fetch` on the most relevant article links to read the full text — that lets one news-API credit cover multiple deep reads. Synthesize into a workspace markdown file with title + source + pubDate + URL per entry. Never fabricate, never extrapolate beyond what articles say.',1,0.1,1,NULL,'2026-05-28 20:17:15','2026-05-28 20:17:15',NULL);
 INSERT INTO agents VALUES(17,'code-fetcher','Code fetcher','specialist','Lookup specialist for code, developer documentation, troubleshooting and package metadata. Sources : GitHub (github_search_code, github_search_repos), Stack Overflow (stackoverflow_search) and PyPI (pypi_lookup). Pattern : surface candidate URLs from the search endpoints, then web_fetch on the 1-3 most relevant ones to read full content (file body for GitHub raw URLs, question + answers for SO). Synthesize the findings into a workspace markdown file with one section per source (cite repo + path or question title + accepted answer). You do NOT write or execute code yourself — that is code-runner''s job. If the caller needs the code applied, they will call code-runner after reading your findings.',1,0.1,1,NULL,'2026-05-28 20:17:15','2026-05-28 20:17:15',NULL);
 INSERT INTO agents VALUES(18,'code-runner-node','Code Runner (Node)','specialist','Like code-runner but for the Node.js / JavaScript / TypeScript stack: writes JS/TS files to the workspace (NEVER inline) and runs/tests them in the Node Docker sandbox (node, npm, npx). Same write-then-run-then-iterate cycle. When stuck on an error, need an API example, or need to pick an npm package, delegate to `code-fetcher` for a lookup rather than guessing.',0,0.1,1,'jeanmichel-sandbox:node-alpine','2026-06-02 00:00:00','2026-06-02 00:00:00','qwen3-coder:latest');
+INSERT INTO agents VALUES(19,'critical-coder','Critical Coder','specialist','Inspect a coding approach or a diff from ONE assigned angle (thesis / antithesis / synthesis, or a review angle). Verify against the real code with repo_read / repo_grep / repo_glob and the graph; surface unstated assumptions, failure modes, simpler alternatives, and side effects on callers. You do NOT write or run code — you return a focused critical analysis. Generalises critical-thinker to code and architecture.',1,0.2,1,NULL,'2026-06-12 00:00:00','2026-06-12 00:00:00','gemma4:26b');
+INSERT INTO agents VALUES(20,'sergent-kiss','Sergent KISS','specialist','The anti-over-engineering gate. Given a proposed approach (or a diff) and its critiques, decide whether it is the SIMPLEST design that solves exactly what was asked — no speculative generality, no unrequested features, no layer that does not earn its keep. Report PASS via report_back(confidence=high or medium) or REWORK via confidence=low with the precise cuts in low_confidence_reason.',1,0.1,1,NULL,'2026-06-12 00:00:00','2026-06-12 00:00:00',NULL);
 CREATE TABLE agent_paradigms (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   paradigm_id    INTEGER NOT NULL REFERENCES paradigms(id) ON DELETE CASCADE,
@@ -616,6 +622,16 @@ INSERT INTO agent_paradigms VALUES(18,145);
 INSERT INTO agent_paradigms VALUES(12,146);
 INSERT INTO agent_paradigms VALUES(18,146);
 INSERT INTO agent_paradigms VALUES(12,144);
+-- migrate_131: deliberation agents (critical-coder=19, sergent-kiss=20).
+INSERT INTO agent_paradigms VALUES(19,147);
+INSERT INTO agent_paradigms VALUES(20,148);
+INSERT INTO agent_paradigms VALUES(19,49);
+INSERT INTO agent_paradigms VALUES(19,50);
+INSERT INTO agent_paradigms VALUES(19,51);
+INSERT INTO agent_paradigms VALUES(19,52);
+INSERT INTO agent_paradigms VALUES(19,112);
+INSERT INTO agent_paradigms VALUES(19,126);
+INSERT INTO agent_paradigms VALUES(20,126);
 CREATE TABLE agent_tools (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   tool_code      TEXT NOT NULL,
@@ -645,6 +661,13 @@ INSERT INTO agent_tools VALUES(11,'workspace_list');
 INSERT INTO agent_tools VALUES(11,'repo_read');
 INSERT INTO agent_tools VALUES(11,'repo_grep');
 INSERT INTO agent_tools VALUES(11,'repo_glob');
+-- migrate_131: read-only nav for the deliberation agents.
+INSERT INTO agent_tools VALUES(19,'repo_read');
+INSERT INTO agent_tools VALUES(19,'repo_grep');
+INSERT INTO agent_tools VALUES(19,'repo_glob');
+INSERT INTO agent_tools VALUES(19,'workspace_view');
+INSERT INTO agent_tools VALUES(20,'repo_read');
+INSERT INTO agent_tools VALUES(20,'workspace_view');
 INSERT INTO agent_tools VALUES(12,'self_inspect_architecture');
 INSERT INTO agent_tools VALUES(12,'workspace_create_file');
 INSERT INTO agent_tools VALUES(12,'workspace_str_replace');

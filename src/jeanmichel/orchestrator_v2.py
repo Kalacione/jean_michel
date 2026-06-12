@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from . import context_packet
+from . import deliberation
 from .config import (
     DEFAULT_MODEL_CONTEXT_WINDOW,
     OUTPUT_RESERVE_RATIO,
@@ -659,6 +660,34 @@ def _handle_tool_call(
         support_files = call.arguments.get("support_files") or []
         expected = call.arguments.get("expected", "")
 
+        # P5 deliberation — spawn helper (fresh-context critical-coder / sergent-kiss).
+        def _delib_spawn(agent_code: str, brief: str, sf_arg: Any = None) -> Any:
+            spec = agent_resolver(agent_code)
+            if spec is None:
+                return None
+            return spawn_subagent(
+                conv_folder=conv_folder, sub_agent=spec, tools_registry=tools_registry,
+                llm_client=llm_client, briefing=brief, support_files=list(sf_arg or []),
+                expected="", parent_state=state, agent_resolver=agent_resolver,
+                event_emitter=event_emitter, parent_agent_code=agent.code,
+            )
+
+        # UPSTREAM: on a hard code step, vet the approach (thesis/antithesis/
+        # synthesis + KISS gate) and prepend it to the worker's briefing.
+        if deliberation.should_deliberate(conv_folder, target_code, briefing, support_files):
+            try:
+                appr = deliberation.deliberate_approach(
+                    spawn=_delib_spawn, task=briefing, support_files=list(support_files),
+                )
+                if appr.synthesis:
+                    briefing = (
+                        briefing
+                        + "\n\n## Vetted approach (deliberated, KISS-gated)\n"
+                        + appr.synthesis
+                    )
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("deliberate_approach failed: %s", exc)
+
         try:
             sub_result = spawn_subagent(
                 conv_folder=conv_folder,
@@ -681,6 +710,25 @@ def _handle_tool_call(
             return None
 
         result_payload = sub_result.to_dict()
+        # DOWNSTREAM: review the diff a hard code step produced (3 angles + KISS
+        # gate); attach the verdict so the router's PDCA ACT handles any rework.
+        if (
+            target_code in deliberation.CODE_WORKERS
+            and deliberation.complexity_probe(briefing, support_files)
+        ):
+            try:
+                diff = deliberation.current_diff(conv_folder)
+                if diff:
+                    rev = deliberation.review_diff(
+                        spawn=_delib_spawn, task=briefing, diff=diff,
+                        support_files=list(support_files),
+                    )
+                    if rev.verdict == "rework":
+                        result_payload["kiss_review"] = {
+                            "verdict": "rework", "cuts": rev.critique,
+                        }
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("review_diff failed: %s", exc)
         # PostToolUse handles counters + cache.
         hooks.post_tool_use(
             call, result_payload, messages, state, dedup_cache, agent.code
