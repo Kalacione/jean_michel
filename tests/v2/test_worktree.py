@@ -227,3 +227,18 @@ def test_create_conversation_uses_project_repo(tmp_db_v2, tmp_path, monkeypatch)
     _, folder = conv_svc.create_conversation("code", project_id=proj["id"])
     wt = worktree.worktree_path_for(folder)
     assert wt.exists() and (wt / "sample.py").exists()  # worktree from the project's repo
+
+
+@requires_git
+def test_source_repo_derives_from_worktree(project_repo, tmp_path, conv_folder):
+    other = tmp_path / "other2"
+    _init_repo(other)
+    worktree.create_worktree(conv_folder, "cs", source=str(other), kind="local")
+    src = worktree.source_repo(conv_folder)
+    assert src is not None and src.resolve() == other.resolve()  # the real source, not PROJECT_ROOT
+
+
+@requires_git
+def test_source_repo_fallback_without_worktree(project_repo, conv_folder):
+    # No worktree for this conv → falls back to PROJECT_ROOT.
+    assert worktree.source_repo(conv_folder).resolve() == project_repo.resolve()

@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .. import config
+from .. import config, worktree
 from . import _repo
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
@@ -26,12 +26,17 @@ _SUMMARY_RE = re.compile(r"(\d+) (passed|failed|error|errors|skipped|xfailed|xpa
 _FAILED_RE = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
 
 
-def _default_python() -> str:
-    """Robust interpreter for the default test command: the target repo's venv
-    if it has one, else the interpreter running jean-michel (the project venv
-    when launched via jm.sh) — both ship pytest in the common cases."""
-    venv_py = Path(config.PROJECT_ROOT) / ".venv" / "bin" / "python"
-    return str(venv_py) if venv_py.exists() else sys.executable
+def _default_python(conv_folder: Path) -> str:
+    """Robust interpreter for the default test command: the TARGET repo's venv
+    if it has one (the conversation's source repo, per-conversation), else the
+    interpreter running jean-michel (the project venv when launched via jm.sh) —
+    both ship pytest in the common cases."""
+    src = worktree.source_repo(conv_folder)
+    if src is not None:
+        venv_py = src / ".venv" / "bin" / "python"
+        if venv_py.exists():
+            return str(venv_py)
+    return sys.executable
 
 
 def make_spec(conv_folder: Path) -> ToolSpec:
@@ -44,13 +49,14 @@ def make_spec(conv_folder: Path) -> ToolSpec:
         configured = (config.REPO_TEST_CMD or "").strip()
         if configured:
             cmd = shlex.split(configured)
-            # Resolve a relative path-like interpreter against PROJECT_ROOT
+            # Resolve a relative path-like interpreter against the source repo
             # (e.g. '.venv/bin/python' lives in the project, not the worktree).
             if "/" in cmd[0] and not os.path.isabs(cmd[0]):
-                cmd[0] = str((Path(config.PROJECT_ROOT) / cmd[0]).resolve())
+                base = worktree.source_repo(conv_folder) or Path(config.PROJECT_ROOT)
+                cmd[0] = str((base / cmd[0]).resolve())
         else:
             # Auto: no config needed for the common case (the dogfood).
-            cmd = [_default_python(), "-m", "pytest", "-q"]
+            cmd = [_default_python(conv_folder), "-m", "pytest", "-q"]
         if test_path:
             try:
                 _repo.safe_resolve(root, test_path)

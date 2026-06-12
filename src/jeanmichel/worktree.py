@@ -130,6 +130,23 @@ def worktree_path_for(conv_folder: Path) -> Path:
     return Path(conv_folder) / _WORKTREE_DIRNAME
 
 
+def source_repo(conv_folder: Path) -> Path | None:
+    """The canonical repo this conversation's worktree was cut from.
+
+    Per-conversation (dogfood = PROJECT_ROOT ; a project = its code_repo ; an ssh
+    project = its cached clone). Falls back to PROJECT_ROOT when there is no
+    worktree or the derivation fails. The graph + the test interpreter belong to
+    THIS repo (not the ephemeral worktree). ``None`` if no git repo is resolvable.
+    """
+    wt = worktree_path_for(conv_folder)
+    if wt.exists():
+        src = _worktree_source_repo(wt)
+        if src is not None and _is_git_repo(src):
+            return src
+    root = _project_root()
+    return root if _is_git_repo(root) else None
+
+
 def create_worktree(
     conv_folder: Path, conv_id: str, source: str | None = None, kind: str = "local",
 ) -> Path | None:

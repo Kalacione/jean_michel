@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .. import config
+from .. import worktree
 from . import _repo
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
@@ -30,7 +30,9 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             return tool_error("no_worktree", "No code worktree for this conversation.")
         if shutil.which("graphify") is None:
             return tool_error("graphify_unavailable", "graphify is not installed on the host.")
-        proj = Path(config.PROJECT_ROOT)
+        proj = worktree.source_repo(conv_folder)
+        if proj is None:
+            return tool_error("no_source_repo", "No resolvable source repo for this conversation.")
         try:
             proc = subprocess.run(
                 ["graphify", "update", "."], cwd=str(proj),

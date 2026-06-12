@@ -21,13 +21,14 @@ Slices (each deterministic, each capped):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
-from . import config, worktree
+from . import worktree
 from .todo import load_todo
 from .tools import _repo
 
@@ -125,10 +126,8 @@ def _source_slice(conv_folder: Path, root: Path, support_files: list[str]) -> st
         lines = content.splitlines()
         head = "\n".join(lines[:_SRC_LINES_CAP])
         # Record the read so the worker can repo_edit this file without an extra round.
-        try:
+        with contextlib.suppress(OSError):
             _repo.mark_read(conv_folder, canonical, target.stat().st_mtime_ns)
-        except OSError:
-            pass
         more = f"\n… ({len(lines) - _SRC_LINES_CAP} more lines)" if len(lines) > _SRC_LINES_CAP else ""
         blocks.append(f"### {canonical}\n{_repo.cat_n(head)}{more}")
     return "\n\n".join(blocks)
@@ -150,15 +149,14 @@ def _grep_slice(root: Path, identifiers: list[str]) -> str:
     return "\n".join(proc.stdout.splitlines()[:_GREP_HITS_CAP])
 
 
-def _graphify_slice(identifiers: list[str]) -> str:
+def _graphify_slice(identifiers: list[str], root: Path | None) -> str:
     """Best-effort structural context via the graphify CLI (deterministic reads).
 
     Skips silently unless the graphify binary is on PATH and a prebuilt graph
-    exists for PROJECT_ROOT. `explain` reads graph.json — no LLM at runtime.
+    exists for the source repo. `explain` reads graph.json — no LLM at runtime.
     """
-    if shutil.which("graphify") is None:
+    if root is None or shutil.which("graphify") is None:
         return ""
-    root = Path(config.PROJECT_ROOT)
     if not (root / "graphify-out" / "graph.json").exists():
         return ""
     blocks: list[str] = []
@@ -202,7 +200,7 @@ def build_context_packet(
         sections.append(("Recent changes (git diff)", _recent_diff(root)))
         sections.append(("Source (support files)", _source_slice(conv_folder, root, support_files)))
         sections.append(("Lexical hits (grep)", _grep_slice(root, idents)))
-        sections.append(("Structure (graphify)", _graphify_slice(idents)))
+        sections.append(("Structure (graphify)", _graphify_slice(idents, worktree.source_repo(conv_folder))))
     except Exception as exc:  # noqa: BLE001 — CRP must never break a delegation
         _log.warning("context_packet assembly error: %s", exc)
 
