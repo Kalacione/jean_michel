@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import config, db, snapshot
+from .. import config, db, snapshot, worktree
 
 
 def make_conv_folder(conv_id: str) -> Path:
@@ -47,6 +47,11 @@ def create_conversation(
         )
     # Init the per-conversation git repo (no-op unless snapshots are enabled).
     snapshot.init_repo(conv_folder, conv_id)
+    # In `code` mode, give the conversation an isolated git worktree of the target
+    # repo so the system edits real files without touching the live tree (no-op
+    # unless CODE_WORKTREE_ENABLED and PROJECT_ROOT is a git repo).
+    if mode == "code":
+        worktree.create_worktree(conv_folder, conv_id)
     return conv_id, conv_folder
 
 
@@ -104,4 +109,7 @@ def delete_conversation(conv_id: str) -> None:
         row = db.get_conversation(conn, conv_id)
         db.delete_conversation(conn, conv_id)
     if row is not None:
+        # Remove the code-mode worktree + its branch BEFORE deleting the folder,
+        # so `git worktree remove` finds the dir (best-effort; no-op if none).
+        worktree.remove_worktree(Path(row["folder_path"]), conv_id)
         shutil.rmtree(Path(row["folder_path"]), ignore_errors=True)

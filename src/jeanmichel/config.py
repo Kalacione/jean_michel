@@ -18,6 +18,26 @@ CONVERSATIONS_DIR = REPO_ROOT / "conversations"
 CLI_PROFILE_PATH = REPO_ROOT / "cli_profile.toml"
 ENV_FILE_PATH = REPO_ROOT / ".env"
 
+# Target repo the system intervenes on in `code` mode (in-place edits on a git
+# worktree). Defaults to the jean-michel repo itself (dogfood); override to point
+# the system at any other git repo. Cf. src/jeanmichel/worktree.py.
+PROJECT_ROOT = Path(os.environ.get("JEANMICHEL_PROJECT_ROOT", REPO_ROOT)).resolve()
+
+# Paths (relative to a worktree of PROJECT_ROOT) that repo_edit / repo_write must
+# NEVER touch, even inside an isolated worktree: live DB, secrets, runtime data,
+# vendored/generated trees. Enforced as a hard deny in the PreToolUse hook (P1).
+REPO_PROTECTED_PATHS = (
+    "jeanmichel.db",
+    ".env",
+    ".api_secret",
+    "conversations/",
+    "backups/",
+    "voice_models/",
+    ".venv/",
+    "graphify-out/",
+    ".git/",
+)
+
 
 # ---- .env loader (minimal, no dependency) --------------------------------
 #
@@ -98,6 +118,14 @@ def _bool_env(name: str, default: bool) -> bool:
 # point". Opt-in: off by default so existing installs and the test suite are
 # untouched. Cf. src/jeanmichel/snapshot.py.
 CONVERSATION_SNAPSHOT_ENABLED = _bool_env("JEANMICHEL_CONVERSATION_SNAPSHOT_ENABLED", False)
+
+
+# `code`-mode git worktree: when enabled, a conversation in `code` mode gets an
+# isolated git worktree of PROJECT_ROOT on a dedicated branch (jm/conv-<id>), so
+# the system edits real files in place without ever touching the live tree (git
+# is the undo). Opt-in: off by default (test suite + non-code installs untouched).
+# Cf. src/jeanmichel/worktree.py.
+CODE_WORKTREE_ENABLED = _bool_env("JEANMICHEL_CODE_WORKTREE_ENABLED", False)
 
 
 # MCP (Model Context Protocol) client — connect to hosted MCP servers and
