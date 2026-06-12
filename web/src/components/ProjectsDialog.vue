@@ -46,6 +46,22 @@
             />
             <v-text-field v-model="form.name" counter="100" density="compact" label="Nom" variant="outlined" />
             <v-textarea v-model="form.description" auto-grow counter="500" label="Description" rows="3" variant="outlined" />
+            <v-text-field
+              v-model="form.code_repo"
+              density="compact"
+              hint="Mode code : chemin local ou URL SSH (vide = repo jean-michel par défaut)"
+              label="Dépôt de code"
+              persistent-hint
+              placeholder="/chemin/vers/repo  ou  git@host:org/repo.git"
+              variant="outlined"
+            />
+            <v-select
+              v-model="form.repo_kind"
+              density="compact"
+              :items="['local', 'ssh']"
+              label="Type de dépôt"
+              variant="outlined"
+            />
             <v-select
               v-if="mode === 'edit'"
               v-model="form.status"
@@ -79,12 +95,12 @@
   const mode = ref('') // '' | 'new' | 'edit'
   const saving = ref(false)
   const error = ref('')
-  const form = reactive({ id: null, code: '', name: '', description: '', status: 'active' })
+  const form = reactive({ id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local' })
 
   function resetForm () {
     mode.value = ''
     error.value = ''
-    Object.assign(form, { id: null, code: '', name: '', description: '', status: 'active' })
+    Object.assign(form, { id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local' })
   }
 
   function startNew () {
@@ -95,7 +111,10 @@
   function openProject (p) {
     error.value = ''
     mode.value = 'edit'
-    Object.assign(form, { id: p.id, code: p.code, name: p.name, description: p.description, status: p.status })
+    Object.assign(form, {
+      id: p.id, code: p.code, name: p.name, description: p.description, status: p.status,
+      code_repo: p.code_repo || '', repo_kind: p.repo_kind || 'local',
+    })
   }
 
   async function save () {
@@ -103,9 +122,15 @@
     error.value = ''
     try {
       if (mode.value === 'new') {
-        await projects.create({ code: form.code, name: form.name, description: form.description })
+        await projects.create({
+          code: form.code, name: form.name, description: form.description,
+          code_repo: form.code_repo, repo_kind: form.repo_kind,
+        })
       } else {
-        await projects.update(form.id, { name: form.name, description: form.description, status: form.status })
+        await projects.update(form.id, {
+          name: form.name, description: form.description, status: form.status,
+          code_repo: form.code_repo, repo_kind: form.repo_kind,
+        })
       }
       resetForm()
     } catch (e) {
