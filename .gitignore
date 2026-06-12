@@ -127,3 +127,6 @@ build/
 
 # graphify build artifacts (regenerate with: graphify update .)
 graphify-out/
+
+# code-mode: cached clones of ssh/remote project repos (worktree.py)
+repos-cache/

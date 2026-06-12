@@ -19,7 +19,9 @@ workspace).
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,8 +31,58 @@ from . import config
 _log = logging.getLogger(__name__)
 
 _GIT_TIMEOUT_S = 60
+_CLONE_TIMEOUT_S = 300
 _BRANCH_PREFIX = "jm/conv-"
 _WORKTREE_DIRNAME = "worktree"
+_CLONE_CACHE_DIRNAME = "repos-cache"  # under REPO_ROOT ; gitignored
+
+
+def _clone_cache_dir() -> Path:
+    return Path(config.REPO_ROOT) / _CLONE_CACHE_DIRNAME
+
+
+def _ensure_clone_cached(url: str) -> Path | None:
+    """Clone an ssh/remote `url` ONCE into ``repos-cache/<hash>/repo`` and return
+    the local clone path (idempotent ; lock-free via atomic rename). ``None`` on
+    failure. The clone is shared across conversations/projects pointing at the
+    same url, and survives conversation deletion."""
+    if not _git_available():
+        return None
+    key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    dest = _clone_cache_dir() / key / "repo"
+    if (dest / ".git").exists():
+        return dest
+    tmp = dest.parent / f".tmp-clone-{os.getpid()}"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        subprocess.run(
+            ["git", "clone", "--quiet", url, str(tmp)],
+            check=True, capture_output=True, text=True, timeout=_CLONE_TIMEOUT_S,
+        )
+        try:
+            os.rename(tmp, dest)  # atomic ; if a concurrent clone won, this raises
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return dest if (dest / ".git").exists() else None
+    except (subprocess.SubprocessError, OSError) as exc:
+        _log.warning("worktree clone failed for %s: %s", url, exc)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None
+
+
+def _worktree_source_repo(wt: Path) -> Path | None:
+    """The repo a worktree belongs to (so remove/branch ops hit the right repo)."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(wt), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+        return Path(r.stdout.strip()).parent  # <repo>/.git → <repo>
+    except (subprocess.SubprocessError, OSError):
+        return None
 
 
 def _enabled() -> bool:
@@ -78,18 +130,28 @@ def worktree_path_for(conv_folder: Path) -> Path:
     return Path(conv_folder) / _WORKTREE_DIRNAME
 
 
-def create_worktree(conv_folder: Path, conv_id: str) -> Path | None:
-    """Add a git worktree of PROJECT_ROOT on branch ``jm/conv-<id>``.
+def create_worktree(
+    conv_folder: Path, conv_id: str, source: str | None = None, kind: str = "local",
+) -> Path | None:
+    """Add a git worktree on branch ``jm/conv-<id>`` from the target repo.
 
-    Returns the worktree path on success, else ``None`` (no-op). Idempotent: if
-    the worktree dir already exists, returns it. On a fresh creation failure the
-    half-made dir is cleaned so we never leave junk behind.
+    ``source``/``kind`` select the repo: a LOCAL path, an SSH/remote url (cloned
+    once into the cache), or — when ``source`` is empty/None — the global
+    ``config.PROJECT_ROOT`` (dogfood fallback). Returns the worktree path, else
+    ``None`` (no-op). Idempotent on the worktree dir ; cleans a half-made dir.
     """
     if not _enabled() or not _git_available():
         return None
-    root = _project_root()
-    if not _is_git_repo(root):
-        _log.debug("worktree: PROJECT_ROOT %s is not a git repo — skipping", root)
+    if source and kind == "ssh":
+        repo = _ensure_clone_cached(source)
+        if repo is None:
+            return None
+    elif source:
+        repo = Path(source)
+    else:
+        repo = _project_root()  # fallback (dogfood)
+    if not _is_git_repo(repo):
+        _log.debug("worktree: source %s is not a git repo — skipping", repo)
         return None
     wt = worktree_path_for(conv_folder)
     if wt.exists():
@@ -99,10 +161,10 @@ def create_worktree(conv_folder: Path, conv_id: str) -> Path | None:
         wt.parent.mkdir(parents=True, exist_ok=True)
         try:
             # Create the branch at current HEAD and check it out into the worktree.
-            _git(root, "worktree", "add", "-b", branch, str(wt), "HEAD")
+            _git(repo, "worktree", "add", "-b", branch, str(wt), "HEAD")
         except subprocess.CalledProcessError:
             # Branch already exists (e.g. a resume) → attach the worktree to it.
-            _git(root, "worktree", "add", str(wt), branch)
+            _git(repo, "worktree", "add", str(wt), branch)
         return wt
     except (subprocess.SubprocessError, OSError) as exc:
         _log.warning("worktree create failed for %s: %s", conv_folder, exc)
@@ -121,18 +183,18 @@ def remove_worktree(conv_folder: Path, conv_id: str) -> bool:
     wt = worktree_path_for(conv_folder)
     if not wt.exists():
         return False
-    root = _project_root()
+    source = _worktree_source_repo(wt) or _project_root()
     removed = False
     try:
-        _git(root, "worktree", "remove", "--force", str(wt))
+        _git(source, "worktree", "remove", "--force", str(wt))
         removed = True
     except (subprocess.SubprocessError, OSError) as exc:
         _log.debug("worktree remove failed for %s: %s", conv_folder, exc)
         shutil.rmtree(wt, ignore_errors=True)
     # Prune stale registrations + delete the branch (best-effort).
     try:
-        _git(root, "worktree", "prune")
-        _git(root, "branch", "-D", branch_name(conv_id))
+        _git(source, "worktree", "prune")
+        _git(source, "branch", "-D", branch_name(conv_id))
     except (subprocess.SubprocessError, OSError):
         pass
     return removed

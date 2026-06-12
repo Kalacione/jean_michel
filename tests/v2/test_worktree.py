@@ -177,3 +177,53 @@ def test_create_conversation_non_code_no_worktree(tmp_db_v2, project_repo):
 
     _, folder = conversation.create_conversation("analyse")
     assert not worktree.worktree_path_for(folder).exists()
+
+
+# ---- R2 : explicit source (local / ssh clone) + project wiring -------------
+
+
+@requires_git
+def test_create_worktree_from_explicit_local_source(project_repo, tmp_path, conv_folder):
+    # A SECOND repo, distinct from PROJECT_ROOT, passed explicitly.
+    other = tmp_path / "other"
+    _init_repo(other)
+    (other / "OTHER.md").write_text("other repo\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(other), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(other), "commit", "-m", "marker"], check=True, capture_output=True)
+    wt = worktree.create_worktree(conv_folder, "c2", source=str(other), kind="local")
+    assert wt is not None and (wt / "OTHER.md").exists()  # from `other`, not PROJECT_ROOT
+    # Removal derives the source repo from the worktree itself (not PROJECT_ROOT).
+    assert worktree.remove_worktree(conv_folder, "c2") is True
+    assert not wt.exists()
+
+
+@requires_git
+def test_create_worktree_ssh_clones_into_cache(project_repo, tmp_path, conv_folder, monkeypatch):
+    # repos-cache lands under REPO_ROOT → redirect to tmp. A local path acts as
+    # the clonable "remote" (git clone works on local paths — no network needed).
+    monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+    remote = tmp_path / "remote"
+    _init_repo(remote)
+    wt = worktree.create_worktree(conv_folder, "c3", source=str(remote), kind="ssh")
+    assert wt is not None and (wt / "sample.py").exists()
+    cache = tmp_path / "repos-cache"
+    assert cache.exists() and any(cache.iterdir())  # the clone was cached
+
+
+@requires_git
+def test_create_conversation_uses_project_repo(tmp_db_v2, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CODE_WORKTREE_ENABLED", True)
+    from jeanmichel.db import cli_user_id, connect
+    from jeanmichel.service import conversation as conv_svc
+    from jeanmichel.service import project as project_svc
+
+    repo = tmp_path / "proj_repo"
+    _init_repo(repo)
+    with connect() as conn:
+        proj = project_svc.create(
+            conn, user_id=cli_user_id(conn), code="p", name="P",
+            code_repo=str(repo), repo_kind="local",
+        )
+    _, folder = conv_svc.create_conversation("code", project_id=proj["id"])
+    wt = worktree.worktree_path_for(folder)
+    assert wt.exists() and (wt / "sample.py").exists()  # worktree from the project's repo

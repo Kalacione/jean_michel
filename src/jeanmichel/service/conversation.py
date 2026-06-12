@@ -48,10 +48,18 @@ def create_conversation(
     # Init the per-conversation git repo (no-op unless snapshots are enabled).
     snapshot.init_repo(conv_folder, conv_id)
     # In `code` mode, give the conversation an isolated git worktree of the target
-    # repo so the system edits real files without touching the live tree (no-op
-    # unless CODE_WORKTREE_ENABLED and PROJECT_ROOT is a git repo).
+    # repo so the system edits real files without touching the live tree. The repo
+    # comes from the attached project (code_repo/repo_kind) ; empty → PROJECT_ROOT
+    # (dogfood). No-op unless CODE_WORKTREE_ENABLED.
     if mode == "code":
-        worktree.create_worktree(conv_folder, conv_id)
+        source, kind = "", "local"
+        if project_id is not None:
+            with db.connect() as conn:
+                proj = db.get_project(conn, project_id)
+            if proj is not None:
+                source = proj["code_repo"] or ""
+                kind = proj["repo_kind"] or "local"
+        worktree.create_worktree(conv_folder, conv_id, source=source or None, kind=kind)
     return conv_id, conv_folder
 
 
