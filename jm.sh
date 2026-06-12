@@ -49,11 +49,13 @@ Commands:
   --test [PYTEST_ARGS ...]    Run the test suite (extra args forwarded to pytest)
   --serve                     Launch the web daemon (FastAPI) at http://0.0.0.0:8000
   --create-user <username>    Create a web frontend user (prompts for password)
-  --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpinepine)
+  --build-docker [VARIANT]    Build sandbox Docker image (py-alpine|node-alpine|all; default: py-alpine)
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
                               (alias: --backup-db)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
-  --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8765
+  --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8770
+  --synoptic [--stdout]       Generate the agent synoptic diagram from the DB (docs/agents_synoptic.md)
+  --orchestrator-map [--stdout]  Generate the orchestrator determinism reference (docs/orchestrator_determinism.md)
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
   --clean [--days N] [--yes]  Delete conversations older than N days (default: 7)
   --reap-sandboxes [--idle-minutes N]  Stop lingering jm-sandbox-* containers (default: all)
@@ -234,6 +236,7 @@ cmd_serve() {
   # Runs in the foreground — "un daemon python à la main". Binds 0.0.0.0:8000
   # by default (override via JEANMICHEL_API_HOST / JEANMICHEL_API_PORT).
   ensure_venv
+  maybe_start_graphify
   exec jean-michel-serve "$@"
 }
 
@@ -293,6 +296,23 @@ cmd_paradigm_matrix() {
     exit 1
   fi
   exec python "${PROJECT_ROOT}/debug/paradigm_matrix.py" "$@"
+}
+
+cmd_synoptic() {
+  # Generate the agent synoptic diagram (mermaid + roster) from the live DB.
+  ensure_venv
+  if [ ! -f "${DB_PATH}" ]; then
+    echo "Error: database not found at ${DB_PATH}" >&2
+    echo "Run ./jm.sh --install first." >&2
+    exit 1
+  fi
+  exec python -m jeanmichel.synoptic "$@"
+}
+
+cmd_orchestrator_map() {
+  # Generate the orchestrator determinism reference (live config values + anchors).
+  ensure_venv
+  exec python -m jeanmichel.orchestrator_map "$@"
 }
 
 cmd_inspect_conv() {
@@ -389,6 +409,14 @@ case "${COMMAND}" in
   --paradigm-matrix)
     shift
     cmd_paradigm_matrix "$@"
+    ;;
+  --synoptic)
+    shift
+    cmd_synoptic "$@"
+    ;;
+  --orchestrator-map)
+    shift
+    cmd_orchestrator_map "$@"
     ;;
   --inspect-conv)
     shift

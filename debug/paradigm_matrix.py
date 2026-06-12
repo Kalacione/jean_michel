@@ -4,7 +4,8 @@
 Usage:
     python debug/paradigm_matrix.py [--db PATH] [--port PORT]
 
-Opens http://localhost:8765 (default port) in the browser.
+Opens http://localhost:8770 (default port) in the browser.
+(8770, not 8765 — 8765 is the graphify MCP server port, which jm.sh may auto-start.)
 """
 
 from __future__ import annotations
@@ -719,7 +720,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 def main() -> None:
     parser = argparse.ArgumentParser(description="Paradigm Matrix editor")
     parser.add_argument("--db", type=Path, default=None, help="Path to jeanmichel.db")
-    parser.add_argument("--port", type=int, default=8765, help="HTTP port (default: 8765)")
+    parser.add_argument("--port", type=int, default=8770, help="HTTP port (default: 8770)")
     args = parser.parse_args()
 
     db_path = args.db or ROOT / "jeanmichel.db"

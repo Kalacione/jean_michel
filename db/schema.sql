@@ -838,6 +838,11 @@ INSERT INTO agent_delegation_targets VALUES(1,'workspace-manager','2026-05-28 20
 INSERT INTO agent_delegation_targets VALUES(1,'comparator-specialist','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'code-runner','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'meta-analyst','2026-05-28 20:17:15');
+-- migrate_132: explicit delegation whitelist for comparator-specialist (id 6).
+INSERT INTO agent_delegation_targets VALUES(6,'web-search-specialist','2026-06-12 00:00:00');
+INSERT INTO agent_delegation_targets VALUES(6,'wikipedia-specialist','2026-06-12 00:00:00');
+INSERT INTO agent_delegation_targets VALUES(6,'weather-specialist','2026-06-12 00:00:00');
+INSERT INTO agent_delegation_targets VALUES(6,'news-specialist','2026-06-12 00:00:00');
 INSERT INTO agent_delegation_targets VALUES(1,'weather-specialist','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'summarizer','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(8,'web-search-specialist','2026-05-28 20:17:15');

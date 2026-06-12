@@ -68,6 +68,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_129_repo_test.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_130_code_paradigms.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_131_deliberation.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_132_comparator_delegation.sql")
     yield conn
     conn.close()
 
@@ -584,3 +585,21 @@ def test_code_paradigms_only_render_in_code_mode(v2_consolidated_db):
     assert "repo_intervention_discipline" not in in_chat
     assert "prefer_repo_tools_over_bash" in in_code
     assert "prefer_repo_tools_over_bash" not in in_chat
+
+
+# ---- migrate_132 : comparator delegation whitelist -------------------------
+
+
+def test_comparator_delegation_whitelist(v2_migrated_db, v2_consolidated_db):
+    """migrate_132 + schema.sql give comparator-specialist an explicit whitelist."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        targets = {
+            r["target_code"] for r in db.execute(
+                "SELECT target_code FROM agent_delegation_targets ad "
+                "JOIN agents a ON a.id = ad.agent_id WHERE a.code = 'comparator-specialist'"
+            )
+        }
+        assert targets == {
+            "web-search-specialist", "wikipedia-specialist",
+            "weather-specialist", "news-specialist",
+        }

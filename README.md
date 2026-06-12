@@ -310,6 +310,12 @@ ou un nom de slot. Le choix du modèle est une décision d'infrastructure
 
 ## Hooks Python
 
+> **Référence générée (valeurs live + ancres code)** : `docs/orchestrator_determinism.md`
+> (`./jm.sh --orchestrator-map`) liste tous les paramètres déterministes avec leur
+> valeur courante et où chaque gate/hook est appliqué. Cette section-ci est le
+> *narratif* (le pourquoi) ; les valeurs exactes vivent dans le doc généré pour ne
+> jamais périmer. Synoptic des agents : `docs/agents_synoptic.md` (`./jm.sh --synoptic`).
+
 Les 4 hooks remplacent les anciens MUST en cascade dans les prompts :
 
 - **`PreLLMCall(messages, state)`** — escalade de compaction sur le `WORKING`
