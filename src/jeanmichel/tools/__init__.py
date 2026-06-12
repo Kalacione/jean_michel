@@ -25,6 +25,11 @@ from . import image_search as _image_search_mod
 from . import manage_memory as _manage_memory_mod
 from . import news as _news_mod
 from . import pypi as _pypi_mod
+from . import repo_edit as _repo_edit_mod
+from . import repo_glob as _repo_glob_mod
+from . import repo_grep as _repo_grep_mod
+from . import repo_read as _repo_read_mod
+from . import repo_write as _repo_write_mod
 from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
@@ -43,6 +48,7 @@ from . import workspace_list as _ws_list_mod
 from . import workspace_str_replace as _ws_replace_mod
 from . import workspace_view as _ws_view_mod
 from ._base import ToolSpec
+from .. import worktree as _worktree_mod
 
 # Workspace write tools — exposing any of these without an
 # agent_workspace_grants row will always fail at runtime with no_write_grant.
@@ -131,6 +137,19 @@ def build_registry(
             sandbox_image=sandbox_image,
         )
         registry[sandbox_spec.name] = sandbox_spec
+    # Repo tools (code mode): only when an isolated git worktree exists for this
+    # conversation. Bound to the worktree; the PreToolUse grant check still gates
+    # which agents may call them. Not registered outside code mode → zero leakage
+    # into other task types.
+    if _worktree_mod.worktree_path_for(conv_folder).exists():
+        for repo_spec in (
+            _repo_read_mod.make_spec(conv_folder),
+            _repo_grep_mod.make_spec(conv_folder),
+            _repo_glob_mod.make_spec(conv_folder),
+            _repo_edit_mod.make_spec(conv_folder),
+            _repo_write_mod.make_spec(conv_folder),
+        ):
+            registry[repo_spec.name] = repo_spec
     # MCP-sourced tools (discovered from hosted servers) — added last; names are
     # namespaced (mcp__server__tool) so they can't collide with native tools.
     for spec in extra_tools or []:

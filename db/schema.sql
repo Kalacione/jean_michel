@@ -653,6 +653,21 @@ INSERT INTO agent_tools VALUES(18,'workspace_delete_file');
 INSERT INTO agent_tools VALUES(18,'workspace_list');
 INSERT INTO agent_tools VALUES(18,'workspace_str_replace');
 INSERT INTO agent_tools VALUES(18,'workspace_view');
+-- migrate_128: repo_* tools (code-mode in-place intervention on a git worktree).
+-- code-runner (12) + code-runner-node (18): full set; code-fetcher (17): read-only nav.
+INSERT INTO agent_tools VALUES(12,'repo_read');
+INSERT INTO agent_tools VALUES(12,'repo_grep');
+INSERT INTO agent_tools VALUES(12,'repo_glob');
+INSERT INTO agent_tools VALUES(12,'repo_edit');
+INSERT INTO agent_tools VALUES(12,'repo_write');
+INSERT INTO agent_tools VALUES(18,'repo_read');
+INSERT INTO agent_tools VALUES(18,'repo_grep');
+INSERT INTO agent_tools VALUES(18,'repo_glob');
+INSERT INTO agent_tools VALUES(18,'repo_edit');
+INSERT INTO agent_tools VALUES(18,'repo_write');
+INSERT INTO agent_tools VALUES(17,'repo_read');
+INSERT INTO agent_tools VALUES(17,'repo_grep');
+INSERT INTO agent_tools VALUES(17,'repo_glob');
 INSERT INTO agent_tools VALUES(2,'workspace_list');
 INSERT INTO agent_tools VALUES(2,'workspace_view');
 INSERT INTO agent_tools VALUES(3,'workspace_list');
