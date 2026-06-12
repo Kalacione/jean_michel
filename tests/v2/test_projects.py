@@ -74,6 +74,47 @@ def test_update_invalid_status_rejected(tmp_db_v2):
         assert exc.value.code == "invalid_status"
 
 
+# ---- code_repo / repo_kind (migrate_133) ----------------------------------
+
+
+def test_create_repo_defaults_and_explicit(tmp_db_v2):
+    with db_connect() as conn:
+        # Default: no repo attached (fallback to PROJECT_ROOT downstream).
+        plain = project_svc.create(conn, user_id=_uid(), code="plain", name="P")
+        assert plain["code_repo"] == "" and plain["repo_kind"] == "local"
+        # Explicit ssh repo.
+        ssh = project_svc.create(
+            conn, user_id=_uid(), code="cloud", name="Cloud",
+            code_repo="git@github.com:org/repo.git", repo_kind="ssh",
+        )
+        assert ssh["code_repo"] == "git@github.com:org/repo.git"
+        assert ssh["repo_kind"] == "ssh"
+        # Persisted.
+        got = project_svc.get_owned(conn, user_id=_uid(), project_id=ssh["id"])
+        assert got["repo_kind"] == "ssh"
+
+
+def test_create_invalid_repo_kind_rejected(tmp_db_v2):
+    with db_connect() as conn:
+        with pytest.raises(project_svc.ProjectOpError) as exc:
+            project_svc.create(conn, user_id=_uid(), code="bad", name="B", repo_kind="svn")
+        assert exc.value.code == "invalid_repo_kind"
+
+
+def test_update_repo(tmp_db_v2):
+    with db_connect() as conn:
+        proj = project_svc.create(conn, user_id=_uid(), code="x", name="X")
+        project_svc.update(
+            conn, user_id=_uid(), project_id=proj["id"],
+            code_repo="/abs/path/to/repo", repo_kind="local",
+        )
+        got = project_svc.get_owned(conn, user_id=_uid(), project_id=proj["id"])
+        assert got["code_repo"] == "/abs/path/to/repo"
+        with pytest.raises(project_svc.ProjectOpError) as exc:
+            project_svc.update(conn, user_id=_uid(), project_id=proj["id"], repo_kind="hg")
+        assert exc.value.code == "invalid_repo_kind"
+
+
 def test_get_owned_rejects_other_user(tmp_db_v2):
     """Ownership : another user's project is not_found, not leaked."""
     with db_connect() as conn:

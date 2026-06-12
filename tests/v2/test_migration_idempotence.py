@@ -69,6 +69,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_130_code_paradigms.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_131_deliberation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_132_comparator_delegation.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_133_project_repo.sql")
     yield conn
     conn.close()
 
@@ -603,3 +604,13 @@ def test_comparator_delegation_whitelist(v2_migrated_db, v2_consolidated_db):
             "web-search-specialist", "wikipedia-specialist",
             "weather-specialist", "news-specialist",
         }
+
+
+# ---- migrate_133 : project repo attach -------------------------------------
+
+
+def test_projects_repo_columns(v2_migrated_db, v2_consolidated_db):
+    """migrate_133 + schema.sql add code_repo + repo_kind to projects."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(projects)")}
+        assert {"code_repo", "repo_kind"} <= cols

@@ -17,9 +17,21 @@ from typing import Any
 from .. import db
 
 VALID_STATUSES: frozenset[str] = frozenset({"active", "archived"})
+VALID_REPO_KINDS: frozenset[str] = frozenset({"local", "ssh"})
 MAX_CODE_CHARS = 60
 MAX_NAME_CHARS = 100
 MAX_DESCRIPTION_CHARS = 500
+MAX_REPO_CHARS = 500
+
+
+def _validate_repo_kind(repo_kind: str) -> None:
+    if repo_kind not in VALID_REPO_KINDS:
+        raise ProjectOpError("invalid_repo_kind", f"repo_kind must be one of {sorted(VALID_REPO_KINDS)}.")
+
+
+def _validate_code_repo(code_repo: str) -> None:
+    if len(code_repo) > MAX_REPO_CHARS:
+        raise ProjectOpError("repo_too_long", f"code_repo must be <= {MAX_REPO_CHARS} chars.")
 
 
 class ProjectOpError(Exception):
@@ -43,7 +55,8 @@ def _validate_code(code: str) -> None:
 
 
 def create(
-    conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = ""
+    conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = "",
+    code_repo: str = "", repo_kind: str = "local",
 ) -> dict[str, Any]:
     """Create a project for ``user_id``. Raises on validation / duplicate code."""
     _validate_code(code)
@@ -55,9 +68,14 @@ def create(
         raise ProjectOpError(
             "description_too_long", f"description must be <= {MAX_DESCRIPTION_CHARS} chars."
         )
+    _validate_code_repo(code_repo)
+    _validate_repo_kind(repo_kind)
     if db.get_project_by_code(conn, user_id, code) is not None:
         raise ProjectOpError("already_exists", f"A project with code='{code}' already exists.")
-    pid = db.create_project(conn, user_id=user_id, code=code, name=name, description=description)
+    pid = db.create_project(
+        conn, user_id=user_id, code=code, name=name, description=description,
+        code_repo=code_repo, repo_kind=repo_kind,
+    )
     row = db.get_project(conn, pid)
     return dict(row)
 
@@ -77,18 +95,29 @@ def get_owned(conn: sqlite3.Connection, *, user_id: int, project_id: int) -> dic
 def update(
     conn: sqlite3.Connection, *, user_id: int, project_id: int,
     name: str | None = None, description: str | None = None, status: str | None = None,
+    code_repo: str | None = None, repo_kind: str | None = None,
 ) -> dict[str, Any]:
     """Update an owned project. Raises not_found / invalid_status / validation errors."""
     get_owned(conn, user_id=user_id, project_id=project_id)  # ownership check
-    if name is None and description is None and status is None:
-        raise ProjectOpError("invalid_args", "update requires at least one of: name, description, status.")
+    if all(v is None for v in (name, description, status, code_repo, repo_kind)):
+        raise ProjectOpError(
+            "invalid_args",
+            "update requires at least one of: name, description, status, code_repo, repo_kind.",
+        )
     if name is not None and (not name.strip() or len(name) > MAX_NAME_CHARS):
         raise ProjectOpError("invalid_args", f"name must be non-empty and <= {MAX_NAME_CHARS} chars.")
     if description is not None and len(description) > MAX_DESCRIPTION_CHARS:
         raise ProjectOpError("description_too_long", f"description must be <= {MAX_DESCRIPTION_CHARS} chars.")
     if status is not None and status not in VALID_STATUSES:
         raise ProjectOpError("invalid_status", f"status must be one of {sorted(VALID_STATUSES)}.")
-    db.update_project(conn, project_id, name=name, description=description, status=status)
+    if code_repo is not None:
+        _validate_code_repo(code_repo)
+    if repo_kind is not None:
+        _validate_repo_kind(repo_kind)
+    db.update_project(
+        conn, project_id, name=name, description=description, status=status,
+        code_repo=code_repo, repo_kind=repo_kind,
+    )
     return dict(db.get_project(conn, project_id))
 
 

@@ -336,20 +336,23 @@ def user_owns_conversation(
 
 # ---- Projects (migrate_124) -----------------------------------------------
 
-_PROJECT_COLS = "id, user_id, code, name, description, status, created_at, modified_at"
+_PROJECT_COLS = (
+    "id, user_id, code, name, description, status, code_repo, repo_kind, created_at, modified_at"
+)
 
 
 def create_project(
-    conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = ""
+    conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = "",
+    code_repo: str = "", repo_kind: str = "local",
 ) -> int:
     """Insert a project owned by ``user_id``. Returns the new id.
 
     Raises IntegrityError on a duplicate (user_id, code)."""
     now = _now()
     cur = conn.execute(
-        "INSERT INTO projects (user_id, code, name, description, status, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, 'active', ?, ?)",
-        (user_id, code, name, description, now, now),
+        "INSERT INTO projects (user_id, code, name, description, status, code_repo, repo_kind, "
+        "created_at, modified_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+        (user_id, code, name, description, code_repo, repo_kind, now, now),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -382,11 +385,15 @@ def get_project_by_code(
 def update_project(
     conn: sqlite3.Connection, project_id: int, *,
     name: str | None = None, description: str | None = None, status: str | None = None,
+    code_repo: str | None = None, repo_kind: str | None = None,
 ) -> None:
     """Update a project's mutable fields. Only provided fields are written."""
     sets: list[str] = []
     vals: list[object] = []
-    for col, val in (("name", name), ("description", description), ("status", status)):
+    for col, val in (
+        ("name", name), ("description", description), ("status", status),
+        ("code_repo", code_repo), ("repo_kind", repo_kind),
+    ):
         if val is not None:
             sets.append(f"{col}=?")
             vals.append(val)
