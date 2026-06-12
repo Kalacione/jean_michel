@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import context_packet
 from .config import (
     DEFAULT_MODEL_CONTEXT_WINDOW,
     OUTPUT_RESERVE_RATIO,
@@ -831,6 +832,19 @@ def spawn_subagent(
 
     # Build subagent messages[] from scratch.
     briefing_block = _format_subagent_briefing(briefing, support_files, expected)
+    # CRP (P2): in code mode (a worktree exists) prepend a deterministically
+    # assembled context packet so the worker executes context instead of
+    # reconstructing it. Best-effort — a CRP failure never breaks delegation,
+    # and it returns "" outside code mode (no worktree).
+    try:
+        _packet = context_packet.build_context_packet(
+            conv_folder, briefing=briefing, support_files=list(support_files),
+        )
+    except Exception as _exc:  # noqa: BLE001
+        _log.warning("context_packet failed for %s: %s", sub_agent.code, _exc)
+        _packet = ""
+    if _packet:
+        briefing_block = f"{briefing_block}\n\n{_packet}"
     sub_messages: list[dict[str, Any]] = [
         {"role": "system", "content": sub_agent.system_prompt},
         {"role": "user", "content": briefing_block},
