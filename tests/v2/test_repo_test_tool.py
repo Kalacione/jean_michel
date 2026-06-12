@@ -39,8 +39,9 @@ def wt(tmp_path, monkeypatch):
     _init_repo(repo)
     monkeypatch.setattr(config, "PROJECT_ROOT", repo)
     monkeypatch.setattr(config, "CODE_WORKTREE_ENABLED", True)
-    # Use the venv python running the suite (it has pytest) for a deterministic run.
-    monkeypatch.setattr(config, "REPO_TEST_CMD", f"{sys.executable} -m pytest -q")
+    # Leave REPO_TEST_CMD empty → exercise the AUTO-detect default (the tmp repo
+    # has no .venv, so it falls back to sys.executable, which ships pytest).
+    monkeypatch.setattr(config, "REPO_TEST_CMD", "")
     conv = tmp_path / "conv"
     conv.mkdir()
     root = worktree.create_worktree(conv, "c1")

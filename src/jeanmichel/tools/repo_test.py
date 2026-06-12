@@ -14,6 +14,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from .. import config
@@ -25,6 +26,14 @@ _SUMMARY_RE = re.compile(r"(\d+) (passed|failed|error|errors|skipped|xfailed|xpa
 _FAILED_RE = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
 
 
+def _default_python() -> str:
+    """Robust interpreter for the default test command: the target repo's venv
+    if it has one, else the interpreter running jean-michel (the project venv
+    when launched via jm.sh) — both ship pytest in the common cases."""
+    venv_py = Path(config.PROJECT_ROOT) / ".venv" / "bin" / "python"
+    return str(venv_py) if venv_py.exists() else sys.executable
+
+
 def make_spec(conv_folder: Path) -> ToolSpec:
     """Return a ToolSpec bound to ``conv_folder`` (tests its git worktree)."""
 
@@ -32,13 +41,16 @@ def make_spec(conv_folder: Path) -> ToolSpec:
         root = _repo.worktree_root(conv_folder)
         if root is None:
             return tool_error("no_worktree", "No code worktree for this conversation.")
-        cmd = shlex.split(config.REPO_TEST_CMD)
-        if not cmd:
-            return tool_error("bad_test_cmd", "JEANMICHEL_REPO_TEST_CMD is empty.")
-        # Resolve a relative path-like interpreter/command against PROJECT_ROOT
-        # (e.g. '.venv/bin/python' lives in the project, not the worktree).
-        if "/" in cmd[0] and not os.path.isabs(cmd[0]):
-            cmd[0] = str((Path(config.PROJECT_ROOT) / cmd[0]).resolve())
+        configured = (config.REPO_TEST_CMD or "").strip()
+        if configured:
+            cmd = shlex.split(configured)
+            # Resolve a relative path-like interpreter against PROJECT_ROOT
+            # (e.g. '.venv/bin/python' lives in the project, not the worktree).
+            if "/" in cmd[0] and not os.path.isabs(cmd[0]):
+                cmd[0] = str((Path(config.PROJECT_ROOT) / cmd[0]).resolve())
+        else:
+            # Auto: no config needed for the common case (the dogfood).
+            cmd = [_default_python(), "-m", "pytest", "-q"]
         if test_path:
             try:
                 _repo.safe_resolve(root, test_path)

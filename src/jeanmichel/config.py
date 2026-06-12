@@ -127,13 +127,15 @@ CONVERSATION_SNAPSHOT_ENABLED = _bool_env("JEANMICHEL_CONVERSATION_SNAPSHOT_ENAB
 # Cf. src/jeanmichel/worktree.py.
 CODE_WORKTREE_ENABLED = _bool_env("JEANMICHEL_CODE_WORKTREE_ENABLED", False)
 
-# repo_test (code mode): the command run IN the worktree to exercise the
-# project's own tests, and its timeout (seconds). Repo-agnostic via env. A
-# relative path-like first token (e.g. ".venv/bin/python") is resolved against
-# PROJECT_ROOT; the worktree's src/ is prepended to PYTHONPATH so tests run
-# against the EDITED code, not the live install. For the jean-michel dogfood:
-#   JEANMICHEL_REPO_TEST_CMD=".venv/bin/python -m pytest -q tests/v2"
-REPO_TEST_CMD = os.environ.get("JEANMICHEL_REPO_TEST_CMD", "python -m pytest -q")
+# repo_test (code mode): command run IN the worktree to exercise the project's
+# own tests. Default is EMPTY = AUTO-DETECT (cf. tools/repo_test.py): prefer
+# <PROJECT_ROOT>/.venv/bin/python, else the interpreter running jean-michel
+# (sys.executable) — both ship pytest in the common cases, so the dogfood needs
+# NO config. Set this only to force a different runner (other stack / non-pytest).
+# A relative path-like first token (e.g. ".venv/bin/python") is resolved against
+# PROJECT_ROOT; the worktree's src/ is prepended to PYTHONPATH so tests exercise
+# the EDITED code, not the live install.
+REPO_TEST_CMD = os.environ.get("JEANMICHEL_REPO_TEST_CMD", "")
 REPO_TEST_TIMEOUT = _int_env("JEANMICHEL_REPO_TEST_TIMEOUT", 300)
 
 

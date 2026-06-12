@@ -44,6 +44,19 @@ def _snapshot_disabled_by_default(monkeypatch):
     monkeypatch.setattr(cfg, "CONVERSATION_SNAPSHOT_ENABLED", False)
 
 
+@pytest.fixture(autouse=True)
+def _code_worktree_disabled_by_default(monkeypatch):
+    """Force code-mode git worktrees OFF for the whole suite.
+
+    Opt-in feature (off in code), but a developer's `.env` may enable it
+    (`JEANMICHEL_CODE_WORKTREE_ENABLED=1`), loaded at config import. Pin it off
+    so the suite never creates a worktree of the real repo. The worktree / repo /
+    deliberation tests re-enable it explicitly on a tmp PROJECT_ROOT.
+    """
+    import jeanmichel.config as cfg
+    monkeypatch.setattr(cfg, "CODE_WORKTREE_ENABLED", False)
+
+
 @pytest.fixture()
 def conv_folder(tmp_path: Path) -> Path:
     """Empty conversation folder backed by pytest's tmp_path."""
