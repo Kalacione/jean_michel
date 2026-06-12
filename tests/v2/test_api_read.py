@@ -665,3 +665,31 @@ def test_tts_unavailable_returns_503(client, monkeypatch):
     token = _login(client, "alice", "pw")
     r = client.get("/api/tts", params={"text": "hello"}, headers=_auth(token))
     assert r.status_code == 503
+
+
+def test_project_code_repo_roundtrip(client):
+    """The project API round-trips code_repo/repo_kind (create + patch + validation)."""
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    r = client.post(
+        "/api/projects",
+        json={"code": "cloud", "name": "Cloud",
+              "code_repo": "git@github.com:org/repo.git", "repo_kind": "ssh"},
+        headers=_auth(token),
+    )
+    assert r.status_code == 201, r.text
+    proj = r.json()["project"]
+    assert proj["code_repo"] == "git@github.com:org/repo.git" and proj["repo_kind"] == "ssh"
+
+    r2 = client.patch(
+        f"/api/projects/{proj['id']}",
+        json={"code_repo": "/abs/local", "repo_kind": "local"}, headers=_auth(token),
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["project"]["code_repo"] == "/abs/local"
+
+    bad = client.post(
+        "/api/projects", json={"code": "bad", "name": "B", "repo_kind": "svn"},
+        headers=_auth(token),
+    )
+    assert bad.status_code == 400

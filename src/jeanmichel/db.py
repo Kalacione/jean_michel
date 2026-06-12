@@ -315,7 +315,8 @@ def list_conversations_for_user(
     Alice never sees Bob's — and CLI conversations (no association) are absent.
     """
     return conn.execute(
-        "SELECT c.id, c.title, c.mode, c.status, c.user_language, c.created_at, c.modified_at "
+        "SELECT c.id, c.title, c.mode, c.status, c.user_language, c.project_id, "
+        "c.created_at, c.modified_at "
         "FROM conversations c "
         "JOIN conversation_users cu ON cu.conversation_id = c.id "
         "WHERE cu.user_id = ? "

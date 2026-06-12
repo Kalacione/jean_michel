@@ -83,11 +83,15 @@ def create_app() -> Any:
         code: str
         name: str
         description: str = ""
+        code_repo: str = ""          # local path or ssh url (empty → PROJECT_ROOT fallback)
+        repo_kind: str = "local"     # 'local' | 'ssh'
 
     class ProjectUpdateRequest(BaseModel):
         name: str | None = None
         description: str | None = None
         status: str | None = None
+        code_repo: str | None = None
+        repo_kind: str | None = None
 
     class SnapshotRef(BaseModel):
         commit: str
@@ -374,7 +378,7 @@ def create_app() -> Any:
             with db.connect() as conn:
                 proj = project_svc.create(
                     conn, user_id=user["id"], code=body.code, name=body.name,
-                    description=body.description,
+                    description=body.description, code_repo=body.code_repo, repo_kind=body.repo_kind,
                 )
         except project_svc.ProjectOpError as exc:
             raise _project_http(exc) from exc
@@ -397,6 +401,7 @@ def create_app() -> Any:
                 proj = project_svc.update(
                     conn, user_id=user["id"], project_id=project_id,
                     name=body.name, description=body.description, status=body.status,
+                    code_repo=body.code_repo, repo_kind=body.repo_kind,
                 )
         except project_svc.ProjectOpError as exc:
             raise _project_http(exc) from exc
