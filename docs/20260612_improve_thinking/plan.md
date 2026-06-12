@@ -74,6 +74,74 @@ d'un maillon. « Dogfood jean-michel » = le système opère sur le **repo du pr
 
 ---
 
+## Cartographie du système (mermaid)
+
+> Rectangles = maillons **LLM** · losanges = décisions/gates **déterministes (Python)** · `P0…P5` = phases du plan.
+
+### 1) Roster & délégation — état actuel (base live)
+
+```mermaid
+flowchart TD
+  User([Human]) --> DISP["Dispatcher Tier-0 · granite · JSON forcé"]
+  DISP -->|alexa| ALEXA["Réponse directe · clock/weather/wiki"]
+  DISP -->|deep| JM["jean-michel · ROUTER"]
+  JM --> CR[code-runner]
+  JM --> CRN[code-runner-node]
+  JM --> CF[code-fetcher]
+  JM --> CT[critical-thinker]
+  JM --> CMP[comparator-specialist]
+  JM --> STR[strategist]
+  JM --> WS[web-search-specialist]
+  JM --> WK[wikipedia-specialist]
+  JM --> NW[news-specialist]
+  JM --> WX[weather-specialist]
+  JM --> DOC[document-builder]
+  JM --> WM[workspace-manager]
+  JM --> MA[meta-analyst]
+  JM --> SUM[summarizer]
+  JM --> SY["synthesizer · FINALIZER"]
+  CR --> CF
+  CRN --> CF
+  CT --> WS
+  CT --> WK
+```
+
+*Surfacé par la carte (à corriger, candidat P6) : `comparator-specialist` n'a **aucune** cible de
+délégation en base alors que sa mission décrit des « délégations parallèles aux spécialistes » —
+dérive mission ↔ grants.*
+
+### 2) Pipeline cible — mode `code` (où chaque phase s'insère)
+
+```mermaid
+flowchart TD
+  USER([demande · mode code]) --> WT["P0 · worktree git isolé jm/conv-id"]
+  WT --> JM["jean-michel ROUTER · PLAN todo_write"]
+  JM --> PROBE{"P5 sonde complexité · dur ?"}
+  PROBE -->|simple| CRP
+  PROBE -->|dur| TH
+  subgraph DELIB["P5 · délibération dialectique — contexte frais"]
+    TH["critical-coder · thèse"] --> AN["critical-coder · antithèse"]
+    AN --> SYN["critical-coder · synthèse"]
+    SYN --> KISS{"sergent-kiss · PASS / REWORK"}
+    KISS -->|REWORK ≤2| SYN
+  end
+  KISS -->|approche validée| CRP
+  CRP["P2 · Context Packet · graphify + grep + read-ranges + git-diff + mémoire"] --> WORK
+  WORK["code-runner · repo_read/grep/glob/edit/write"] --> GATES{"P1/P4 gates · read-before-edit · fraîcheur · exclusions"}
+  GATES -->|deny| WORK
+  GATES -->|ok| TEST["P3 · repo_test structuré"]
+  TEST -->|"échec / confidence=low"| PROBE
+  TEST -->|ok| REVIEW{"étape significative ?"}
+  REVIEW -->|oui| DREV["P5 · revue diff 3 angles + sergent-kiss"]
+  REVIEW -->|non| ACT["ROUTER ACT · revise todo"]
+  DREV -->|REWORK| JM
+  DREV -->|PASS| ACT
+  ACT -->|items restants| JM
+  ACT -->|terminé| FINAL(["diff revu sur branche · git = undo"])
+```
+
+---
+
 ## Principe directeur (K.I.S.S, pas de MUST en cascade)
 
 - **Navigation/édition = outils hôte déterministes** (Python + `rg`/`git`, déjà présents :
