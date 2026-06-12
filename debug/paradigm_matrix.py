@@ -36,9 +36,10 @@ def _build_initial_data(db_path: Path) -> dict:
         conn.row_factory = sqlite3.Row
 
         agents = [
-            {"id": r["id"], "code": r["code"], "name": r["name"], "role": r["role"]}
+            {"id": r["id"], "code": r["code"], "name": r["name"], "role": r["role"],
+             "model_override": r["model_override"]}
             for r in conn.execute(
-                "SELECT id, code, name, role FROM agents WHERE active=1 ORDER BY id"
+                "SELECT id, code, name, role, model_override FROM agents WHERE active=1 ORDER BY id"
             ).fetchall()
         ]
 
@@ -498,8 +499,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     // Build combined sections structure with pending new appended
     const sections = DB.sections;
 
-    const MODES_LIST = ['analyse', 'chat', 'vocal'];
-    const MODES_SHORT = { analyse: 'An', chat: 'Ch', vocal: 'Vo' };
+    const MODES_LIST = ['analyse', 'chat', 'vocal', 'code'];
+    const MODES_SHORT = { analyse: 'An', chat: 'Ch', vocal: 'Vo', code: 'Cd' };
 
     let html = '<table><thead><tr>';
     html += '<th style="text-align:left">Paradigme</th>';
@@ -510,7 +511,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       html += `<th class="${cls}" title="Restreindre au mode ${m}">${MODES_SHORT[m]}</th>`;
     });
     agents.forEach(a => {
-      html += `<th title="${escHtml(a.code)}">${escHtml(a.name)}</th>`;
+      const model = a.model_override ? escHtml(a.model_override) : 'default';
+      html += `<th title="${escHtml(a.code)} · ${escHtml(a.role)} · model: ${model}">`
+            + `${escHtml(a.name)}<div style="font-size:9px;color:#888;font-weight:normal">${model}</div></th>`;
     });
     html += '</tr></thead><tbody>';
 
