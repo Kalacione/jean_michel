@@ -66,6 +66,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_127_graphify_paradigm.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_129_repo_test.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_130_code_paradigms.sql")
     yield conn
     conn.close()
 
@@ -204,12 +205,14 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_120_coding_decomposition (pdca_decompose_delegate_revise)
     + 1 from migrate_126_memory_paradigms (tool_note_discipline ;
         user_memory_discipline is renamed to memory_discipline, not added)
-    + 1 from migrate_127_graphify_paradigm (graphify_codebase_navigation).
+    + 1 from migrate_127_graphify_paradigm (graphify_codebase_navigation)
+    + 2 from migrate_130_code_paradigms (repo_intervention_discipline,
+                                         prefer_repo_tools_over_bash).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 120
+    assert row["c"] == 122
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -333,7 +336,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 120
+    assert n == 122
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -497,7 +500,13 @@ _P1_REPO_TOOLS = "('repo_read','repo_grep','repo_glob','repo_edit','repo_write')
 
 def test_migrate_128_idempotent(v2_migrated_db):
     """migrate_128 (INSERT OR IGNORE) can be re-applied without duplicate grants."""
-    q = f"SELECT COUNT(*) AS c FROM agent_tools WHERE tool_code IN {_P1_REPO_TOOLS}"
+    # Scope to the agents migrate_128 grants (workers + fetcher) so later
+    # migrations granting repo_* to other agents don't perturb the count.
+    q = (
+        f"SELECT COUNT(*) AS c FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
+        f"WHERE at.tool_code IN {_P1_REPO_TOOLS} "
+        f"AND a.code IN ('code-runner','code-runner-node','code-fetcher')"
+    )
     n1 = v2_migrated_db.execute(q).fetchone()["c"]
     _apply_sql(v2_migrated_db, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
     n2 = v2_migrated_db.execute(q).fetchone()["c"]
@@ -518,3 +527,58 @@ def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
         for tool in ("repo_test", "repo_graph_refresh"):
             assert codes(tool) >= {"code-runner", "code-runner-node"}, tool
             assert "code-fetcher" not in codes(tool), tool  # lookup agent doesn't run code
+
+
+# ---- migrate_130 : code-mode discipline paradigms --------------------------
+
+_P4_CODES = {"repo_intervention_discipline", "prefer_repo_tools_over_bash"}
+
+
+def test_code_paradigms_present_gated_and_bound(v2_migrated_db, v2_consolidated_db):
+    """migrate_130 + schema.sql: the two code paradigms exist, are gated to mode
+    'code' ONLY (anti-leak), and are bound to BOTH coding workers."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        present = {
+            r["code"] for r in db.execute(
+                "SELECT code FROM paradigms WHERE active = 1 AND code IN "
+                "('repo_intervention_discipline','prefer_repo_tools_over_bash')"
+            )
+        }
+        assert present == _P4_CODES
+        for code in _P4_CODES:
+            modes = {
+                r["mode"] for r in db.execute(
+                    "SELECT mode FROM paradigm_modes pm JOIN paradigms p ON p.id = pm.paradigm_id "
+                    "WHERE p.code = ?", (code,)
+                )
+            }
+            assert modes == {"code"}, (code, modes)  # gated to code only
+            agents = {
+                r["code"] for r in db.execute(
+                    "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id = ap.agent_id "
+                    "JOIN paradigms p ON p.id = ap.paradigm_id WHERE p.code = ?", (code,)
+                )
+            }
+            assert {"code-runner", "code-runner-node"} <= agents, (code, agents)
+        # graphify navigation paradigm now bound to the editor too.
+        gx = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id = ap.agent_id "
+                "JOIN paradigms p ON p.id = ap.paradigm_id WHERE p.code = 'graphify_codebase_navigation'"
+            )
+        }
+        assert "code-runner" in gx
+
+
+def test_code_paradigms_only_render_in_code_mode(v2_consolidated_db):
+    """End-to-end gating via the real loader: code-runner sees the discipline in
+    'code' mode, NOT in 'chat' (the anti-regression invariant)."""
+    from jeanmichel import db as jdb
+
+    cr = v2_consolidated_db.execute("SELECT id FROM agents WHERE code='code-runner'").fetchone()["id"]
+    in_code = {p.code for p in jdb.load_paradigms_for_agent(v2_consolidated_db, cr, "code")}
+    in_chat = {p.code for p in jdb.load_paradigms_for_agent(v2_consolidated_db, cr, "chat")}
+    assert "repo_intervention_discipline" in in_code
+    assert "repo_intervention_discipline" not in in_chat
+    assert "prefer_repo_tools_over_bash" in in_code
+    assert "prefer_repo_tools_over_bash" not in in_chat
