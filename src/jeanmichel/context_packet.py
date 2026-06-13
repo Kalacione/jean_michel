@@ -29,6 +29,7 @@ from pathlib import Path
 
 from .todo import load_todo
 from .tools import _repo
+from .tools._workspace import workspace_root_for
 
 _log = logging.getLogger(__name__)
 
@@ -105,27 +106,43 @@ def _recent_diff(root: Path) -> str:
     return "\n".join(shown) + suffix
 
 
-def _source_slice(conv_folder: Path, root: Path, support_files: list[str]) -> str:
+def _source_slice(
+    conv_folder: Path, root: Path, support_files: list[str], ws_root: Path | None = None
+) -> str:
     blocks: list[str] = []
     for rel in (support_files or [])[:3]:
-        try:
-            target = _repo.safe_resolve(root, rel)
-        except ValueError:
-            continue
-        if not target.exists() or not target.is_file():
+        # A support_file is either a WORKSPACE handoff artifact (a previous
+        # specialist's findings) — checked first — or a repo SOURCE file. Read it
+        # from wherever it lives ; only repo files get a read-before-edit anchor.
+        target: Path | None = None
+        in_repo = False
+        if ws_root is not None:
+            with contextlib.suppress(ValueError):
+                cand = _repo.safe_resolve(ws_root, rel)
+                if cand.exists() and cand.is_file():
+                    target = cand
+        if target is None:
+            with contextlib.suppress(ValueError):
+                cand = _repo.safe_resolve(root, rel)
+                if cand.exists() and cand.is_file():
+                    target, in_repo = cand, True
+        if target is None:
             continue
         try:
             content = target.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        canonical = target.relative_to(root.resolve()).as_posix()
+        base = root if in_repo else ws_root
+        canonical = target.relative_to(base.resolve()).as_posix()
         lines = content.splitlines()
         head = "\n".join(lines[:_SRC_LINES_CAP])
-        # Record the read so the worker can repo_edit this file without an extra round.
-        with contextlib.suppress(OSError):
-            _repo.mark_read(conv_folder, canonical, target.stat().st_mtime_ns)
+        if in_repo:
+            # Record the read so the worker can repo_edit this file without an extra round.
+            with contextlib.suppress(OSError):
+                _repo.mark_read(conv_folder, canonical, target.stat().st_mtime_ns)
         more = f"\n… ({len(lines) - _SRC_LINES_CAP} more lines)" if len(lines) > _SRC_LINES_CAP else ""
-        blocks.append(f"### {canonical}\n{_repo.cat_n(head)}{more}")
+        label = canonical if in_repo else f"workspace:{canonical}"
+        blocks.append(f"### {label}\n{_repo.cat_n(head)}{more}")
     return "\n\n".join(blocks)
 
 
@@ -166,7 +183,10 @@ def build_context_packet(
     try:
         sections.append(("Task", _task_anchor(conv_folder)))
         sections.append(("Recent changes (git diff)", _recent_diff(root)))
-        sections.append(("Source (support files)", _source_slice(conv_folder, root, support_files)))
+        ws_root = workspace_root_for(conv_folder)
+        sections.append(
+            ("Source (support files)", _source_slice(conv_folder, root, support_files, ws_root))
+        )
         sections.append(("Lexical hits (grep)", _grep_slice(root, idents)))
     except Exception as exc:  # noqa: BLE001 — CRP must never break a delegation
         _log.warning("context_packet assembly error: %s", exc)

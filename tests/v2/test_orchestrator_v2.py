@@ -985,3 +985,38 @@ def test_subagent_prose_report_back_aborts_low_not_loop(tmp_path: Path):
     assert "report_back" in (result.low_confidence_reason or "")
     # Bounded : 2 correctives + the 3rd no-tool-call aborts → ≤3 LLM calls, not 50.
     assert len(mock.calls_v2) <= 3
+
+
+# Section 10 : support_file handoff validation (bug C)
+
+
+def test_delegate_with_missing_support_file_is_denied(tmp_path: Path):
+    """A delegation referencing a support_file that exists in NEITHER the workspace
+    nor the repo is denied (no spawn) with a teaching message — bug C, conv dfcafc75."""
+    agent = make_agent("code-router", role="router", delegation_targets={"code-analyst"})
+
+    spawned = {"n": 0}
+
+    def resolver(code):
+        spawned["n"] += 1  # would be hit by spawn_subagent's agent_resolver
+        return make_agent(code, role="specialist")
+
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="code-analyst", briefing="list deps",
+            support_files=["v1_analysis.md"],  # phantom
+        )]),
+        assistant_response("ok, I will not invent files."),
+    ])
+    run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry={}, llm_client=mock,
+        user_text="x", agent_resolver=resolver,
+    )
+    # The delegation was rejected before spawning : the router saw a tool error.
+    msgs = mock.calls_v2[-1]["messages"]
+    errs = [
+        m for m in msgs
+        if m.get("role") == "tool" and "missing_support_file" in (m.get("content") or "")
+    ]
+    assert errs, "phantom support_file should be denied"
+    assert "v1_analysis.md" in errs[0]["content"]

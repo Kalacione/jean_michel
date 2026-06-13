@@ -176,3 +176,19 @@ def test_spawn_subagent_no_packet_without_worktree(tmp_path):
     )
     msgs = json.loads(list(conv.glob("subagent_*.json"))[0].read_text(encoding="utf-8"))
     assert "Reconstructed context" not in msgs[1]["content"]
+
+
+@requires_git
+def test_packet_reads_workspace_support_file(code_conv):
+    """A workspace handoff artifact (a previous specialist's findings) is read inline
+    from the WORKSPACE — not looked up in the repo (bug C handoff, conv dfcafc75)."""
+    from jeanmichel.tools._workspace import workspace_root_for
+    conv, _ = code_conv
+    ws = workspace_root_for(conv)
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "v1_findings.md").write_text("# v1 findings\n- module A still uses v1\n", encoding="utf-8")
+    pkt = context_packet.build_context_packet(
+        conv, briefing="summarize the v1 findings", support_files=["v1_findings.md"]
+    )
+    assert "workspace:v1_findings.md" in pkt        # labelled as a workspace artifact
+    assert "module A still uses v1" in pkt          # content injected inline

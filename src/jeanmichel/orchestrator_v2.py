@@ -63,6 +63,8 @@ from .models import ConversationState, LLMResponse, ToolCall
 from .persistence import append_event, save_messages, save_state, save_sub_messages
 from .todo import load_todo
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
+from .tools import _repo
+from .tools._workspace import workspace_root_for
 from .tools.delegate_to import DELEGATE_TO_SCHEMA
 from .tools.report_back import REPORT_BACK_SCHEMA, validate_report_back_args
 
@@ -332,6 +334,31 @@ def _append_tool_message(
         "tool_name": tool_name,
         "content": json.dumps(result, ensure_ascii=False),
     })
+
+
+def _missing_support_files(conv_folder: Path, support_files: list[str]) -> list[str]:
+    """support_files a worker can't find anywhere → a doomed delegation. A handoff
+    artifact lives in the WORKSPACE ; a source file in the repo WORKTREE. Return the
+    ones that exist in NEITHER, so the router is told instead of spawning a worker
+    that loops looking for a phantom file (bug C, conv dfcafc75 : 'v1_analysis.md')."""
+    roots = [
+        r for r in (workspace_root_for(conv_folder), _repo.worktree_root(conv_folder))
+        if r is not None
+    ]
+    missing: list[str] = []
+    for rel in support_files:
+        found = False
+        for root in roots:
+            try:
+                target = _repo.safe_resolve(root, rel)
+            except ValueError:
+                continue
+            if target.exists() and target.is_file():
+                found = True
+                break
+        if not found:
+            missing.append(rel)
+    return missing
 
 
 def _args_summary(args: dict[str, Any], max_chars: int = 80) -> str:
@@ -705,6 +732,21 @@ def _handle_tool_call(
         briefing = call.arguments.get("briefing", "")
         support_files = call.arguments.get("support_files") or []
         expected = call.arguments.get("expected", "")
+
+        # Validate support_files exist (workspace handoff artifact OR repo source)
+        # BEFORE spawning — a phantom path otherwise sends the worker into a doomed
+        # lookup (bug C). Tell the router instead of burning a delegation.
+        missing = _missing_support_files(conv_folder, support_files)
+        if missing:
+            _append_tool_message(messages, call.name, {
+                "error": "missing_support_file",
+                "summary": (
+                    f"support_file(s) not found: {', '.join(missing)}. Reference only files a previous "
+                    "specialist actually produced (report_back.files_produced) or real repo paths — do "
+                    "not invent filenames."
+                ),
+            })
+            return None
 
         # P5 deliberation — spawn helper (fresh-context critical-coder / sergent-kiss).
         def _delib_spawn(agent_code: str, brief: str, sf_arg: Any = None) -> Any:
