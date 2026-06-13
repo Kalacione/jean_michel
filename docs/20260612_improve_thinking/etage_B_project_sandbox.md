@@ -102,6 +102,38 @@ confiné au repo) — pas `bash_sandbox` (qui ne voit que le scratch) ni l'hôte
 - **B6 — Doctrine — ✅ LIVRÉ** : `code_space_doctrine` nomme la PROJECT SANDBOX (`repo_exec`) ; dual-write + tests par mode.
 - **B7 — (Étage C) `repo_test` → conteneur** ; garde anti ré-délégation (F4) si encore observée.
 
+## Étage C — statut
+
+- **C1 — git checkpoint — ✅ LIVRÉ** (migrate_137) : identité committer dans le clone + paradigme `git_checkpoint_discipline` ; l'agent commit ses étapes via `repo_exec`.
+- **C2 — garde footgun `repo_exec` — ✅ LIVRÉ** : tripwire (rm -rf / ~ /*, fork bomb, mkfs, dd of=/dev/) ; le conteneur reste la vraie frontière.
+- **C3 — Dockerfile du projet dans les paramètres — À VALIDER (analyse ci-dessous).**
+- *Backlog* : `repo_test` dans le conteneur (B7) ; garde anti ré-délégation (F4, différée — plus revue depuis le fix Étage A).
+
+## C3 — gérer le Dockerfile/setup du projet dans les paramètres (analyse, pas encore livré)
+
+**Besoin** : configurer l'image du sandbox projet depuis les **paramètres du projet** (web UI) au lieu d'exiger
+un `.jm/Dockerfile` **commité dans le repo cible** (qu'on ne veut pas toujours polluer ; le repo peut être à autrui).
+
+**Stockage — recommandation : colonne DB `projects.dockerfile TEXT`** (l'instinct « BDD plus logique » est juste).
+Un Dockerfile fait quelques Ko → une colonne TEXT suffit, atomique avec le projet (migre comme `code_repo`,
+migrate_133), éditable via l'UI. *Pas* de fichier sur disque (plomberie FS + backup = « stockage particulier »
+inutile). Au build : écrire le contenu dans un tempfile, `docker build -f <tmp> <source_repo>` (contexte = le repo,
+pour que `COPY requirements.txt` marche). Tag par hash du contenu (comme B4) → rebuild si changement.
+
+**« Image de base » = le `FROM` du Dockerfile.** NE PAS faire un champ base-image séparé + un script setup séparé
+(c'est l'usine à gaz qu'on a déjà écartée avec `cloud_init`) : **un seul champ Dockerfile** (FROM + RUN) couvre tout.
+
+**Précédence de résolution** (dans `_resolve_image`) : `projects.dockerfile` (DB, réglage explicite du proprio)
+**>** `<source_repo>/.jm/Dockerfile` (commodité si le repo en livre un) **>** image agent par défaut (py/node-alpine).
+
+**Confiance** : le Dockerfile DB est posé via l'UI authentifiée par le **propriétaire** → de confiance (comme un
+commit) ; le LLM ne touche pas aux paramètres projet. Le réseau n'existe qu'au build (inchangé).
+
+**Périmètre (borné, pas usine à gaz)** : migrate_138 (colonne) + miroir schema + `db.create/update_project` +
+`ProjectSaveRequest/Update` (api) + `_resolve_image` (branche DB→tempfile) + `<textarea>` « Dockerfile (sandbox du
+projet) » dans `ProjectsDialog.vue` + tests. Comparable à migrate_133 (`code_repo`). **Verdict : faisable, KISS,
+recommandé — à condition de garder UN champ Dockerfile** (pas base-image + setup séparés).
+
 ## Risques / questions ouvertes
 
 - **Coût clone** gros repo : `--local` (hardlinks) atténue ; sinon `--shared` (attention à la durée de vie de la source).
