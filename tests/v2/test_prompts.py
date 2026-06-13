@@ -89,3 +89,33 @@ def test_system_prompt_includes_delegation_block_when_targets(base_kwargs):
     directives_idx = prompt.index("# DIRECTIVES")
     conversation_idx = prompt.index("## Conversation")
     assert conversation_idx < delegation_idx < directives_idx
+
+
+# ---- layer-based language/context gating (P1) -----------------------------
+
+
+def test_specialist_prompt_is_english_only_no_user_context(base_kwargs):
+    """Center layer (specialist) : no user profile, no user language → English only."""
+    kw = {**base_kwargs, "agent_code": "code-analyst", "agent_role": "specialist"}
+    prompt = render_system_prompt_v2(**kw)
+    assert "Detected language" not in prompt
+    assert "## Human" not in prompt
+    assert "name: test" not in prompt           # user profile withheld
+    assert "Work ENTIRELY in English" in prompt
+    assert "fr" not in prompt.split("# DIRECTIVES")[0]  # user language not leaked
+
+
+def test_router_prompt_keeps_user_context_and_language(base_kwargs):
+    """Edge (router) : keeps the user profile + user language + ask_human note."""
+    prompt = render_system_prompt_v2(**base_kwargs)  # role=router
+    assert "## Human" in prompt and "name: test" in prompt
+    assert "Detected language" in prompt and ": fr" in prompt
+    assert "ask_human" in prompt  # router note
+
+
+def test_finalizer_prompt_keeps_user_language_no_ask_human(base_kwargs):
+    """Edge (finalizer) : human-facing language, but no ask_human (it can't)."""
+    kw = {**base_kwargs, "agent_code": "synthesizer", "agent_role": "finalizer"}
+    prompt = render_system_prompt_v2(**kw)
+    assert "Detected language" in prompt and ": fr" in prompt
+    assert "ask_human" not in prompt

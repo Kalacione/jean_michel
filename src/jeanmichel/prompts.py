@@ -319,6 +319,36 @@ def render_system_prompt_v2(
         else "No user profile provided."
     )
 
+    # Language + user-context discipline by LAYER (cf. docs/agents_synoptic.md):
+    #   - EDGES (router, finalizer) touch the human → they get the user profile and
+    #     the user's language for human-facing output (final answer ; + ask_human for
+    #     the router). The router/finalizer is the ONLY place the user's language lives.
+    #   - CENTER (specialist) = internal workers, never address the user → NO user
+    #     profile, NO user language ; everything in English (the system language).
+    #     This removes the EN/FR drift (specialists were told the user's language) and
+    #     the user-context noise.
+    if agent_role in ("router", "finalizer"):
+        ask_human_note = (
+            " ; ask_human questions + choices are shown to the human → user language too"
+            if agent_role == "router"
+            else ""
+        )
+        human_section = (
+            f"## Human\n"
+            f"{human_block}\n\n"
+            f"Detected language — use it for human-facing output (your final answer{ask_human_note}): "
+            f"{user_language}\n"
+            f"Working language for everything else (internal reasoning, tool queries, "
+            f"briefings to other agents): English only.\n\n"
+        )
+    else:
+        human_section = (
+            "## Working language\n"
+            "Work ENTIRELY in English (the system language): reasoning, tool queries, "
+            "briefings, and your report_back. You are an internal worker — you never "
+            "address the user and are NOT given the user's language.\n\n"
+        )
+
     targets_block = render_delegation_targets_block(delegation_targets_meta or [])
     targets_section = f"\n{targets_block}" if targets_block else ""
 
@@ -328,11 +358,7 @@ def render_system_prompt_v2(
         f"Role: {agent_role}.\n"
         f"Mission: {agent_mission}\n\n"
         f"# CONTEXT\n"
-        f"## Human\n"
-        f"{human_block}\n\n"
-        f"Detected language — use for human-facing output: {user_language}\n"
-        f"Working language for everything else (internal reasoning, tool queries, "
-        f"briefings to other agents): English only.\n\n"
+        f"{human_section}"
         f"## Conversation\n"
         f"- mode: {mode}\n"
         f"{targets_section}\n"
