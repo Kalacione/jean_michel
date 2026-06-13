@@ -18,7 +18,7 @@ def test_render_has_live_values_and_control_points():
     assert "0.7, 0.8, 0.9, 0.95" in md  # COMPACTION_THRESHOLDS live
     # Control points present.
     for cp in ("PreToolUse hook", "Worktree isolation", "Repo edit gates",
-               "Context packet (CRP)", "Deliberation trigger"):
+               "Context packet (CRP)", "Deliberation gate"):
         assert cp in md, cp
     # Points to the README for narrative (no duplication of prose).
     assert "README.md" in md

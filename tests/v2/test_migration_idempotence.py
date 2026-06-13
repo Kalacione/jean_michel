@@ -80,6 +80,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_141_ground_facts.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_142_code_analyst.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_143_todo_update.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_144_critics_are_validators.sql")
     yield conn
     conn.close()
 
@@ -534,6 +535,16 @@ def test_repo_tools_granted(v2_migrated_db, v2_consolidated_db):
         assert "code-analyst" not in codes("repo_write")
         assert "code-analyst" not in codes("repo_exec")
         assert "code-analyst" not in codes("repo_test")
+
+
+def test_critics_are_validators(v2_migrated_db, v2_consolidated_db):
+    """migrate_144 : critical-coder/sergent-kiss missions reframed as validators
+    (grounded in sources), not creatives."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        cc = db.execute("SELECT mission FROM agents WHERE code='critical-coder'").fetchone()["mission"]
+        sk = db.execute("SELECT mission FROM agents WHERE code='sergent-kiss'").fetchone()["mission"]
+        assert "Validator" in cc and "do NOT propose, design, or invent" in cc
+        assert "validation gate" in sk and "never redesign" in sk
 
 
 def test_todo_update_granted_to_routers(v2_migrated_db, v2_consolidated_db):

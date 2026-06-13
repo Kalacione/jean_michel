@@ -21,7 +21,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import config, deliberation
+from . import config
 
 # ---- Tunable parameters : (category, config attribute, env var, governs) ----
 # Live values are read from the `config` module at render time.
@@ -82,8 +82,8 @@ _CONTROL_POINTS: list[dict[str, str]] = [
      "governs": "—", "summary": "deterministic per-delegation context (grep + source + git-diff + memory); code mode only."},
     {"name": "repo_test", "kind": "code-mode", "where": "src/jeanmichel/tools/repo_test.py",
      "governs": "REPO_TEST_CMD, REPO_TEST_TIMEOUT", "summary": "structured test result (passed/failed/counts) instead of raw stdout."},
-    {"name": "Deliberation trigger", "kind": "gate", "where": "src/jeanmichel/deliberation.py · should_deliberate",
-     "governs": "complexity_probe, MAX_REWORK", "summary": "selective: code worker + worktree + hard step → thesis/antithesis/synthesis + KISS gate (bounded REWORK)."},
+    {"name": "Deliberation gate", "kind": "gate", "where": "src/jeanmichel/deliberation.py · validate_deliverable",
+     "governs": "complexity_probe", "summary": "DOWNSTREAM validation: a concrete deliverable (diff / analysis report) checked against the real repo (grounding/correctness/simplicity) + PASS/REWORK gate. Validators, not creatives."},
 ]
 
 
@@ -98,7 +98,7 @@ def _fmt(value: object) -> str:
 
 
 def render_orchestrator_map() -> str:
-    extra = {"complexity_probe": "keywords / >=2 files", "MAX_REWORK": deliberation.MAX_REWORK}
+    extra = {"complexity_probe": "keywords / >=2 files (validation gate)"}
 
     # Parameters grouped by category, live values from config.
     param_lines = ["| Parameter | Live value | Env var | Governs |", "|---|---|---|---|"]
@@ -133,8 +133,7 @@ def render_orchestrator_map() -> str:
         f"décide (quel step, quel worker, quand conclure) est *hors* de cette carte — c'est "
         f"précisément ce que ces garde-fous encadrent.\n\n"
         f"## Paramètres réglables (valeurs live)\n\n{params}\n\n"
-        f"Déclencheur de délibération : `complexity_probe` = {extra['complexity_probe']} ; "
-        f"`MAX_REWORK` = {extra['MAX_REWORK']}.\n\n"
+        f"Gate de validation (downstream) : `complexity_probe` = {extra['complexity_probe']}.\n\n"
         f"## Points de contrôle déterministes\n\n{control}\n\n"
         f"Voir aussi le synoptic des agents : `docs/agents_synoptic.md` (`./jm.sh --synoptic`).\n"
     )

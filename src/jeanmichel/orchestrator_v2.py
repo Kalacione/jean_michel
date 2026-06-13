@@ -748,7 +748,9 @@ def _handle_tool_call(
             })
             return None
 
-        # P5 deliberation — spawn helper (fresh-context critical-coder / sergent-kiss).
+        # Deliberation spawn helper (fresh-context critical-coder / sergent-kiss).
+        # Validators only — invoked DOWNSTREAM on a concrete deliverable (cf. below) ;
+        # never upstream to "pre-plan" (that drifts on small models).
         def _delib_spawn(agent_code: str, brief: str, sf_arg: Any = None) -> Any:
             spec = agent_resolver(agent_code)
             if spec is None:
@@ -759,22 +761,6 @@ def _handle_tool_call(
                 expected="", parent_state=state, agent_resolver=agent_resolver,
                 event_emitter=event_emitter, parent_agent_code=agent.code,
             )
-
-        # UPSTREAM: on a hard code step, vet the approach (thesis/antithesis/
-        # synthesis + KISS gate) and prepend it to the worker's briefing.
-        if deliberation.should_deliberate(conv_folder, target_code, briefing, support_files):
-            try:
-                appr = deliberation.deliberate_approach(
-                    spawn=_delib_spawn, task=briefing, support_files=list(support_files),
-                )
-                if appr.synthesis:
-                    briefing = (
-                        briefing
-                        + "\n\n## Vetted approach (deliberated, KISS-gated)\n"
-                        + appr.synthesis
-                    )
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("deliberate_approach failed: %s", exc)
 
         try:
             sub_result = spawn_subagent(
@@ -798,25 +784,27 @@ def _handle_tool_call(
             return None
 
         result_payload = sub_result.to_dict()
-        # DOWNSTREAM: review the diff a hard code step produced (3 angles + KISS
-        # gate); attach the verdict so the router's PDCA ACT handles any rework.
-        if (
-            target_code in deliberation.CODE_WORKERS
-            and deliberation.complexity_probe(briefing, support_files)
-        ):
-            try:
-                diff = deliberation.current_diff(conv_folder)
-                if diff:
-                    rev = deliberation.review_diff(
-                        spawn=_delib_spawn, task=briefing, diff=diff,
-                        support_files=list(support_files),
+        # DOWNSTREAM VALIDATION (important phases only) : the critics VALIDATE a
+        # CONCRETE deliverable against the real repo (grounding/correctness/simplicity
+        # + PASS/REWORK), they never pre-plan. code-runner → its diff ; code-analyst →
+        # its analysis/audit report. The verdict rides on the result the router sees,
+        # which handles any rework via its normal PDCA ACT.
+        if deliberation.complexity_probe(briefing, support_files):
+            kind, content = "", ""
+            if target_code in deliberation.CODE_WORKERS:
+                kind, content = "diff", deliberation.current_diff(conv_folder)
+            elif target_code == "code-analyst":
+                kind, content = "analysis report", (sub_result.summary or "")
+            if kind and content.strip():
+                try:
+                    rev = deliberation.validate_deliverable(
+                        spawn=_delib_spawn, task=briefing, kind=kind, content=content,
+                        support_files=list(sub_result.files_produced or support_files),
                     )
                     if rev.verdict == "rework":
-                        result_payload["kiss_review"] = {
-                            "verdict": "rework", "cuts": rev.critique,
-                        }
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("review_diff failed: %s", exc)
+                        result_payload["kiss_review"] = {"verdict": "rework", "cuts": rev.critique}
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("validate_deliverable failed: %s", exc)
         # PostToolUse handles counters + cache.
         hooks.post_tool_use(
             call, result_payload, messages, state, dedup_cache, agent.code

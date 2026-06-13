@@ -1,8 +1,8 @@
-"""Tests for the dialectic deliberation engine (P5, deliberation.py).
+"""Tests for the deliberation engine (P5, deliberation.py) — DOWNSTREAM validation.
 
-Unit-tests the engine with an injected fake spawn (no LLM), the deterministic
-trigger, and one integration pass through run_main_loop (worktree + MockClient)
-proving the vetted approach is prepended to the code worker's briefing.
+critical-coder/sergent-kiss are validators (grounding/correctness/simplicity +
+PASS/REWORK) of a CONCRETE deliverable, NOT creatives. No upstream pre-planning.
+Unit-tests with an injected fake spawn + one integration through run_main_loop.
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not a
 
 
 def _fake_spawn(kiss_script):
-    """Injected spawn: critical-coder returns a generic analysis; sergent-kiss
-    returns the next scripted confidence (high=PASS, low=REWORK)."""
+    """Injected spawn: critical-coder returns a generic review; sergent-kiss returns
+    the next scripted confidence (high=PASS, low=REWORK)."""
     state = {"kiss": list(kiss_script), "calls": []}
 
     def spawn(agent_code, brief, sf=None):
@@ -40,13 +40,9 @@ def _fake_spawn(kiss_script):
                 agent="sergent-kiss", summary="verdict", confidence=conf,
                 low_confidence_reason=("drop the cache layer" if conf == "low" else ""),
             )
-        return SubResult(agent=agent_code, summary=f"{agent_code} analysis", confidence="high")
+        return SubResult(agent=agent_code, summary=f"{agent_code} review", confidence="high")
 
     return spawn, state
-
-
-def _syn_calls(state):
-    return [c for c in state["calls"] if c[0] == "critical-coder" and "ANGLE: SYNTHESIS" in c[1]]
 
 
 # ---- trigger ----------------------------------------------------------------
@@ -59,53 +55,37 @@ def test_complexity_probe():
     assert deliberation.complexity_probe("tweak one line", ["a.py"]) is False
 
 
-def test_should_deliberate_gates_on_worker_and_mode(tmp_path):
-    # No worktree → never deliberate, even for a hard brief.
-    assert deliberation.should_deliberate(tmp_path, "code-runner", "refactor X", []) is False
-    assert deliberation.should_deliberate(tmp_path, "wikipedia-specialist", "refactor X", []) is False
+# ---- engine : validate_deliverable (fake spawn) -----------------------------
 
 
-# ---- engine (fake spawn) ----------------------------------------------------
-
-
-def test_deliberate_approach_pass():
+def test_validate_deliverable_pass():
     spawn, state = _fake_spawn(["high"])
-    out = deliberation.deliberate_approach(spawn=spawn, task="refactor X", support_files=["a.py"])
+    out = deliberation.validate_deliverable(spawn=spawn, task="t", kind="diff", content="--- a\n+++ b\n+x")
     assert out.verdict == "pass"
-    assert out.synthesis  # vetted approach text present
     stages = [t["stage"] for t in out.transcript]
-    assert stages[:3] == ["thesis", "antithesis", "synthesis"]
-    assert "sergent-kiss" in stages
-    assert len(_syn_calls(state)) == 1  # no rework
+    assert stages == ["review:grounding", "review:correctness", "review:simplicity", "sergent-kiss"]
+    # critic spawns are validators, not creatives: no THESIS/SYNTHESIS angle.
+    assert not any("ANGLE: THESIS" in b or "ANGLE: SYNTHESIS" in b for _, b in state["calls"])
+    assert any("VALIDATOR" in b and "do NOT redesign" in b for _, b in state["calls"])
 
 
-def test_deliberate_approach_rework_then_pass():
-    spawn, state = _fake_spawn(["low", "high"])
-    out = deliberation.deliberate_approach(spawn=spawn, task="refactor X", support_files=["a.py"])
-    assert out.verdict == "pass"
-    assert len(_syn_calls(state)) == 2  # one revision after the REWORK
+def test_validate_deliverable_rework():
+    spawn, _ = _fake_spawn(["low"])
+    out = deliberation.validate_deliverable(spawn=spawn, task="t", kind="analysis report", content="claim Z")
+    assert out.verdict == "rework" and out.critique
 
 
-def test_deliberate_approach_rework_exhausted():
-    spawn, state = _fake_spawn(["low", "low", "low"])
-    out = deliberation.deliberate_approach(spawn=spawn, task="refactor X", support_files=["a.py"])
-    assert out.verdict == "rework"
-    assert out.critique  # the KISS cuts are surfaced
-    assert len(_syn_calls(state)) == 3  # initial + 2 bounded revisions
-
-
-def test_deliberate_approach_skipped_when_agents_unavailable():
-    out = deliberation.deliberate_approach(spawn=lambda *a, **k: None, task="x", support_files=[])
+def test_validate_deliverable_skipped_when_agents_unavailable():
+    out = deliberation.validate_deliverable(
+        spawn=lambda *a, **k: None, task="t", kind="diff", content="x",
+    )
     assert out.verdict == "skipped"
 
 
-def test_review_diff_pass_and_rework():
-    spawn, _ = _fake_spawn(["high"])
-    out = deliberation.review_diff(spawn=spawn, task="t", diff="--- a\n+++ b\n+x")
-    assert out.verdict == "pass"
-    spawn2, _ = _fake_spawn(["low"])
-    out2 = deliberation.review_diff(spawn=spawn2, task="t", diff="--- a\n+++ b\n+x")
-    assert out2.verdict == "rework" and out2.critique
+def test_no_upstream_creative_api():
+    """The creative upstream pass is gone — critics are downstream validators only."""
+    assert not hasattr(deliberation, "deliberate_approach")
+    assert not hasattr(deliberation, "should_deliberate")
 
 
 # ---- worktree-backed helpers + integration ---------------------------------
@@ -137,12 +117,6 @@ def wt(tmp_path, monkeypatch):
 
 
 @requires_git
-def test_should_deliberate_true_with_worktree(wt):
-    conv, _ = wt
-    assert deliberation.should_deliberate(conv, "code-runner", "refactor across files", []) is True
-
-
-@requires_git
 def test_current_diff(wt):
     conv, root = wt
     assert deliberation.current_diff(conv) == ""          # clean worktree
@@ -151,44 +125,39 @@ def test_current_diff(wt):
 
 
 @requires_git
-def test_run_main_loop_prepends_vetted_approach(wt):
-    """Integration: a hard code delegation triggers the deliberation, and the
-    vetted approach is prepended to the code worker's briefing."""
+def test_run_main_loop_validates_analysis_report_no_upstream(wt):
+    """Integration: a hard code-analyst delegation triggers DOWNSTREAM validation of
+    its report (grounding angle present) and NO upstream 'Vetted approach' pre-plan."""
     conv, _ = wt
-    main_agent = make_agent("jean-michel", role="router", delegation_targets={"code-runner"})
+    main_agent = make_agent("code-router", role="router", delegation_targets={"code-analyst"})
 
     def resolver(code):
-        if code in ("code-runner", "critical-coder", "sergent-kiss"):
+        if code in ("code-analyst", "critical-coder", "sergent-kiss"):
             return make_agent(code, role="specialist")
         return None
 
     mock = MockClient(script=[
-        # router → delegate the hard step
         assistant_response("", tool_calls=[tool_call(
-            "delegate_to", agent_code="code-runner",
-            briefing="Refactor the parser across multiple files", support_files=["sample.py"],
+            "delegate_to", agent_code="code-analyst",
+            briefing="Analyse the parser across multiple files", support_files=["sample.py"],
         )]),
-        # deliberation: thesis, antithesis, synthesis, sergent-kiss(PASS)
-        assistant_response("", tool_calls=[tool_call("report_back", summary="thesis", files_produced=[], confidence="high")]),
-        assistant_response("", tool_calls=[tool_call("report_back", summary="antithesis", files_produced=[], confidence="high")]),
-        assistant_response("", tool_calls=[tool_call("report_back", summary="synthesis: minimal plan", files_produced=[], confidence="high")]),
-        assistant_response("", tool_calls=[tool_call("report_back", summary="simple enough", files_produced=[], confidence="high")]),
-        # code worker
-        assistant_response("", tool_calls=[tool_call("report_back", summary="done", files_produced=[], confidence="high")]),
-        # router final
-        assistant_response("All set."),
+        assistant_response("", tool_calls=[tool_call("report_back", summary="the parser uses X in sample.py", files_produced=[], confidence="high")]),
+        # downstream validation : grounding / correctness / simplicity + gate
+        assistant_response("", tool_calls=[tool_call("report_back", summary="grounding ok", files_produced=[], confidence="high")]),
+        assistant_response("", tool_calls=[tool_call("report_back", summary="correctness ok", files_produced=[], confidence="high")]),
+        assistant_response("", tool_calls=[tool_call("report_back", summary="simple ok", files_produced=[], confidence="high")]),
+        assistant_response("", tool_calls=[tool_call("report_back", summary="PASS", files_produced=[], confidence="high")]),
+        assistant_response("Done."),
     ])
 
     run_main_loop(
         conv_folder=conv, agent=main_agent, tools_registry={}, llm_client=mock,
-        user_text="refactor", agent_resolver=resolver,
+        user_text="analyse", agent_resolver=resolver,
     )
 
     briefings = [
         json.loads(p.read_text(encoding="utf-8"))[1]["content"]
         for p in conv.glob("subagent_*.json")
     ]
-    # critical-coder ran (angle briefings present) ...
-    assert any("ANGLE: THESIS" in b for b in briefings)
-    # ... and the code worker received the vetted approach prepended.
-    assert any("Vetted approach (deliberated" in b and "Refactor the parser" in b for b in briefings)
+    assert any("ANGLE: GROUNDING" in b and "analysis report" in b for b in briefings)
+    assert not any("Vetted approach" in b or "ANGLE: THESIS" in b for b in briefings)

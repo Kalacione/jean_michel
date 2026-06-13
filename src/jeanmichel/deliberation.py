@@ -1,21 +1,21 @@
-"""Dialectic deliberation engine (P5) — the deterministic 'method of reasoning'.
+"""Deliberation engine (P5) — DOWNSTREAM validation, grounded in real sources.
 
-Orchestrated by CODE (not by a dumb LLM deciding to think): on a hard step the
-router's delegation is wrapped with a thesis → antithesis → synthesis pass run
-by `critical-coder` (one angle per fresh-context spawn), then gated by
-`sergent-kiss` (PASS / REWORK via report_back confidence — no new control verb).
-A bounded REWORK loop (<=2) lets synthesis incorporate the KISS cuts.
+critical-coder and sergent-kiss are **validators / controllers, NOT creatives**.
+They never propose or design an approach (that drifts/hallucinates on a small model
+with nothing concrete to ground on — cf. conv 9f428b47). They VALIDATE a CONCRETE
+deliverable already produced — a code diff, or an analysis/audit report — against the
+REAL repository (repo_read / repo_grep / repo_glob), flagging any claim not supported
+by the code, then gate PASS / REWORK.
 
-Two firing points (both gated by a deterministic complexity probe):
-  - UPSTREAM  `deliberate_approach`: before writing — produce a vetted approach
-    that is prepended to the worker's briefing (anti-impasse).
-  - DOWNSTREAM `review_diff`: after a code worker edits — review the diff from 3
-    angles + KISS gate; the critique is attached to the result the router sees,
-    which handles rework through its normal PDCA ACT (no new orchestrator loop).
+Single firing point, gated by a deterministic complexity probe (important phases :
+proposed code, analysis reports, audit conclusions) :
+  - `validate_deliverable` : 3 angles (grounding / correctness / simplicity) by
+    `critical-coder` + a PASS/REWORK gate by `sergent-kiss`. The verdict is attached
+    to the result the router sees (`kiss_review`) → handled by its normal PDCA ACT.
 
-Spawning is injected (`spawn`) so the engine is unit-testable and does not import
-the orchestrator. Best-effort: if the deliberation agents are unavailable
-(`spawn` returns None) the outcome is 'skipped' and the caller proceeds normally.
+Spawning is injected (`spawn`) so the engine is unit-testable and does not import the
+orchestrator. Best-effort : if a deliberation agent is unavailable (`spawn` returns
+None) the outcome is 'skipped' and the caller proceeds normally.
 """
 
 from __future__ import annotations
@@ -31,10 +31,9 @@ from .tools import _repo
 _log = logging.getLogger(__name__)
 
 CODE_WORKERS = frozenset({"code-runner", "code-runner-node"})
-MAX_REWORK = 2
-_DIFF_CAP_LINES = 150
+_DELIVERABLE_CAP_LINES = 150
 
-# A step is "hard" enough to deliberate when it spans files or names structural work.
+# A step is "important" enough to validate when it spans files or names structural work.
 _HARD_KEYWORDS = (
     "refactor", "redesign", "re-architect", "architecture", "migrate", "migration",
     "rename", "breaking", "across", "multiple files", "rework", "overhaul",
@@ -48,8 +47,8 @@ SpawnFn = Callable[..., Any]
 @dataclass
 class DeliberationOutcome:
     verdict: str = "skipped"          # "pass" | "rework" | "skipped"
-    synthesis: str = ""               # vetted approach (upstream) — "" otherwise
-    critique: str = ""                # KISS cuts / review notes when rework
+    synthesis: str = ""               # unused (kept for transcript-shape compat)
+    critique: str = ""                # concrete fixes when verdict == "rework"
     transcript: list[dict] = field(default_factory=list)
 
 
@@ -57,20 +56,11 @@ class DeliberationOutcome:
 
 
 def complexity_probe(briefing: str, support_files: list[str]) -> bool:
-    """Deterministic 'is this hard enough to deliberate?' heuristic."""
+    """Deterministic 'is this an important deliverable to validate?' heuristic."""
     if len(support_files or []) >= 2:
         return True
     text = (briefing or "").lower()
     return any(k in text for k in _HARD_KEYWORDS)
-
-
-def should_deliberate(conv_folder: Path, target_code: str, briefing: str, support_files: list[str]) -> bool:
-    """Gate: a code worker, in code mode (worktree exists), on a hard step."""
-    if target_code not in CODE_WORKERS:
-        return False
-    if _repo.worktree_root(conv_folder) is None:
-        return False
-    return complexity_probe(briefing, support_files)
 
 
 def current_diff(conv_folder: Path) -> str:
@@ -87,46 +77,39 @@ def current_diff(conv_folder: Path) -> str:
         return ""
 
 
-# ---- briefings (deterministic angle templates) -----------------------------
+# ---- validation briefings (grounded, validator framing) --------------------
 
 
-def _angle_brief(angle: str, task: str, *, thesis: str = "", antithesis: str = "", rework: str = "") -> str:
-    if angle == "thesis":
-        return ("ANGLE: THESIS.\nPropose the most direct, concrete approach to this task. "
-                "Name the files/functions to touch and the ordered steps.\n\n## Task\n" + task)
-    if angle == "antithesis":
-        return ("ANGLE: ANTITHESIS.\nAttack the proposed approach below. Where does it break? "
-                "Hidden assumptions? Failure modes? Side effects on callers? Is there a simpler "
-                "path? Steelman the best alternative.\n\n## Task\n" + task +
-                "\n\n## Proposed approach (thesis)\n" + thesis)
-    # synthesis
-    out = ("ANGLE: SYNTHESIS.\nReconcile the thesis and antithesis into the single best approach — "
-           "the SIMPLEST design that survives the critique. Output a concrete, ordered plan "
-           "(files, functions, steps).\n\n## Task\n" + task +
-           "\n\n## Thesis\n" + thesis + "\n\n## Antithesis\n" + antithesis)
-    if rework:
-        out += "\n\n## A KISS reviewer asked for these cuts — apply them\n" + rework
-    return out
+def _validate_brief(angle: str, task: str, kind: str, content: str) -> str:
+    intro = {
+        "grounding": (
+            f"ANGLE: GROUNDING.\nVerify EVERY factual claim in the {kind} below against the REAL "
+            "repository (repo_read / repo_grep / repo_glob). Flag any file, symbol, or conclusion "
+            "that is NOT supported by the actual code. Cite path:line."
+        ),
+        "correctness": (
+            f"ANGLE: CORRECTNESS.\nChecking against the repo, does the {kind} correctly and completely "
+            "address the task? Surface gaps, errors, wrong assumptions, missed cases."
+        ),
+        "simplicity": (
+            f"ANGLE: SIMPLICITY.\nIs the {kind} the SIMPLEST thing that solves EXACTLY the task? Flag "
+            "over-engineering, speculative generality, anything that was not requested."
+        ),
+    }[angle]
+    return (
+        f"{intro}\n\nYou are a VALIDATOR, not a creative: CHECK the deliverable against the sources, "
+        f"do NOT redesign or propose your own approach.\n\n## Task\n{task}\n\n## {kind}\n{content}"
+    )
 
 
-def _review_brief(angle: str, task: str, diff: str) -> str:
-    return (f"ANGLE: REVIEW / {angle.upper()}.\nReview the diff below for {angle.replace('_', ' ')}. "
-            "Be concrete and cite path:line.\n\n## Task\n" + task + "\n\n## Diff\n" + diff)
-
-
-def _gate_brief(approach: str, task: str) -> str:
-    return ("Decide whether this approach is the SIMPLEST design that solves exactly the task. "
-            "PASS via report_back(confidence='high' or 'medium'); REWORK via confidence='low' with "
-            "the precise cuts in low_confidence_reason.\n\n## Task\n" + task +
-            "\n\n## Proposed approach\n" + approach)
-
-
-def _gate_brief_review(task: str, diff: str, reviews: list[tuple[str, str]]) -> str:
+def _gate_brief_validate(task: str, kind: str, content: str, reviews: list[tuple[str, str]]) -> str:
     blocks = "\n\n".join(f"### {a}\n{s}" for a, s in reviews)
-    return ("Decide whether this diff is the SIMPLEST change that solves exactly the task, given the "
-            "reviews. PASS via report_back(confidence='high' or 'medium'); REWORK via confidence='low' "
-            "with the precise cuts in low_confidence_reason.\n\n## Task\n" + task +
-            "\n\n## Diff\n" + diff + "\n\n## Reviews\n" + blocks)
+    return (
+        f"Given the reviews, decide whether this {kind} is correct, GROUNDED in the real repo, and the "
+        "simplest solution to EXACTLY the task. PASS via report_back(confidence='high' or 'medium'); "
+        "REWORK via confidence='low' with precise, concrete fixes in low_confidence_reason.\n\n"
+        f"## Task\n{task}\n\n## {kind}\n{content}\n\n## Reviews\n{blocks}"
+    )
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -155,64 +138,23 @@ def _verdict_of(gate: Any) -> tuple[str, str]:
 # ---- engine ----------------------------------------------------------------
 
 
-def deliberate_approach(
-    *, spawn: SpawnFn, task: str, support_files: list[str] | None = None, max_rework: int = MAX_REWORK,
+def validate_deliverable(
+    *, spawn: SpawnFn, task: str, kind: str, content: str, support_files: list[str] | None = None,
 ) -> DeliberationOutcome:
-    """Thesis → antithesis → synthesis + KISS gate (bounded REWORK). UPSTREAM."""
+    """Validate a CONCRETE deliverable (``kind`` = e.g. "diff" or "analysis report") against
+    the real repo : 3 angles (grounding / correctness / simplicity) by critical-coder, then a
+    PASS/REWORK gate by sergent-kiss. Validators, not creatives. Best-effort (spawn None → skipped)."""
     sf = list(support_files or [])
-    transcript: list[dict] = []
-
-    thesis = spawn("critical-coder", _angle_brief("thesis", task), sf)
-    transcript.append(_t("thesis", thesis))
-    if thesis is None:
-        return DeliberationOutcome("skipped", "", "", transcript)
-    antithesis = spawn("critical-coder", _angle_brief("antithesis", task, thesis=thesis.summary), sf)
-    transcript.append(_t("antithesis", antithesis))
-    synthesis = spawn(
-        "critical-coder",
-        _angle_brief("synthesis", task, thesis=thesis.summary,
-                     antithesis=(antithesis.summary if antithesis else "")), sf,
-    )
-    transcript.append(_t("synthesis", synthesis))
-    approach = synthesis.summary if synthesis else ""
-
-    verdict, critique = "pass", ""
-    for attempt in range(max_rework + 1):
-        gate = spawn("sergent-kiss", _gate_brief(approach, task), sf)
-        transcript.append(_t("sergent-kiss", gate))
-        if gate is None:
-            break
-        verdict, critique = _verdict_of(gate)
-        if verdict == "pass" or attempt == max_rework:
-            break
-        # REWORK: revise the synthesis with the cuts and re-gate.
-        synthesis = spawn(
-            "critical-coder",
-            _angle_brief("synthesis", task, thesis=thesis.summary,
-                         antithesis=(antithesis.summary if antithesis else ""), rework=critique), sf,
-        )
-        transcript.append(_t("synthesis", synthesis))
-        if synthesis:
-            approach = synthesis.summary
-
-    return DeliberationOutcome(verdict, approach, critique, transcript)
-
-
-def review_diff(
-    *, spawn: SpawnFn, task: str, diff: str, support_files: list[str] | None = None,
-) -> DeliberationOutcome:
-    """3-angle diff review (correctness / simplicity / side_effects) + KISS gate. DOWNSTREAM."""
-    sf = list(support_files or [])
-    capped = "\n".join((diff or "").splitlines()[:_DIFF_CAP_LINES])
+    capped = "\n".join((content or "").splitlines()[:_DELIVERABLE_CAP_LINES])
     transcript: list[dict] = []
     reviews: list[tuple[str, str]] = []
-    for angle in ("correctness", "simplicity", "side_effects"):
-        r = spawn("critical-coder", _review_brief(angle, task, capped), sf)
+    for angle in ("grounding", "correctness", "simplicity"):
+        r = spawn("critical-coder", _validate_brief(angle, task, kind, capped), sf)
         transcript.append(_t(f"review:{angle}", r))
         if r is None:
             return DeliberationOutcome("skipped", "", "", transcript)
         reviews.append((angle, r.summary or ""))
-    gate = spawn("sergent-kiss", _gate_brief_review(task, capped, reviews), sf)
+    gate = spawn("sergent-kiss", _gate_brief_validate(task, kind, capped, reviews), sf)
     transcript.append(_t("sergent-kiss", gate))
     if gate is None:
         return DeliberationOutcome("skipped", "", "", transcript)
