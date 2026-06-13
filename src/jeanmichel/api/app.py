@@ -46,6 +46,7 @@ def create_app() -> Any:
     from pydantic import BaseModel
 
     from .. import db, mcp_client, persistence, snapshot
+    from .. import todo as todo_mod
     from ..config import UserProfile
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
@@ -107,6 +108,10 @@ def create_app() -> Any:
 
     class SnapshotRef(BaseModel):
         commit: str
+
+    class TodoUpdate(BaseModel):
+        goal: str = ""
+        items: list[dict[str, Any]] = []
 
     class MemorySaveRequest(BaseModel):
         scope: str
@@ -237,6 +242,26 @@ def create_app() -> Any:
     @app.get("/api/conversations/{conversation_id}/state")
     def get_state(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         return {"state": persistence.load_state(Path(conv["folder_path"]))}
+
+    # ---- living plan (todo.json) — read + human edit (plan mode) ----------
+
+    @app.get("/api/conversations/{conversation_id}/todo")
+    def get_todo(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"todo": todo_mod.load_todo(Path(conv["folder_path"]))}
+
+    @app.put("/api/conversations/{conversation_id}/todo")
+    def put_todo(
+        body: TodoUpdate, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        # Reject a turn-time race : the orchestrator also writes todo.json.
+        if executor.turn_lock.locked():
+            raise HTTPException(status_code=409, detail="a turn is in progress")
+        items, err = todo_mod.normalize_items(body.items)
+        if err is not None:  # also rejects an empty list
+            raise HTTPException(status_code=422, detail=err)
+        folder = Path(conv["folder_path"])
+        todo_mod.save_todo(folder, body.goal.strip(), items)
+        return {"todo": todo_mod.load_todo(folder)}
 
     # ---- conversation snapshots (git per conversation) -------------------
 

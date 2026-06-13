@@ -61,6 +61,7 @@ from .events import (
 from .hooks import HookRegistry, ToolCallContext, build_hook_registry
 from .models import ConversationState, LLMResponse, ToolCall
 from .persistence import append_event, save_messages, save_state, save_sub_messages
+from .todo import load_todo
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools.delegate_to import DELEGATE_TO_SCHEMA
 from .tools.report_back import REPORT_BACK_SCHEMA, validate_report_back_args
@@ -385,6 +386,7 @@ def _run_agent_loop(
     # emits an empty content turn — we nudge it once or twice before
     # giving up.
     empty_main_turns = 0
+    plan_no_todo_turns = 0  # PLAN mode : tried to conclude without writing the plan
 
     for _iteration in range(max_iterations):
         # PreLLMCall : compaction escalation (may mutate messages).
@@ -485,6 +487,22 @@ def _run_agent_loop(
                     save_messages(conv_folder, messages)
                     save_state(conv_folder, state)
                     return _LoopOutcome(kind="final_answer", content=fallback)
+
+                # PLAN mode : the plan must be the structured todo.json (the
+                # artifact the editor + the execute turn consume), not just prose.
+                # Refuse to conclude until todo_write has been called this turn.
+                if state.plan_mode and load_todo(conv_folder) is None and plan_no_todo_turns < 2:
+                    plan_no_todo_turns += 1
+                    # Distinct prefix (still transient) so the PLAN nudge refresher
+                    # in PreLLMCall doesn't strip it as its own nudge.
+                    messages.append({"role": "user", "content": (
+                        "[ORCHESTRATOR] You tried to conclude the PLAN turn without recording the "
+                        "plan. Call todo_write(goal, items) with 3-7 scoped steps BEFORE your summary "
+                        "— a prose plan is not usable for review or execution."
+                    )})
+                    save_messages(conv_folder, messages)
+                    save_state(conv_folder, state)
+                    continue
 
                 _emit(
                     event_emitter,

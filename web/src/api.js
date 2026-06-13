@@ -60,6 +60,8 @@ export const api = {
   messages: id => request('GET', `/conversations/${id}/messages`),
   events: id => request('GET', `/conversations/${id}/events`),
   state: id => request('GET', `/conversations/${id}/state`),
+  getTodo: id => request('GET', `/conversations/${id}/todo`),
+  putTodo: (id, goal, items) => request('PUT', `/conversations/${id}/todo`, { goal, items }),
 
   snapshots: id => request('GET', `/conversations/${id}/snapshots`),
   revertConversation: (id, commit) => request('POST', `/conversations/${id}/revert`, { commit }),

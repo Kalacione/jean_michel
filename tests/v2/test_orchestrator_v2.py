@@ -869,3 +869,45 @@ def test_spawn_subagent_returns_low_confidence_on_abort(tmp_path: Path):
     )
     assert result.confidence == "low"
     assert result.low_confidence_reason  # non-empty
+
+
+# Section 7 : PLAN mode — the plan must be recorded via todo_write
+
+
+def test_plan_mode_forces_todo_before_concluding(tmp_path: Path):
+    """A PLAN turn must record the plan via todo_write before it may conclude.
+    A prose-only conclusion is refused (bounded retries) and re-nudged."""
+    agent = make_agent("jean-michel", role="router")
+    mock = MockClient(script=[
+        assistant_response("Here is my plan, in prose."),
+        assistant_response("Still just prose."),
+        assistant_response("Prose once more."),
+    ])
+    result = run_main_loop(
+        conv_folder=tmp_path,
+        agent=agent,
+        tools_registry={},
+        llm_client=mock,
+        user_text="build feature X",
+        plan_mode=True,
+    )
+    # Bounded retries exhausted → concludes ; but the corrective fired meanwhile.
+    assert result == "Prose once more."
+    last_msgs = mock.calls_v2[-1]["messages"]
+    correctives = [
+        m for m in last_msgs
+        if m.get("role") == "user" and "without recording the plan" in (m.get("content") or "")
+    ]
+    assert correctives, "a prose-only PLAN conclusion must be nudged toward todo_write"
+
+
+def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
+    """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
+    agent = make_agent("jean-michel", role="router")
+    mock = MockClient(script=[assistant_response("Direct answer.")])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry={},
+        llm_client=mock, user_text="hi", plan_mode=False,
+    )
+    assert result == "Direct answer."
+    assert len(mock.calls_v2) == 1  # concluded on the first turn

@@ -32,6 +32,7 @@ export const useConvStore = defineStore('conversations', () => {
   const currentMode = ref('') // task mode of the selected conversation
   const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
   const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
+  const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
   let lastTurnWasPlan = false // remembers whether the in-flight turn was a plan turn
   // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
   const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
@@ -255,7 +256,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, planPending,
+    currentMode, planMode, planAvailable, planPending, planEditorOpen,
     refresh, create, select, sendTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory,
     loadSnapshots, revert, fork, reloadCurrent,

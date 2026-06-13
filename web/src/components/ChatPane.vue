@@ -139,6 +139,14 @@
       </span>
       <v-spacer />
       <v-btn
+        :disabled="conv.busy"
+        size="small"
+        variant="text"
+        @click="conv.planEditorOpen = true"
+      >
+        Modifier le plan
+      </v-btn>
+      <v-btn
         color="primary"
         :disabled="conv.busy"
         size="small"
@@ -233,6 +241,8 @@
       />
     </div>
 
+    <PlanEditor />
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="4000">
       {{ snackbar.text }}
     </v-snackbar>
@@ -259,6 +269,7 @@
   import { computed, nextTick, ref, watch } from 'vue'
   import { api } from '@/api'
   import EventTrace from '@/components/EventTrace.vue'
+  import PlanEditor from '@/components/PlanEditor.vue'
   import WorkspaceImage from '@/components/WorkspaceImage.vue'
   import { saveBlob } from '@/download'
   import { renderMarkdown } from '@/markdown'
