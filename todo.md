@@ -5,11 +5,9 @@
 ## en cours
 
 - B7 (Étage C) : faire tourner `repo_test` DANS le conteneur du projet (image projet, deps présentes) au lieu de l'hôte, une fois la sandbox projet rodée
-- l'agent router code doit savoir faire un plan et bien utiliser l'outil de todo list.
 
 ## a faire
 
 - rafraichir le paradigm viewer/editor
-- fix ruff
 - F4 : garde anti ré-délégation verbatim du router — changer d'approche / escalader après 2× `confidence=low` sur une tâche quasi identique (à faire si ré-observé)
 - mode "code plan" (user-facing, IMPORTANT) : le router construit un plan (todo) et le PRÉSENTE pour validation humaine avant exécution (façon Claude Code plan mode) — front + flux WS + nouvel état

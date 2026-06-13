@@ -21,7 +21,12 @@ sys.path.insert(0, str(_ROOT / "src"))
 
 from jeanmichel import config, worktree  # noqa: E402
 from jeanmichel.tools import (  # noqa: E402
-    build_registry, repo_edit, repo_glob, repo_grep, repo_read, repo_write,
+    build_registry,
+    repo_edit,
+    repo_glob,
+    repo_grep,
+    repo_read,
+    repo_write,
 )
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
@@ -30,7 +35,8 @@ requires_rg = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not
 
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    run = lambda *a: subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
+    def run(*a):
+        subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
     run("init", "-b", "main")
     run("config", "user.email", "t@t")
     run("config", "user.name", "t")

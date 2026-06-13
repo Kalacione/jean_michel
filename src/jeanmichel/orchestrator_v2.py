@@ -37,8 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import context_packet
-from . import deliberation
+from . import context_packet, deliberation
 from .config import (
     DEFAULT_MODEL_CONTEXT_WINDOW,
     OUTPUT_RESERVE_RATIO,

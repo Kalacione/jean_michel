@@ -493,10 +493,10 @@ def test_paradigm_content_is_english(v2_migrated_db, v2_consolidated_db):
 def test_repo_tools_granted(v2_migrated_db, v2_consolidated_db):
     """migrate_128 + schema.sql grant the repo_* tools to the coding agents."""
     for db in (v2_migrated_db, v2_consolidated_db):
-        def codes(tool):
+        def codes(tool, conn=db):
             return {
                 r["code"]
-                for r in db.execute(
+                for r in conn.execute(
                     "SELECT a.code FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
                     "WHERE at.tool_code = ?", (tool,)
                 )
@@ -531,10 +531,10 @@ def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
     """migrate_129 grants repo_test to the workers only. (repo_graph_refresh was also
     granted by 129 but removed by migrate_139 — graphify retiré.)"""
     for db in (v2_migrated_db, v2_consolidated_db):
-        def codes(tool):
+        def codes(tool, conn=db):
             return {
                 r["code"]
-                for r in db.execute(
+                for r in conn.execute(
                     "SELECT a.code FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
                     "WHERE at.tool_code = ?", (tool,)
                 )

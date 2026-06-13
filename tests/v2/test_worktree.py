@@ -26,7 +26,8 @@ requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not a
 def _init_repo(path: Path) -> None:
     """Init a minimal git repo with one tracked file + an initial commit."""
     path.mkdir(parents=True, exist_ok=True)
-    run = lambda *a: subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
+    def run(*a):
+        subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
     run("init", "-b", "main")
     run("config", "user.email", "t@t")
     run("config", "user.name", "t")

@@ -113,7 +113,8 @@ def test_review_diff_pass_and_rework():
 
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    run = lambda *a: subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
+    def run(*a):
+        subprocess.run(["git", "-C", str(path), *a], check=True, capture_output=True)
     run("init", "-b", "main")
     run("config", "user.email", "t@t")
     run("config", "user.name", "t")
