@@ -131,6 +131,24 @@
 
     <v-divider />
 
+    <!-- Plan presented → approve (execute in a fresh Edit turn) or type feedback to refine. -->
+    <div v-if="conv.planPending" class="px-3 pt-2 d-flex align-center ga-2">
+      <v-icon color="primary" icon="mdi-clipboard-check-outline" size="18" />
+      <span class="text-body-2 text-medium-emphasis">
+        Plan prêt — relis-le ci-dessus, ou écris un retour pour l'affiner.
+      </span>
+      <v-spacer />
+      <v-btn
+        color="primary"
+        :disabled="conv.busy"
+        size="small"
+        variant="flat"
+        @click="conv.approveAndExecute()"
+      >
+        Approuver &amp; exécuter
+      </v-btn>
+    </div>
+
     <div v-if="attachments.length" class="px-3 pt-2 d-flex flex-wrap ga-1">
       <v-chip
         v-for="p in attachments"
@@ -188,6 +206,25 @@
           </v-list>
         </v-card>
       </v-menu>
+      <!-- Plan/Edit selector (code & analyse only) : Plan = read-only, produce a plan
+           for approval ; Edit = normal execution. Sticky between turns. -->
+      <v-btn-toggle
+        v-if="conv.planAvailable"
+        v-model="planSel"
+        class="align-self-center"
+        density="comfortable"
+        :disabled="conv.busy"
+        divided
+        mandatory
+        variant="outlined"
+      >
+        <v-btn size="small" value="plan" title="Planifier (lecture seule, validation avant exécution)">
+          <v-icon icon="mdi-clipboard-text-outline" size="16" start /> Plan
+        </v-btn>
+        <v-btn size="small" value="edit" title="Exécuter directement">
+          <v-icon icon="mdi-pencil-outline" size="16" start /> Edit
+        </v-btn>
+      </v-btn-toggle>
       <v-btn
         color="primary"
         :disabled="conv.busy || (!draft.trim() && !attachments.length)"
@@ -229,6 +266,12 @@
 
   const conv = useConvStore()
   const draft = ref('')
+
+  // Plan/Edit selector ↔ store (sticky). 'plan' = read-only planning turn.
+  const planSel = computed({
+    get: () => (conv.planMode ? 'plan' : 'edit'),
+    set: v => { conv.planMode = v === 'plan' },
+  })
   const attachments = ref([]) // workspace paths attached to the next message
   const scroller = ref(null)
   const fileInput = ref(null)

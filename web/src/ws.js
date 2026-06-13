@@ -25,7 +25,8 @@ export function connectTurn (convId, handlers = {}) {
   ws.onerror = e => handlers.wserror?.(e)
 
   return {
-    sendTurn: (text, files = []) => ws.send(JSON.stringify({ type: 'turn', text, files })),
+    sendTurn: (text, files = [], planMode = false) =>
+      ws.send(JSON.stringify({ type: 'turn', text, files, plan_mode: planMode })),
     sendAnswer: text => ws.send(JSON.stringify({ type: 'answer', text })),
     close: () => ws.close(),
     raw: ws,

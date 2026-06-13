@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '@/api'
 import { connectTurn } from '@/ws'
@@ -29,6 +29,12 @@ export const useConvStore = defineStore('conversations', () => {
   const wsOpen = ref(false) // WorkspaceDialog open state (shared across components)
   const wsInitialPath = ref('') // file to auto-open when the WorkspaceDialog opens
   const pendingMemory = ref([]) // shadow-consolidation candidates awaiting review
+  const currentMode = ref('') // task mode of the selected conversation
+  const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
+  const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
+  let lastTurnWasPlan = false // remembers whether the in-flight turn was a plan turn
+  // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
+  const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
 
   let turnWs = null
 
@@ -103,6 +109,10 @@ export const useConvStore = defineStore('conversations', () => {
     pendingMemory.value = []
     const meta = list.value.find(c => c.id === id)
     vocal.value = meta?.mode === 'vocal'
+    currentMode.value = meta?.mode || ''
+    // Plan-first : default to Plan for code & analyse (sticky thereafter).
+    planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
+    planPending.value = false
     const loaded = (await api.messages(id)).messages
     messages.value = chatBubbles(loaded)
     trace.value = []
@@ -132,6 +142,8 @@ export const useConvStore = defineStore('conversations', () => {
         busy.value = false
         askHuman.value = null
         messages.value.push({ role: 'assistant', content: m.answer })
+        // A plan turn just finished → surface the Approve/Refine choice bar.
+        planPending.value = lastTurnWasPlan
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
@@ -148,15 +160,25 @@ export const useConvStore = defineStore('conversations', () => {
     }
   }
 
-  function sendTurn (text, files = []) {
+  function sendTurn (text, files = [], plan = undefined) {
     const clean = (text || '').trim()
     if ((!clean && !files.length) || !turnWs || busy.value) return
+    const isPlan = plan === undefined ? (planAvailable.value && planMode.value) : plan
     messages.value.push({ role: 'user', content: clean, files: [...files] })
     trace.value = []
     dispatch.value = null
     error.value = ''
+    planPending.value = false // a new turn supersedes any pending choice bar
+    lastTurnWasPlan = isPlan
     busy.value = true
-    turnWs.sendTurn(clean, files)
+    turnWs.sendTurn(clean, files, isPlan)
+  }
+
+  // Approve the presented plan → execute it in a fresh Edit turn (gate OFF). The
+  // selector flips to Edit (sticky) so subsequent turns keep executing.
+  function approveAndExecute () {
+    planMode.value = false
+    sendTurn('Approved — execute the plan above.', [], false)
   }
 
   function answer (text) {
@@ -233,7 +255,8 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    refresh, create, select, sendTurn, answer, rename, remove, reset,
+    currentMode, planMode, planAvailable, planPending,
+    refresh, create, select, sendTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory,
     loadSnapshots, revert, fork, reloadCurrent,
   }
