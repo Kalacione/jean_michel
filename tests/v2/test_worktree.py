@@ -252,3 +252,18 @@ def test_no_repo_no_worktree(conv_folder, monkeypatch):
     monkeypatch.setattr(config, "PROJECT_ROOT", None)
     assert worktree.create_worktree(conv_folder, "x", source=None, kind="local") is None
     assert not worktree.worktree_path_for(conv_folder).exists()
+
+
+def test_router_repo_notice_when_worktree_exists(conv_folder):
+    # The router must be TOLD a repo is attached (so it delegates instead of
+    # claiming no access). No worktree → no notice ; worktree → one, idempotent.
+    from jeanmichel.hooks import _REPO_RECAP_MARKER, _refresh_repo_recap
+    msgs = [{"role": "system", "content": "x"}, {"role": "user", "content": "hi"}]
+    _refresh_repo_recap(msgs, conv_folder)
+    assert not any(_REPO_RECAP_MARKER in (m.get("content") or "") for m in msgs)
+    worktree.worktree_path_for(conv_folder).mkdir(parents=True)
+    _refresh_repo_recap(msgs, conv_folder)
+    _refresh_repo_recap(msgs, conv_folder)  # idempotent
+    notices = [m for m in msgs if _REPO_RECAP_MARKER in (m.get("content") or "")]
+    assert len(notices) == 1
+    assert "code-runner" in notices[0]["content"]

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import worktree
 from .compaction import escalate_compaction
 from .config import MAX_DEPTH, MAX_SEARCH_CALLS_PER_TURN
 from .models import ConversationState, ToolCall
@@ -144,9 +145,11 @@ class PreLLMCall:
     ) -> int:
         """Return the compaction level triggered (0..4)."""
         level = escalate_compaction(messages, state, self.llm_client)
-        # Re-inject the living TODO recap — main agent only, no-op without todo.json.
+        # Re-inject the living TODO recap + the attached-repo notice — main agent
+        # only, no-op without todo.json / without a code-mode worktree.
         if self.is_main_agent and self.conv_folder is not None:
             _refresh_todo_recap(messages, self.conv_folder)
+            _refresh_repo_recap(messages, self.conv_folder)
         return level
 
 
@@ -345,6 +348,37 @@ def _refresh_todo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> No
     if todo is None:
         return
     messages.append({"role": "user", "content": render_recap(todo)})
+
+
+_REPO_RECAP_MARKER = "[CODE-REPO]"
+
+
+def _refresh_repo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> None:
+    """Tell the ROUTER, each turn, that a code repo is attached to this
+    conversation — so it DELEGATES to code-runner instead of claiming it has no
+    access (or hallucinating a GitHub remote). Idempotent per turn ; no-op when
+    there is no worktree (non-code conversations carry no notice)."""
+    messages[:] = [
+        m for m in messages
+        if not (
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and m["content"].startswith(_REPO_RECAP_MARKER)
+        )
+    ]
+    if not worktree.worktree_path_for(conv_folder).exists():
+        return
+    src = worktree.source_repo(conv_folder)
+    where = f" ({src})" if src is not None else ""
+    messages.append({"role": "user", "content": (
+        f"{_REPO_RECAP_MARKER} A code repository is attached to this conversation{where}, "
+        "checked out in an isolated git worktree. You are the router and do NOT hold repo "
+        "tools yourself. To read, search, edit, or test this codebase, delegate to "
+        "`code-runner` (it has repo_read/grep/glob/edit/write + repo_test and receives an "
+        "auto-assembled context of the repo) or `code-fetcher` for external lookups. Answer "
+        "questions about this code by delegating — never claim you cannot see it, and never "
+        "assume a remote GitHub repo."
+    )})
 
 
 # ---- Registry helper -----------------------------------------------------
