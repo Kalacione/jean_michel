@@ -7,6 +7,7 @@
 - faire un bench sur le budget de token allouable, il me semble tout petit sachant que chaque LLM est independant avec un fresh start et que les LLM qu'on utilise on 100k tokens. De plus notre archi du serveur de dev (2x 32Go de VRAM) devrait nous mettre a l'aise.
 - VÉRIFIER EN LIVE le "plan mode" (livré, branche `ca_plan_pour_moi`, doc `docs/20260613_plan_mode/`) : sélecteur Plan/Edit (gauche du Envoyer, défaut Plan en code/analyse) → tour plan read-only (aucune mutation, todo_write forcé) → barre Approuver/Modifier → éditeur inline → exécution. Cf. étape 5 ci-dessous une fois rodé.
 - lister et analyser tous les paradigmes de tous les agents pour voir si c'est pas deconnanant; checker ce que dit le meta_analyst et si il sert encore a quelque chose
+- pendant que ca tourne, le `graphify.sh` il sert encore ? si c'est juste un outil, on devrait le mettre dans un dossier `tools`; si c'est une base qui sert pour le jou ou on voudra le mettre dans un dockerfile, faut lui tourver une autre place. de memoire graphify c'etait pas ouf et on s'en servait pas
 
 ## a faire
 
