@@ -911,3 +911,33 @@ def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     )
     assert result == "Direct answer."
     assert len(mock.calls_v2) == 1  # concluded on the first turn
+
+
+def test_plan_mode_propagates_to_subagent(tmp_path: Path):
+    """plan_mode reaches a delegated specialist (fresh sub_state) : its mutating
+    tools are denied just like the router's."""
+    sub_agent = make_agent("specialist", role="specialist", tool_grants={"repo_edit"})
+    parent_state = ConversationState(depth_current=0, plan_mode=True)
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("repo_edit", path="x.py")]),
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="blocked by plan mode", files_produced=[],
+            confidence="low", low_confidence_reason="cannot edit during plan",
+        )]),
+    ])
+    result = spawn_subagent(
+        conv_folder=tmp_path,
+        sub_agent=sub_agent,
+        tools_registry={},
+        llm_client=mock,
+        briefing="edit x",
+        support_files=[],
+        expected="",
+        parent_state=parent_state,
+        parent_agent_code="jean-michel",
+    )
+    assert isinstance(result, SubResult)
+    # The subagent's repo_edit was denied with a PLAN-mode reason (2nd LLM call sees it).
+    second = mock.calls_v2[1]["messages"]
+    denied = [m for m in second if m.get("role") == "tool" and "PLAN mode" in (m.get("content") or "")]
+    assert denied, "subagent mutating tool should be denied in plan mode"
