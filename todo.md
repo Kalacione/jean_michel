@@ -8,5 +8,6 @@
 
 ## a faire
 
+- on est definitivement en v2. Checker si la v1 sert encore; sinon degager la v1 et consolider (orchestrateur, tests, ...)
 - rafraichir le paradigm viewer/editor
 - mode "code plan" (user-facing, IMPORTANT) : le router construit un plan (todo) et le PRÉSENTE pour validation humaine avant exécution (façon Claude Code plan mode) — front + flux WS + nouvel état
