@@ -4,7 +4,6 @@
 
 ## en cours
 
-- verifier le bon fonctionnement de `ask_human` surtout dans l'interface web. Possibilite de question a choix multiple (select one or multiple) ?
 
 ## a faire
 

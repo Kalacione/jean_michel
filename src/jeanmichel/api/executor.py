@@ -99,12 +99,15 @@ async def run_turn_streaming(
             },
         )
 
-    def ask_human(question: str, why: str) -> str:
+    def ask_human(question: str, why: str, choices: list[str], multi: bool) -> str:
         # Runs in the worker thread : push the prompt, then block until the
         # client answers (received by recv_answers) or the timeout fires.
+        # `choices`/`multi` are an INPUT affordance — the answer still rides back
+        # as plain text via {type:"answer", text}.
         loop.call_soon_threadsafe(
             event_queue.put_nowait,
-            {"type": "ask_human", "question": question, "why": why},
+            {"type": "ask_human", "question": question, "why": why,
+             "choices": choices, "multi": multi},
         )
         try:
             return answer_box.get(timeout=config.ASK_HUMAN_TIMEOUT_SECONDS)

@@ -568,10 +568,10 @@ def test_report_back_low_confidence_without_reason_is_rejected(tmp_path: Path):
 def test_ask_human_main_agent_invokes_callback(tmp_path: Path):
     agent = make_agent("jean-michel", role="router")
 
-    captured: list[tuple[str, str]] = []
+    captured: list[tuple[str, str, list[str], bool]] = []
 
-    def ask_human_cb(question: str, why: str) -> str:
-        captured.append((question, why))
+    def ask_human_cb(question: str, why: str, choices: list[str], multi: bool) -> str:
+        captured.append((question, why, choices, multi))
         return "Yes, of course."
 
     mock = MockClient(script=[
@@ -593,13 +593,50 @@ def test_ask_human_main_agent_invokes_callback(tmp_path: Path):
         ask_human_callback=ask_human_cb,
     )
     assert result == "Great, proceeding."
-    assert captured == [("Can I proceed?", "user mentioned X")]
+    # No choices passed → empty list + multi False (free-text question).
+    assert captured == [("Can I proceed?", "user mentioned X", [], False)]
 
     # The human reply appears as a role=user message in the next call.
     second_msgs = mock.calls_v2[1]["messages"]
     user_msgs = [m for m in second_msgs if m.get("role") == "user"]
     # First user msg = original user_text ; second user msg = human reply.
     assert user_msgs[-1]["content"] == "Yes, of course."
+
+
+def test_ask_human_forwards_choices_and_multi(tmp_path: Path):
+    """choices + multi reach the callback ; the reply is still a role=user msg."""
+    agent = make_agent("jean-michel", role="router")
+
+    captured: list[tuple[str, str, list[str], bool]] = []
+
+    def ask_human_cb(question: str, why: str, choices: list[str], multi: bool) -> str:
+        captured.append((question, why, choices, multi))
+        return "Red, Blue"
+
+    mock = MockClient(script=[
+        assistant_response(
+            "asking",
+            tool_calls=[tool_call(
+                "ask_human", question="Which colors?", why="palette unclear",
+                choices=["Red", "Green", "Blue"], multi=True,
+            )],
+        ),
+        assistant_response("Got it."),
+    ])
+
+    result = run_main_loop(
+        conv_folder=tmp_path,
+        agent=agent,
+        tools_registry={},
+        llm_client=mock,
+        user_text="x",
+        ask_human_callback=ask_human_cb,
+    )
+    assert result == "Got it."
+    assert captured == [("Which colors?", "palette unclear", ["Red", "Green", "Blue"], True)]
+    second_msgs = mock.calls_v2[1]["messages"]
+    user_msgs = [m for m in second_msgs if m.get("role") == "user"]
+    assert user_msgs[-1]["content"] == "Red, Blue"
 
 
 def test_ask_human_in_subagent_is_unavailable(tmp_path: Path):

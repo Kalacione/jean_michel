@@ -241,10 +241,36 @@ def test_make_ask_human_invokes_prompt_session():
     session = _Session()
     cb = make_ask_human(console, session)
 
-    answer = cb("Should I proceed?", "I need confirmation for X.")
+    answer = cb("Should I proceed?", "I need confirmation for X.", [], False)
 
     assert answer == "my answer"  # stripped
     # Console output mentions the question.
     text = console.export_text()
     assert "Should I proceed?" in text
     assert "I need confirmation for X." in text
+
+
+class _ReplySession:
+    def __init__(self, reply):
+        self._reply = reply
+
+    def prompt(self, *args, **kwargs):
+        return self._reply
+
+
+def test_make_ask_human_maps_single_choice_number():
+    """A bare number selects the matching choice label."""
+    cb = make_ask_human(Console(record=True, width=120, force_terminal=False), _ReplySession("2"))
+    assert cb("Pick", "why", ["Red", "Green", "Blue"], False) == "Green"
+
+
+def test_make_ask_human_maps_multi_choice_numbers():
+    """Comma-separated numbers map to joined labels when multi."""
+    cb = make_ask_human(Console(record=True, width=120, force_terminal=False), _ReplySession("1, 3"))
+    assert cb("Pick", "why", ["Red", "Green", "Blue"], True) == "Red, Blue"
+
+
+def test_make_ask_human_free_text_escape_with_choices():
+    """Non-numeric input with choices present is kept as free text (the 'Other' escape)."""
+    cb = make_ask_human(Console(record=True, width=120, force_terminal=False), _ReplySession("purple"))
+    assert cb("Pick", "why", ["Red", "Green", "Blue"], False) == "purple"

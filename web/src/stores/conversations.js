@@ -22,7 +22,7 @@ export const useConvStore = defineStore('conversations', () => {
   const busy = ref(false) // a turn is running
   const queued = ref(false) // waiting for the global turn slot
   const dispatch = ref(null) // last Tier-0 decision {intent, tool, confidence}
-  const askHuman = ref(null) // {question, why} | null
+  const askHuman = ref(null) // {question, why, choices[], multi} | null
   const error = ref('')
   const vocal = ref(false) // current conversation is in vocal mode
   const wsFiles = ref([]) // workspace file paths of the current conversation
@@ -125,7 +125,7 @@ export const useConvStore = defineStore('conversations', () => {
           pendingMemory.value = m.event.candidates || []
         }
       },
-      ask_human: m => { askHuman.value = { question: m.question, why: m.why } },
+      ask_human: m => { askHuman.value = { question: m.question, why: m.why, choices: m.choices || [], multi: !!m.multi } },
       queued: () => { queued.value = true },
       final: m => {
         queued.value = false

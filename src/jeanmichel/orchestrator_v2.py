@@ -83,6 +83,9 @@ ASK_HUMAN_SCHEMA: dict[str, Any] = {
             "Pause the loop and ask the human for clarification. Use sparingly — "
             "only when an ambiguity actually blocks progress. The `why` field is "
             "mandatory and must explain what is blocked without the answer. "
+            "Optionally pass `choices` (a list of options) to present them as "
+            "selectable answers, and `multi=true` to let the human pick several ; "
+            "omit `choices` for a free-text question. "
             "Subagents do NOT have access to this tool ; they conclude with "
             "report_back(confidence='low', low_confidence_reason='...') instead."
         ),
@@ -91,6 +94,15 @@ ASK_HUMAN_SCHEMA: dict[str, Any] = {
             "properties": {
                 "question": {"type": "string"},
                 "why": {"type": "string"},
+                "choices": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional: options to present as selectable answers ; omit for a free-text question.",
+                },
+                "multi": {
+                    "type": "boolean",
+                    "description": "Optional: allow selecting several options (default false).",
+                },
             },
             "required": ["question", "why"],
         },
@@ -165,7 +177,7 @@ class SubResult:
 
 # Optional callbacks the loop may invoke.
 EventEmitter = Callable[[Any], None]
-AskHumanCallback = Callable[[str, str], str]      # (question, why) → answer
+AskHumanCallback = Callable[[str, str, list[str], bool], str]  # (question, why, choices, multi) → answer
 AgentResolver = Callable[[str], "AgentSpec | None"]  # agent_code → spec
 
 
@@ -597,8 +609,10 @@ def _handle_tool_call(
             return None
         question = call.arguments.get("question", "")
         why = call.arguments.get("why", "")
+        choices = [str(c) for c in (call.arguments.get("choices") or [])]
+        multi = bool(call.arguments.get("multi"))
         try:
-            answer = ask_human_callback(question, why)
+            answer = ask_human_callback(question, why, choices, multi)
         except Exception as exc:  # noqa: BLE001
             _append_tool_message(messages, call.name, {
                 "error": "ask_human_failed",

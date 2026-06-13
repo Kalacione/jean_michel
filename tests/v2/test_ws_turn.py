@@ -162,7 +162,10 @@ def _ask_human_clients() -> tuple[MockClient, MockClient]:
                 thinking="",
                 content="",
                 tool_calls=[
-                    ToolCall(name="ask_human", arguments={"question": "A or B?", "why": "ambiguous"})
+                    ToolCall(name="ask_human", arguments={
+                        "question": "A or B?", "why": "ambiguous",
+                        "choices": ["A", "B"], "multi": False,
+                    })
                 ],
             ),
             LLMResponse(thinking="", content="Chose A."),
@@ -190,7 +193,11 @@ def test_ws_ask_human_roundtrip(client, monkeypatch):
                 final = m
                 break
 
-    assert any(m["type"] == "ask_human" and m["question"] == "A or B?" for m in msgs)
+    ask = next(m for m in msgs if m["type"] == "ask_human")
+    assert ask["question"] == "A or B?"
+    # The choices affordance rides along with the prompt event.
+    assert ask["choices"] == ["A", "B"]
+    assert ask["multi"] is False
     assert final == {"type": "final", "answer": "Chose A."}
 
 

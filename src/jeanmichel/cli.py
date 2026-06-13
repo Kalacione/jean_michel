@@ -14,7 +14,6 @@ import argparse
 import logging
 import sys
 import threading
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +50,7 @@ from .events import (
     WorkingBudgetUpdate,
 )
 from .llm import OllamaClient
+from .orchestrator_v2 import AskHumanCallback
 from .service import consolidation as consolidation_svc
 from .service import conversation as conversation_svc
 from .service import turn_runner
@@ -189,31 +189,49 @@ def render_event(
 # ---- ask_human callback --------------------------------------------------
 
 
-def make_ask_human(console: Console, session: PromptSession) -> Callable[[str, str], str]:
+def make_ask_human(console: Console, session: PromptSession) -> AskHumanCallback:
     """Build the ask_human callback that pauses the loop for a human reply."""
 
-    def _ask(question: str, why: str) -> str:
+    def _ask(question: str, why: str, choices: list[str], multi: bool) -> str:
+        body: list[Any] = [Text(why, style="dim italic"), Text(""), Text(question, style=C_HUMAN_Q)]
+        if choices:
+            body.append(Text(""))
+            for i, choice in enumerate(choices, 1):
+                body.append(Text(f"  {i}. {choice}", style=C_HUMAN_Q))
         console.print()
-        console.print(
-            Panel(
-                Group(
-                    Text(why, style="dim italic"),
-                    Text(""),
-                    Text(question, style=C_HUMAN_Q),
-                ),
-                title="Question",
-                border_style="yellow",
-                padding=(1, 2),
-            )
-        )
-        answer = session.prompt(
-            HTML('<ansiyellow><b>your answer</b></ansiyellow>: '),
+        console.print(Panel(Group(*body), title="Question", border_style="yellow", padding=(1, 2)))
+        hint = (
+            "your answer (numbers, comma-separated, or free text)"
+            if multi else "your answer (a number, or free text)"
+        ) if choices else "your answer"
+        raw = session.prompt(
+            HTML(f'<ansiyellow><b>{hint}</b></ansiyellow>: '),
             multiline=True,
             prompt_continuation=lambda width, line_number, wrap_count: " " * width,
-        )
-        return answer.strip()
+        ).strip()
+        # Map number(s) → choice label(s) ; anything else is free text (the "Other" escape).
+        if choices:
+            picked = _resolve_choice_numbers(raw, choices, multi)
+            if picked is not None:
+                return picked
+        return raw
 
     return _ask
+
+
+def _resolve_choice_numbers(raw: str, choices: list[str], multi: bool) -> str | None:
+    """If `raw` is a number (or comma-separated numbers when multi), return the
+    matching choice label(s) joined by ', '. Otherwise None (treat as free text)."""
+    tokens = [t.strip() for t in raw.split(",")] if multi else [raw]
+    labels: list[str] = []
+    for tok in tokens:
+        if not tok.isdigit():
+            return None
+        idx = int(tok)
+        if not (1 <= idx <= len(choices)):
+            return None
+        labels.append(choices[idx - 1])
+    return ", ".join(labels) if labels else None
 
 
 # ---- Conversation lifecycle ---------------------------------------------
@@ -253,7 +271,7 @@ def run_one_turn(
     profile: UserProfile,
     mode: str,
     console: Console,
-    ask_human_cb: Callable[[str, str], str],
+    ask_human_cb: AskHumanCallback,
     initial_messages: list[dict] | None,
     consolidate: bool = False,
 ) -> str:
@@ -288,10 +306,10 @@ def run_one_turn(
             status.start()
 
     # Pause the spinner while waiting on a human answer.
-    def ask_human_with_pause(question: str, why: str) -> str:
+    def ask_human_with_pause(question: str, why: str, choices: list[str], multi: bool) -> str:
         status.stop()
         try:
-            return ask_human_cb(question, why)
+            return ask_human_cb(question, why, choices, multi)
         finally:
             status.start()
 
