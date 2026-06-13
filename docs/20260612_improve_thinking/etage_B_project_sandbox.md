@@ -106,33 +106,40 @@ confiné au repo) — pas `bash_sandbox` (qui ne voit que le scratch) ni l'hôte
 
 - **C1 — git checkpoint — ✅ LIVRÉ** (migrate_137) : identité committer dans le clone + paradigme `git_checkpoint_discipline` ; l'agent commit ses étapes via `repo_exec`.
 - **C2 — garde footgun `repo_exec` — ✅ LIVRÉ** : tripwire (rm -rf / ~ /*, fork bomb, mkfs, dd of=/dev/) ; le conteneur reste la vraie frontière.
-- **C3 — Dockerfile du projet dans les paramètres — À VALIDER (analyse ci-dessous).**
+- **C3 — Dockerfile du projet dans les paramètres + canal WS de notifications — ✅ LIVRÉ** (migrate_138).
 - *Backlog* : `repo_test` dans le conteneur (B7) ; garde anti ré-délégation (F4, différée — plus revue depuis le fix Étage A).
 
-## C3 — gérer le Dockerfile/setup du projet dans les paramètres (analyse, pas encore livré)
+## C3 — Dockerfile du projet dans les paramètres (✅ LIVRÉ)
 
 **Besoin** : configurer l'image du sandbox projet depuis les **paramètres du projet** (web UI) au lieu d'exiger
-un `.jm/Dockerfile` **commité dans le repo cible** (qu'on ne veut pas toujours polluer ; le repo peut être à autrui).
+un `.jm/Dockerfile` commité dans le repo cible. **Build en arrière-plan** (la sauvegarde ne bloque pas) + **toast**
+de complétion/échec poussé par un **canal WS de notifications dédié**.
 
-**Stockage — recommandation : colonne DB `projects.dockerfile TEXT`** (l'instinct « BDD plus logique » est juste).
-Un Dockerfile fait quelques Ko → une colonne TEXT suffit, atomique avec le projet (migre comme `code_repo`,
-migrate_133), éditable via l'UI. *Pas* de fichier sur disque (plomberie FS + backup = « stockage particulier »
-inutile). Au build : écrire le contenu dans un tempfile, `docker build -f <tmp> <source_repo>` (contexte = le repo,
-pour que `COPY requirements.txt` marche). Tag par hash du contenu (comme B4) → rebuild si changement.
+**Stockage** : colonne `projects.dockerfile TEXT` (migrate_138, one-shot comme migrate_133). UN seul champ
+Dockerfile (`FROM` = image de base, `RUN` = setup) — pas de base-image + setup séparés. Vide ⇒ image
+`jeanmichel-sandbox:repo-default` (alpine + bash + git, `Dockerfile.repo-default`). La lecture `.jm/Dockerfile`
+du repo (B4) est **remplacée** par ce champ (une seule source).
 
-**« Image de base » = le `FROM` du Dockerfile.** NE PAS faire un champ base-image séparé + un script setup séparé
-(c'est l'usine à gaz qu'on a déjà écartée avec `cloud_init`) : **un seul champ Dockerfile** (FROM + RUN) couvre tout.
+**Build** : `repo_exec.build_image(content, context, tag)` (tempfile + `docker build -f`, contexte = le repo,
+réseau au build seulement). Tag `jeanmichel-sandbox:project-<project_id>-<sha1(dockerfile)[:12]>` ⇒ rebuild auto au
+changement, pas de collision inter-projets. **Deux déclencheurs, un builder** : *eager* en arrière-plan à la
+sauvegarde (`api/project_build.trigger_image_build` → thread → push notif) ; *lazy* dans `repo_exec._resolve_image`
+(filet : ssh / app fermée / image reaped). Threadé jusqu'à `repo_exec` via `turn_runner` → `build_registry`.
 
-**Précédence de résolution** (dans `_resolve_image`) : `projects.dockerfile` (DB, réglage explicite du proprio)
-**>** `<source_repo>/.jm/Dockerfile` (commodité si le repo en livre un) **>** image agent par défaut (py/node-alpine).
+**Canal WS notifications** (`api/notifications.py` + `@app.websocket("/ws/notifications")`) : registre par-user
+`dict[user_id, set[WebSocket]]`, `notify()` thread-safe (`run_coroutine_threadsafe` sur la loop capturée au
+lifespan). Front : store Pinia `snackbar` + `<v-snackbar>` global dans `MainLayout` + `connectNotifications` (ws.js)
+au montage (reconnexion best-effort) → toast vert/rouge/info sur `kind==='project_image_build'`. Réutilisable.
 
-**Confiance** : le Dockerfile DB est posé via l'UI authentifiée par le **propriétaire** → de confiance (comme un
-commit) ; le LLM ne touche pas aux paramètres projet. Le réseau n'existe qu'au build (inchangé).
+**Confiance** : Dockerfile posé via l'UI authentifiée (propriétaire) ; le LLM ne touche pas aux paramètres projet.
+**GUI** : textarea monospace (`ProjectsDialog.vue`) — pas de coloration syntaxique (non-goal, dépendance lourde).
 
-**Périmètre (borné, pas usine à gaz)** : migrate_138 (colonne) + miroir schema + `db.create/update_project` +
-`ProjectSaveRequest/Update` (api) + `_resolve_image` (branche DB→tempfile) + `<textarea>` « Dockerfile (sandbox du
-projet) » dans `ProjectsDialog.vue` + tests. Comparable à migrate_133 (`code_repo`). **Verdict : faisable, KISS,
-recommandé — à condition de garder UN champ Dockerfile** (pas base-image + setup séparés).
+**Fichiers** : migrate_138 + `schema.sql` + `db.py` (`_PROJECT_COLS`/create/update) + `service/project.py`
+(validation `dockerfile`) + `api/{notifications,project_build}.py` + `api/app.py` (lifespan loop + `/ws/notifications`
++ `ProjectSave/Update` + trigger) + `tools/repo_exec.py` (`build_image`/`project_image_tag`/`_resolve_image`) +
+`tools/__init__.py` + `turn_runner.py` + `docker/sandbox/Dockerfile.repo-default` + `jm.sh` ; front
+`stores/snackbar.js` + `ws.js` + `MainLayout.vue` + `ProjectsDialog.vue`. Tests : `test_project_image_build.py`
+(notif registre + push WS + trigger ok/failed/deferred) + `test_repo_exec_tool.py` (tag/build_image/_resolve_image).
 
 ## Risques / questions ouvertes
 

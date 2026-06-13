@@ -76,6 +76,7 @@ def build_registry(
     agent_role: str = "",
     memory_user_id: int | None = None,
     memory_project_id: int | None = None,
+    project_dockerfile: str = "",
     vision_client: Any = None,
     extra_tools: list[ToolSpec] | None = None,
 ) -> dict[str, ToolSpec]:
@@ -157,9 +158,11 @@ def build_registry(
             _repo_graph_refresh_mod.make_spec(conv_folder),
         ):
             registry[repo_spec.name] = repo_spec
-        # repo_exec (project sandbox) needs the conv id + the agent's image.
+        # repo_exec (project sandbox) needs the conv id + the project's Dockerfile
+        # (from project settings ; empty → repo-default image).
         repo_exec_spec = _repo_exec_mod.make_spec(
-            conv_folder, conv_id=conv_id, image=sandbox_image,
+            conv_folder, conv_id=conv_id, project_id=memory_project_id,
+            dockerfile=project_dockerfile,
         )
         registry[repo_exec_spec.name] = repo_exec_spec
     # MCP-sourced tools (discovered from hosted servers) — added last; names are

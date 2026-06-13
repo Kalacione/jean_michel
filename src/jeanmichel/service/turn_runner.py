@@ -257,6 +257,10 @@ def _run_deep_turn(
             memory_project_id=project_id,
             user_language=user_lang,
         )
+        # Project's sandbox Dockerfile (project settings) → threaded to repo_exec
+        # so the project sandbox runs in the project's image (empty → repo-default).
+        _proj = db.get_project(conn, project_id) if project_id is not None else None
+        project_dockerfile = (_proj["dockerfile"] if _proj else "") or ""
 
     def agent_resolver(code: str) -> AgentSpec | None:
         try:
@@ -302,6 +306,7 @@ def _run_deep_turn(
         agent_role="router",
         memory_user_id=memory_user_id,
         memory_project_id=project_id,
+        project_dockerfile=project_dockerfile,
         vision_client=main_llm,
         extra_tools=mcp_specs,
     )

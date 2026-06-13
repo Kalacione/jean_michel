@@ -74,6 +74,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_135_code_space_doctrine.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_136_repo_exec.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_137_git_checkpoint.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_138_project_dockerfile.sql")
     yield conn
     conn.close()
 
@@ -695,6 +696,16 @@ def test_git_checkpoint_discipline_gated_and_bound(v2_migrated_db, v2_consolidat
             )
         }
         assert {"code-runner", "code-runner-node"} <= agents
+
+
+# ---- migrate_138 : projects.dockerfile -------------------------------------
+
+
+def test_projects_has_dockerfile_column(v2_migrated_db, v2_consolidated_db):
+    """migrate_138 + schema.sql: projects.dockerfile exists (default '')."""
+    for conn in (v2_migrated_db, v2_consolidated_db):
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
+        assert "dockerfile" in cols
 
 
 # ---- migrate_132 : comparator delegation whitelist -------------------------

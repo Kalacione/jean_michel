@@ -62,6 +62,18 @@
               label="Type de dépôt"
               variant="outlined"
             />
+            <v-textarea
+              v-model="form.dockerfile"
+              auto-grow
+              class="dockerfile-field"
+              counter="20000"
+              hint="Image du sandbox projet (FROM = base, RUN = setup). Vide = bash + git par défaut. Rebuild en arrière-plan à l'enregistrement."
+              label="Dockerfile (sandbox du projet)"
+              persistent-hint
+              placeholder="FROM python:3.13-alpine&#10;RUN pip install pytest ruff"
+              rows="8"
+              variant="outlined"
+            />
             <v-select
               v-if="mode === 'edit'"
               v-model="form.status"
@@ -88,19 +100,21 @@
 <script setup>
   import { reactive, ref, watch } from 'vue'
   import { useProjectStore } from '@/stores/projects'
+  import { useSnackbarStore } from '@/stores/snackbar'
 
   const open = defineModel({ type: Boolean })
   const projects = useProjectStore()
+  const snackbar = useSnackbarStore()
 
   const mode = ref('') // '' | 'new' | 'edit'
   const saving = ref(false)
   const error = ref('')
-  const form = reactive({ id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local' })
+  const form = reactive({ id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local', dockerfile: '' })
 
   function resetForm () {
     mode.value = ''
     error.value = ''
-    Object.assign(form, { id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local' })
+    Object.assign(form, { id: null, code: '', name: '', description: '', status: 'active', code_repo: '', repo_kind: 'local', dockerfile: '' })
   }
 
   function startNew () {
@@ -113,25 +127,29 @@
     mode.value = 'edit'
     Object.assign(form, {
       id: p.id, code: p.code, name: p.name, description: p.description, status: p.status,
-      code_repo: p.code_repo || '', repo_kind: p.repo_kind || 'local',
+      code_repo: p.code_repo || '', repo_kind: p.repo_kind || 'local', dockerfile: p.dockerfile || '',
     })
   }
 
   async function save () {
     saving.value = true
     error.value = ''
+    const hadDockerfile = !!form.dockerfile.trim()
     try {
       if (mode.value === 'new') {
         await projects.create({
           code: form.code, name: form.name, description: form.description,
-          code_repo: form.code_repo, repo_kind: form.repo_kind,
+          code_repo: form.code_repo, repo_kind: form.repo_kind, dockerfile: form.dockerfile,
         })
       } else {
         await projects.update(form.id, {
           name: form.name, description: form.description, status: form.status,
-          code_repo: form.code_repo, repo_kind: form.repo_kind,
+          code_repo: form.code_repo, repo_kind: form.repo_kind, dockerfile: form.dockerfile,
         })
       }
+      // The image builds in the background; the completion/failure toast arrives
+      // over the notifications WS (see MainLayout).
+      if (hadDockerfile) snackbar.show('Build de l\'image du projet lancé…', 'info')
       resetForm()
     } catch (e) {
       error.value = e.detail || e.message
@@ -155,4 +173,5 @@
 
 <style scoped>
 .list { width: 280px; }
+.dockerfile-field :deep(textarea) { font-family: monospace; font-size: 0.85rem; }
 </style>

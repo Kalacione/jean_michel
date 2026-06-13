@@ -116,50 +116,59 @@ def test_registry_includes_repo_exec(wt):
     assert "repo_exec" in reg
 
 
-# ---- B4: per-project image resolution --------------------------------------
+# ---- B4 / C3: per-project image resolution (from the project Dockerfile) ---
+
+_REPO_DEFAULT = "jeanmichel-sandbox:repo-default"
+
+
+def test_project_image_tag_deterministic_and_keyed():
+    t1 = repo_exec.project_image_tag(5, "FROM alpine\n")
+    assert t1 == repo_exec.project_image_tag(5, "FROM alpine\n")       # deterministic
+    assert t1 != repo_exec.project_image_tag(6, "FROM alpine\n")       # keyed by project id
+    assert t1 != repo_exec.project_image_tag(5, "FROM alpine\nRUN x")  # keyed by content
+    assert t1.startswith("jeanmichel-sandbox:project-5-")
+
+
+def test_build_image_ok_and_fail(monkeypatch, tmp_path):
+    monkeypatch.setattr(repo_exec.subprocess, "run", lambda cmd, **kw: _FakeProc(rc=0))
+    ok, err = repo_exec.build_image("FROM alpine\n", tmp_path, "t:1")
+    assert ok and err == ""
+    monkeypatch.setattr(repo_exec.subprocess, "run", lambda cmd, **kw: _FakeProc(rc=1, err="boom\n"))
+    ok, err = repo_exec.build_image("FROM alpine\n", tmp_path, "t:1")
+    assert not ok and "boom" in err
 
 
 @requires_git
-def test_resolve_image_no_dockerfile_returns_default(wt):
-    # The source repo has no .jm/Dockerfile → the agent's default image is used.
-    assert repo_exec._resolve_image(wt, "default:img") == "default:img"
+def test_resolve_image_empty_returns_repo_default(wt):
+    assert repo_exec._resolve_image(wt, 7, "") == _REPO_DEFAULT
+    assert repo_exec._resolve_image(wt, 7, "   ") == _REPO_DEFAULT
 
 
 @requires_git
-def test_resolve_image_builds_project_image_from_source_dockerfile(wt, monkeypatch):
-    src = worktree.source_repo(wt)
-    (src / ".jm").mkdir()
-    (src / ".jm" / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
-    real_run = subprocess.run
-    calls = []
+def test_resolve_image_builds_project_image(wt, monkeypatch):
+    monkeypatch.setattr(repo_exec, "_image_exists", lambda tag: False)
+    built = {}
+    monkeypatch.setattr(repo_exec, "build_image",
+                        lambda content, ctx, tag: built.update(tag=tag, content=content) or (True, ""))
+    tag = repo_exec._resolve_image(wt, 7, "FROM alpine\n")
+    assert tag == repo_exec.project_image_tag(7, "FROM alpine\n")
+    assert built["tag"] == tag
 
-    def fake_run(cmd, **kw):
-        if cmd and cmd[0] == "docker":
-            calls.append(cmd)
-            # docker image inspect → miss (rc 1) ; docker build → ok (rc 0)
-            return _FakeProc(rc=1 if cmd[:3] == ["docker", "image", "inspect"] else 0)
-        return real_run(cmd, **kw)  # git (source_repo) runs for real
 
-    monkeypatch.setattr(repo_exec.subprocess, "run", fake_run)
-    tag = repo_exec._resolve_image(wt, "default:img")
-    assert tag.startswith("jeanmichel-sandbox:project-")
-    assert any(c[:2] == ["docker", "build"] for c in calls)
+@requires_git
+def test_resolve_image_existing_skips_build(wt, monkeypatch):
+    monkeypatch.setattr(repo_exec, "_image_exists", lambda tag: True)
+    def _boom(*a):
+        raise AssertionError("should not build when the image already exists")
+    monkeypatch.setattr(repo_exec, "build_image", _boom)
+    assert repo_exec._resolve_image(wt, 3, "FROM alpine\n") == repo_exec.project_image_tag(3, "FROM alpine\n")
 
 
 @requires_git
 def test_resolve_image_build_failure_falls_back(wt, monkeypatch):
-    src = worktree.source_repo(wt)
-    (src / ".jm").mkdir()
-    (src / ".jm" / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
-    real_run = subprocess.run
-
-    def fake_run(cmd, **kw):
-        if cmd and cmd[0] == "docker":
-            return _FakeProc(rc=1)  # inspect miss + build fail
-        return real_run(cmd, **kw)
-
-    monkeypatch.setattr(repo_exec.subprocess, "run", fake_run)
-    assert repo_exec._resolve_image(wt, "default:img") == "default:img"
+    monkeypatch.setattr(repo_exec, "_image_exists", lambda tag: False)
+    monkeypatch.setattr(repo_exec, "build_image", lambda content, ctx, tag: (False, "boom"))
+    assert repo_exec._resolve_image(wt, 1, "FROM alpine\n") == _REPO_DEFAULT
 
 
 # ---- B5: reap covers both prefixes + per-conv filter -----------------------

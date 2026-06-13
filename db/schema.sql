@@ -954,6 +954,7 @@ CREATE TABLE projects (
   status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   code_repo   TEXT NOT NULL DEFAULT '',
   repo_kind   TEXT NOT NULL DEFAULT 'local' CHECK (repo_kind IN ('local', 'ssh')),
+  dockerfile  TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL,
   modified_at TEXT NOT NULL,
   UNIQUE (user_id, code)

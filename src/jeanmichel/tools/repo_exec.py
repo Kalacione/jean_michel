@@ -12,19 +12,22 @@ home/keys, only the repo mounted), and the worktree is git-isolated and disposab
 — a destructive command stays inside the checkout. Git history/status/diff is read
 read-only on the HOST via ``repo_git``; ``repo_exec`` is for what must RUN.
 
-The image is the agent's ``sandbox_image`` (py-alpine / node-alpine today),
-falling back to the shared default. A per-PROJECT image (built from the project's
-own Dockerfile) is a later step — this tool already accepts whatever image it is
-given, so that upgrade is transparent.
+The image comes from the PROJECT's Dockerfile (configured in the project settings,
+stored in ``projects.dockerfile``, threaded in here): built once, tagged by content
+hash, run offline. An empty Dockerfile ⇒ the shared ``repo-default`` image
+(alpine + bash + git). The same builder serves the eager build at project-save
+(``service/project.py``) and this lazy build (safety net).
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -32,7 +35,7 @@ from .. import worktree
 from . import _repo
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
-from .bash_sandbox import _DEFAULT_SANDBOX_IMAGE, _container_running
+from .bash_sandbox import _container_running
 
 _log = logging.getLogger(__name__)
 
@@ -40,7 +43,7 @@ _EXEC_TIMEOUT_S = 300
 _BUILD_TIMEOUT_S = 600
 _MAX_OUTPUT_BYTES = 16_000
 _MOUNT = "/app"
-_PROJECT_DOCKERFILE = ".jm/Dockerfile"
+_REPO_DEFAULT_IMAGE = "jeanmichel-sandbox:repo-default"
 
 # Footgun tripwire. NOT the security boundary — the container is (network=none,
 # only /app mounted, no host access). These just refuse a few obviously
@@ -54,47 +57,70 @@ _DANGEROUS = (
 )
 
 
+def project_image_tag(project_id: int | None, dockerfile_content: str) -> str:
+    """Deterministic image tag for a project's Dockerfile: keyed by project id
+    (no cross-project collision) + content hash (rebuild when the content changes).
+    Shared by the eager (save) and lazy (_resolve_image) build paths."""
+    digest = hashlib.sha1((dockerfile_content or "").encode("utf-8")).hexdigest()[:12]
+    pid = project_id if project_id is not None else "x"
+    return f"jeanmichel-sandbox:project-{pid}-{digest}"
+
+
+def _image_exists(tag: str) -> bool:
+    return subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0
+
+
+def build_image(dockerfile_content: str, context_dir: Path, tag: str) -> tuple[bool, str]:
+    """Build ``tag`` from inline Dockerfile content, with ``context_dir`` as the
+    build context (network allowed AT BUILD only; the run is --network=none).
+    Returns ``(ok, error_tail)``. Never raises."""
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".Dockerfile", delete=False) as tf:
+            tf.write(dockerfile_content)
+            df_path = tf.name
+    except OSError as e:
+        return False, f"could not write Dockerfile: {e}"
+    try:
+        r = subprocess.run(
+            ["docker", "build", "-t", tag, "-f", df_path, str(context_dir)],
+            capture_output=True, text=True, timeout=_BUILD_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, str(e)[:600]
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(df_path)
+    if r.returncode != 0:
+        tail = "\n".join((r.stderr or r.stdout or "").splitlines()[-15:])
+        return False, tail[:600]
+    return True, ""
+
+
 def _container_name(conv_id: str) -> str:
     return f"jm-repo-{conv_id}"
 
 
-def _resolve_image(conv_folder: Path, default_image: str) -> str:
-    """Per-project image from ``<source_repo>/.jm/Dockerfile`` — the OWNER's
-    committed Dockerfile (read from the source repo, NOT the agent-editable
-    worktree). Built on demand, tagged by content hash (so it rebuilds only when
-    the Dockerfile changes). Falls back to ``default_image`` when there is no
-    Dockerfile or the build fails (graceful degradation, never raises)."""
-    src = worktree.source_repo(conv_folder)
-    if src is None:
-        return default_image
-    dockerfile = src / _PROJECT_DOCKERFILE
-    if not dockerfile.is_file():
-        return default_image
-    try:
-        digest = hashlib.sha1(dockerfile.read_bytes()).hexdigest()[:12]
-    except OSError:
-        return default_image
-    tag = f"jeanmichel-sandbox:project-{digest}"
-    # Already built for this Dockerfile content ?
-    if subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0:
+def _resolve_image(conv_folder: Path, project_id: int | None, dockerfile: str) -> str:
+    """The image to run the project sandbox in. Empty Dockerfile ⇒ the shared
+    ``repo-default`` (bash+git). Otherwise the per-project image (``project-<pid>-
+    <hash>``), built on demand if absent (context = the source repo), falling back
+    to ``repo-default`` on build failure. Never raises."""
+    if not (dockerfile or "").strip():
+        return _REPO_DEFAULT_IMAGE
+    tag = project_image_tag(project_id, dockerfile)
+    if _image_exists(tag):
         return tag
-    # Build (network is allowed AT BUILD only; the run is --network=none). The
-    # context is the source repo so the Dockerfile can COPY requirements/lockfiles.
-    try:
-        r = subprocess.run(
-            ["docker", "build", "-t", tag, "-f", str(dockerfile), str(src)],
-            capture_output=True, text=True, timeout=_BUILD_TIMEOUT_S,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        _log.warning("project image build failed (%s) — falling back to %s", exc, default_image)
-        return default_image
-    if r.returncode != 0:
-        _log.warning("project image build failed (exit %s) — falling back to %s", r.returncode, default_image)
-        return default_image
+    context = worktree.source_repo(conv_folder)
+    if context is None:
+        return _REPO_DEFAULT_IMAGE
+    ok, err = build_image(dockerfile, context, tag)
+    if not ok:
+        _log.warning("project image build failed — falling back to repo-default: %s", err)
+        return _REPO_DEFAULT_IMAGE
     return tag
 
 
-def _start_repo_container(name: str, worktree: Path, image: str) -> None:
+def _start_repo_container(name: str, worktree_path: Path, image: str) -> None:
     """Start the project sandbox: the repo worktree mounted at /app, offline,
     as the host uid, capabilities dropped, resource-capped."""
     current_user = f"{os.getuid()}:{os.getgid()}"
@@ -107,7 +133,7 @@ def _start_repo_container(name: str, worktree: Path, image: str) -> None:
             "--memory=1g",
             "--cpus=2",
             "--user", current_user,
-            "-v", f"{worktree}:{_MOUNT}:rw",
+            "-v", f"{worktree_path}:{_MOUNT}:rw",
             "-w", _MOUNT,
             image,
             "tail", "-f", "/dev/null",
@@ -117,11 +143,13 @@ def _start_repo_container(name: str, worktree: Path, image: str) -> None:
     )
 
 
-def make_spec(conv_folder: Path, conv_id: str = "", image: str | None = None) -> ToolSpec:
-    """Return a ToolSpec bound to this conversation's repo worktree."""
+def make_spec(
+    conv_folder: Path, conv_id: str = "", project_id: int | None = None, dockerfile: str = "",
+) -> ToolSpec:
+    """Return a ToolSpec bound to this conversation's repo worktree + the project's
+    Dockerfile (from the project settings; empty ⇒ repo-default image)."""
     root = _repo.worktree_root(conv_folder)
     container = _container_name(conv_id or Path(conv_folder).name)
-    img = image or _DEFAULT_SANDBOX_IMAGE
 
     def _handler(command: str) -> str:
         if root is None:
@@ -135,7 +163,7 @@ def make_spec(conv_folder: Path, conv_id: str = "", image: str | None = None) ->
                 "confines commands to /app (offline, no host access) — scope your command to the repo.",
             )
         if not _container_running(container):
-            chosen = _resolve_image(conv_folder, img)
+            chosen = _resolve_image(conv_folder, project_id, dockerfile)
             try:
                 _start_repo_container(container, root, chosen)
             except subprocess.CalledProcessError as e:

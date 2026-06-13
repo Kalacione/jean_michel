@@ -338,13 +338,14 @@ def user_owns_conversation(
 # ---- Projects (migrate_124) -----------------------------------------------
 
 _PROJECT_COLS = (
-    "id, user_id, code, name, description, status, code_repo, repo_kind, created_at, modified_at"
+    "id, user_id, code, name, description, status, code_repo, repo_kind, dockerfile, "
+    "created_at, modified_at"
 )
 
 
 def create_project(
     conn: sqlite3.Connection, *, user_id: int, code: str, name: str, description: str = "",
-    code_repo: str = "", repo_kind: str = "local",
+    code_repo: str = "", repo_kind: str = "local", dockerfile: str = "",
 ) -> int:
     """Insert a project owned by ``user_id``. Returns the new id.
 
@@ -352,8 +353,8 @@ def create_project(
     now = _now()
     cur = conn.execute(
         "INSERT INTO projects (user_id, code, name, description, status, code_repo, repo_kind, "
-        "created_at, modified_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
-        (user_id, code, name, description, code_repo, repo_kind, now, now),
+        "dockerfile, created_at, modified_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
+        (user_id, code, name, description, code_repo, repo_kind, dockerfile, now, now),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -386,14 +387,14 @@ def get_project_by_code(
 def update_project(
     conn: sqlite3.Connection, project_id: int, *,
     name: str | None = None, description: str | None = None, status: str | None = None,
-    code_repo: str | None = None, repo_kind: str | None = None,
+    code_repo: str | None = None, repo_kind: str | None = None, dockerfile: str | None = None,
 ) -> None:
     """Update a project's mutable fields. Only provided fields are written."""
     sets: list[str] = []
     vals: list[object] = []
     for col, val in (
         ("name", name), ("description", description), ("status", status),
-        ("code_repo", code_repo), ("repo_kind", repo_kind),
+        ("code_repo", code_repo), ("repo_kind", repo_kind), ("dockerfile", dockerfile),
     ):
         if val is not None:
             sets.append(f"{col}=?")

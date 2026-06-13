@@ -50,10 +50,19 @@
   <MemoryDialog v-model="memory" />
   <MemoryReviewDialog v-model="review" />
   <ProfileDialog v-model="profile" />
+
+  <v-snackbar
+    v-model="snackbar.visible"
+    :color="snackbar.color"
+    location="bottom right"
+    :timeout="snackbar.timeout"
+  >
+    {{ snackbar.text }}
+  </v-snackbar>
 </template>
 
 <script setup>
-  import { onMounted, ref } from 'vue'
+  import { onMounted, onUnmounted, ref } from 'vue'
   import AskHumanDialog from '@/components/AskHumanDialog.vue'
   import ChatPane from '@/components/ChatPane.vue'
   import ConversationsDrawer from '@/components/ConversationsDrawer.vue'
@@ -63,17 +72,46 @@
   import WorkspaceDialog from '@/components/WorkspaceDialog.vue'
   import { useAuthStore } from '@/stores/auth'
   import { useConvStore } from '@/stores/conversations'
+  import { useSnackbarStore } from '@/stores/snackbar'
+  import { connectNotifications } from '@/ws'
 
   const auth = useAuthStore()
   const conv = useConvStore()
+  const snackbar = useSnackbarStore()
   const drawer = ref(true)
   const memory = ref(false)
   const review = ref(false)
   const profile = ref(false)
 
-  onMounted(() => conv.refresh())
+  let notif = null
+  let notifClosing = false
+
+  function openNotifications () {
+    notif = connectNotifications({
+      notification: m => {
+        if (m.kind !== 'project_image_build') return
+        const name = m.project_name || 'projet'
+        if (m.state === 'ok') snackbar.show(`Image du sandbox « ${name} » prête.`, 'success')
+        else if (m.state === 'failed') snackbar.show(`Build de « ${name} » échoué : ${m.error || 'voir les logs'}`, 'error', 8000)
+        else if (m.state === 'deferred') snackbar.show(`Image de « ${name} » : sera buildée à la 1ʳᵉ utilisation.`, 'info')
+      },
+      close: () => { if (!notifClosing) setTimeout(openNotifications, 3000) },
+    })
+  }
+
+  onMounted(() => {
+    conv.refresh()
+    openNotifications()
+  })
+
+  onUnmounted(() => {
+    notifClosing = true
+    notif?.close()
+  })
 
   function logout () {
+    notifClosing = true
+    notif?.close()
     conv.reset()
     auth.logout()
   }

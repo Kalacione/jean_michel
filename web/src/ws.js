@@ -31,3 +31,26 @@ export function connectTurn (convId, handlers = {}) {
     raw: ws,
   }
 }
+
+// App-level notifications socket (per-user push: project image build results, …).
+// Distinct from the per-conversation turn socket. Dispatches on `msg.type`
+// (e.g. 'notification' → inspect `msg.kind`).
+export function connectNotifications (handlers = {}) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const token = encodeURIComponent(getToken() || '')
+  const ws = new WebSocket(`${proto}://${location.host}/ws/notifications?token=${token}`)
+
+  ws.onmessage = ev => {
+    let msg
+    try {
+      msg = JSON.parse(ev.data)
+    } catch {
+      return
+    }
+    handlers[msg.type]?.(msg)
+  }
+  ws.onclose = e => handlers.close?.(e)
+  ws.onerror = e => handlers.wserror?.(e)
+
+  return { close: () => ws.close(), raw: ws }
+}

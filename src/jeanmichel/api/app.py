@@ -51,12 +51,15 @@ def create_app() -> Any:
     from ..service import memory as memory_svc
     from ..service import project as project_svc
     from ..service import workspace as workspace_svc
-    from . import auth, executor
+    from . import auth, executor, notifications, project_build
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app):
         from ..tools.bash_sandbox import reap_sandboxes
 
+        # Capture the serving loop so background threads (the project image build)
+        # can push notifications over the per-user WS thread-safely.
+        notifications.set_loop(asyncio.get_running_loop())
         # Sweep orphan sandbox/project containers left by a previous (possibly
         # crashed) run before serving. Best-effort.
         await asyncio.to_thread(reap_sandboxes)
@@ -92,6 +95,7 @@ def create_app() -> Any:
         description: str = ""
         code_repo: str = ""          # local path or ssh url (empty → no repo / no codebase in code mode)
         repo_kind: str = "local"     # 'local' | 'ssh'
+        dockerfile: str = ""         # project sandbox Dockerfile (empty → repo-default bash+git)
 
     class ProjectUpdateRequest(BaseModel):
         name: str | None = None
@@ -99,6 +103,7 @@ def create_app() -> Any:
         status: str | None = None
         code_repo: str | None = None
         repo_kind: str | None = None
+        dockerfile: str | None = None
 
     class SnapshotRef(BaseModel):
         commit: str
@@ -386,9 +391,12 @@ def create_app() -> Any:
                 proj = project_svc.create(
                     conn, user_id=user["id"], code=body.code, name=body.name,
                     description=body.description, code_repo=body.code_repo, repo_kind=body.repo_kind,
+                    dockerfile=body.dockerfile,
                 )
         except project_svc.ProjectOpError as exc:
             raise _project_http(exc) from exc
+        # Build the project sandbox image in the background ; result toasts via WS.
+        project_build.trigger_image_build(proj, user["id"])
         return {"project": proj}
 
     @app.get("/api/projects/{project_id}")
@@ -408,10 +416,13 @@ def create_app() -> Any:
                 proj = project_svc.update(
                     conn, user_id=user["id"], project_id=project_id,
                     name=body.name, description=body.description, status=body.status,
-                    code_repo=body.code_repo, repo_kind=body.repo_kind,
+                    code_repo=body.code_repo, repo_kind=body.repo_kind, dockerfile=body.dockerfile,
                 )
         except project_svc.ProjectOpError as exc:
             raise _project_http(exc) from exc
+        # If the Dockerfile was (re)set, rebuild the sandbox image in the background.
+        if body.dockerfile is not None:
+            project_build.trigger_image_build(proj, user["id"])
         return {"project": proj}
 
     @app.delete("/api/projects/{project_id}")
@@ -658,6 +669,23 @@ def create_app() -> Any:
                     )
         except WebSocketDisconnect:
             return
+
+    # ---- notifications WebSocket (per-user push : build results, …) -------
+    @app.websocket("/ws/notifications")
+    async def ws_notifications(websocket: WebSocket, token: str = "") -> None:
+        user = auth.verify_token(token)
+        if user is None:
+            await websocket.close(code=4401)
+            return
+        await websocket.accept()
+        notifications.register(user["id"], websocket)
+        try:
+            while True:
+                await websocket.receive_text()  # keepalive ; we only push here
+        except WebSocketDisconnect:
+            pass
+        finally:
+            notifications.unregister(user["id"], websocket)
 
     return app
 

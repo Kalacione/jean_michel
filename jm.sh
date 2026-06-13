@@ -350,10 +350,11 @@ cmd_meta_analysis() {
 
 cmd_build_docker() {
   # Usage:
-  #   ./jm.sh --build-docker              — build default Python Alpine image
-  #   ./jm.sh --build-docker py-alpine    — same, explicit
-  #   ./jm.sh --build-docker node-alpine  — build Node Alpine image
-  #   ./jm.sh --build-docker all          — build all images
+  #   ./jm.sh --build-docker               — build default Python Alpine image
+  #   ./jm.sh --build-docker py-alpine     — same, explicit
+  #   ./jm.sh --build-docker node-alpine   — build Node Alpine image
+  #   ./jm.sh --build-docker repo-default  — build the project-sandbox default (alpine+bash+git)
+  #   ./jm.sh --build-docker all           — build all images
   local variant="${1:-py-alpine}"
 
   build_one() {
@@ -371,9 +372,13 @@ cmd_build_docker() {
     node-alpine|node)
       build_one "node-alpine" "Dockerfile.node"
       ;;
+    repo-default|repo)
+      build_one "repo-default" "Dockerfile.repo-default"
+      ;;
     all)
-      build_one "py-alpine"   "Dockerfile"
-      build_one "node-alpine" "Dockerfile.node"
+      build_one "py-alpine"    "Dockerfile"
+      build_one "node-alpine"  "Dockerfile.node"
+      build_one "repo-default" "Dockerfile.repo-default"
       ;;
     *)
       # Legacy: treat the argument as a full image tag for the default Dockerfile.

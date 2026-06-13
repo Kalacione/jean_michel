@@ -169,6 +169,7 @@ Surface REST (sélection — détails dans `src/jeanmichel/api/app.py`) :
 | `GET`/`PATCH` | `/api/profile` | profil du compte web courant |
 | `GET` | `/api/tts` | synthèse Piper streamée (consommée comme blob côté front) |
 | `WebSocket` | `/ws/conversations/{id}` | tour d'orchestration streamé live (events typés en JSON) |
+| `WebSocket` | `/ws/notifications` | canal push par-user (ex. fin de build de l'image sandbox d'un projet → toast) |
 
 Toutes les routes (sauf `/api/health` et `/api/auth/login`) passent par
 `require_conversation_owner` ou `current_user` : un user ne peut JAMAIS
@@ -485,7 +486,9 @@ Inchangé : `bash_sandbox` exécute des commandes dans un container isolé
 CPU 1 vCPU). Audit dans `~/.jean-michel/sandbox_audit.jsonl`.
 
 Grants en BDD : `agent_sandbox_grants` (une ligne par binaire autorisé).
-Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpine`.
+Images : `jeanmichel-sandbox:py-alpine` (défaut), `jeanmichel-sandbox:node-alpine`. La **sandbox projet**
+(`repo_exec`, mode code) tourne dans l'image du projet — buildée depuis le Dockerfile des paramètres du projet
+(`projects.dockerfile`), sinon `jeanmichel-sandbox:repo-default` (alpine + bash + git).
 
 ## Serveurs MCP (client)
 
@@ -812,7 +815,7 @@ jeanmichel/
 │   ├── admin.py
 │   ├── clean_convs.py
 │   └── paradigm_matrix.py
-├── docker/sandbox/           # Dockerfiles bash_sandbox (py-alpine, node-alpine)
+├── docker/sandbox/           # Dockerfiles sandbox (py-alpine, node-alpine, repo-default)
 ├── docker/searxng/           # compose.yml du méta-moteur local
 ├── voice_models/             # Piper .onnx + README (gitignored sauf README)
 ├── docs/

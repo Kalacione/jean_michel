@@ -1,0 +1,13 @@
+# Default image for the PROJECT SANDBOX (repo_exec) when a project sets no
+# Dockerfile. Minimal: bash + git + coreutils, enough to run shell / file / git
+# commands against a repo mounted at /app, offline (--network=none). Projects
+# that need a toolchain (python/node/…) set their own Dockerfile in the project
+# settings (built as jeanmichel-sandbox:project-<id>-<hash>).
+#
+# Build: ./jm.sh --build-docker repo-default   (tag: jeanmichel-sandbox:repo-default)
+FROM alpine:3.20
+
+RUN apk add --no-cache bash git coreutils findutils grep sed \
+    && rm -rf /var/cache/apk/*
+
+WORKDIR /app
