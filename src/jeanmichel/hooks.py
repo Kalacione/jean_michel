@@ -150,6 +150,7 @@ class PreLLMCall:
         if self.is_main_agent and self.conv_folder is not None:
             _refresh_todo_recap(messages, self.conv_folder)
             _refresh_repo_recap(messages, self.conv_folder)
+            _refresh_plan_nudge(messages, self.conv_folder, state)
         return level
 
 
@@ -251,6 +252,8 @@ class PostToolUse:
             state.search_calls_since_last_persist += 1
         elif call.name in _WORKSPACE_WRITE_TOOLS:
             state.search_calls_since_last_persist = 0
+        if call.name == "todo_write":
+            state.reeval_pending = False  # plan (re-)evaluated → clear the ACT nudge
 
         # 2. Cache the result for future dedup
         fp = _fingerprint(call.name, call.arguments)
@@ -307,6 +310,9 @@ class OnDelegateReturn:
             "content": json.dumps(sub_result, ensure_ascii=False),
         })
         state.active_subagent = None
+        # A specialist just returned → the router owes a TODO re-evaluation (ACT)
+        # before its next delegation (enforced by the plan nudge in PreLLMCall).
+        state.reeval_pending = True
 
 
 # ---- Utilities ------------------------------------------------------------
@@ -379,6 +385,57 @@ def _refresh_repo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> No
         "cannot see the repo). Use `code-fetcher` for external lookups. Answer questions about "
         "this code by delegating — never claim you cannot see it, and never assume a remote GitHub repo."
     )})
+
+
+_PLAN_NUDGE_MARKER = "[ORCHESTRATOR] PLAN:"
+
+
+def _count_delegations(messages: list[dict[str, Any]]) -> int:
+    """Completed delegations so far = number of delegate_to return messages
+    (pushed by OnDelegateReturn as role=tool, tool_name=delegate_to)."""
+    return sum(
+        1 for m in messages
+        if m.get("role") == "tool" and m.get("tool_name") == "delegate_to"
+    )
+
+
+def _refresh_plan_nudge(
+    messages: list[dict[str, Any]], conv_folder: Path, state: ConversationState
+) -> None:
+    """Deterministic plan discipline for the code-router (code mode only):
+
+    - PLAN: delegated a multi-step task (≥2 delegations) without a TODO ⇒ tell it
+      to decompose with todo_write first.
+    - ACT: a specialist just returned and a plan exists (``reeval_pending``) ⇒ tell
+      it to re-evaluate/update the TODO before the next delegation.
+
+    Idempotent (strips the prior nudge first). `[ORCHESTRATOR]`-prefixed, so it is
+    stripped from messages.json and never surfaces as a user bubble in the UI.
+    """
+    messages[:] = [
+        m for m in messages
+        if not (
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and m["content"].startswith(_PLAN_NUDGE_MARKER)
+        )
+    ]
+    if not worktree.worktree_path_for(conv_folder).exists():
+        return  # code mode only
+    todo = load_todo(conv_folder)
+    if todo is None:
+        if _count_delegations(messages) >= 2:
+            messages.append({"role": "user", "content": (
+                f"{_PLAN_NUDGE_MARKER} You are delegating a multi-step task without a plan. Decompose "
+                "it now with todo_write (3-7 scoped steps, exactly one in_progress) BEFORE delegating "
+                "further, then keep it current after every worker returns."
+            )})
+    elif state.reeval_pending:
+        messages.append({"role": "user", "content": (
+            f"{_PLAN_NUDGE_MARKER} A specialist just returned. Re-evaluate your plan with todo_write "
+            "(mark the finished step done, add or re-scope any steps the report surfaced, set the next "
+            "step in_progress) BEFORE your next delegation."
+        )})
 
 
 # ---- Registry helper -----------------------------------------------------
