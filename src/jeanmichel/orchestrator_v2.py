@@ -80,12 +80,16 @@ ASK_HUMAN_SCHEMA: dict[str, Any] = {
     "function": {
         "name": "ask_human",
         "description": (
-            "Pause the loop and ask the human for clarification. Use sparingly — "
-            "only when an ambiguity actually blocks progress. The `why` field is "
-            "mandatory and must explain what is blocked without the answer. "
-            "Optionally pass `choices` (a list of options) to present them as "
-            "selectable answers, and `multi=true` to let the human pick several ; "
-            "omit `choices` for a free-text question. "
+            "Ask the human directly and PAUSE for their reply. Two cases: (1) a "
+            "clarification you genuinely need to proceed (use sparingly, only when "
+            "an ambiguity blocks progress) ; (2) a decision among known options that "
+            "only the user can make, OR when the user asks you to present them a "
+            "choice / quiz them. The `why` field is mandatory: explain why you need "
+            "their input. When the answer is a choice among known options, pass "
+            "`choices` (a list) so the UI renders them as selectable options instead "
+            "of plain text — set `multi=true` to allow picking several ; omit "
+            "`choices` for an open-ended question. Do NOT write the options as plain "
+            "text in your reply — use `choices`. "
             "Subagents do NOT have access to this tool ; they conclude with "
             "report_back(confidence='low', low_confidence_reason='...') instead."
         ),
