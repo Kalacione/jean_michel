@@ -49,8 +49,9 @@ def create_conversation(
     snapshot.init_repo(conv_folder, conv_id)
     # In `code` mode, give the conversation an isolated git worktree of the target
     # repo so the system edits real files without touching the live tree. The repo
-    # comes from the attached project (code_repo/repo_kind) ; empty → PROJECT_ROOT
-    # (dogfood). No-op unless CODE_WORKTREE_ENABLED.
+    # comes from the attached project (code_repo/repo_kind). NO attached repo ⇒ NO
+    # worktree (no silent fallback to the jean-michel repo). No-op unless
+    # CODE_WORKTREE_ENABLED.
     if mode == "code":
         source, kind = "", "local"
         if project_id is not None:

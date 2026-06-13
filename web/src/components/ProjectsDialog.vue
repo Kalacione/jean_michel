@@ -49,7 +49,7 @@
             <v-text-field
               v-model="form.code_repo"
               density="compact"
-              hint="Mode code : chemin local ou URL SSH (vide = repo jean-michel par défaut)"
+              hint="Mode code : chemin local ou URL SSH (vide = aucun dépôt, pas de codebase)"
               label="Dépôt de code"
               persistent-hint
               placeholder="/chemin/vers/repo  ou  git@host:org/repo.git"

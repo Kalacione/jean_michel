@@ -18,14 +18,18 @@ CONVERSATIONS_DIR = REPO_ROOT / "conversations"
 CLI_PROFILE_PATH = REPO_ROOT / "cli_profile.toml"
 ENV_FILE_PATH = REPO_ROOT / ".env"
 
-# Target repo the system intervenes on in `code` mode (in-place edits on a git
-# worktree). Defaults to the jean-michel repo itself (dogfood); override to point
-# the system at any other git repo. Cf. src/jeanmichel/worktree.py.
-PROJECT_ROOT = Path(os.environ.get("JEANMICHEL_PROJECT_ROOT", REPO_ROOT)).resolve()
+# EXPLICIT global target repo for `code` mode (CLI use). **No silent default**:
+# unset ⇒ None ⇒ no repo (a code-mode conversation without an attached project
+# repo gets NO worktree). We deliberately do NOT fall back to the jean-michel
+# repo itself — that would be a security hole (the system editing its own source
+# unintentionally). The web flow attaches a repo per PROJECT (projects.code_repo);
+# this env is only for an explicit CLI global. Cf. src/jeanmichel/worktree.py.
+_project_root_env = os.environ.get("JEANMICHEL_PROJECT_ROOT", "").strip()
+PROJECT_ROOT: Path | None = Path(_project_root_env).resolve() if _project_root_env else None
 
-# Paths (relative to a worktree of PROJECT_ROOT) that repo_edit / repo_write must
-# NEVER touch, even inside an isolated worktree: live DB, secrets, runtime data,
-# vendored/generated trees. Enforced as a hard deny in the PreToolUse hook (P1).
+# Paths (relative to a worktree) that repo_edit / repo_write must NEVER touch,
+# even inside an isolated worktree: live DB, secrets, runtime data, vendored/
+# generated trees. Enforced as a hard deny in the PreToolUse hook (P1).
 REPO_PROTECTED_PATHS = (
     "jeanmichel.db",
     ".env",

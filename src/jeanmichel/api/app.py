@@ -83,7 +83,7 @@ def create_app() -> Any:
         code: str
         name: str
         description: str = ""
-        code_repo: str = ""          # local path or ssh url (empty → PROJECT_ROOT fallback)
+        code_repo: str = ""          # local path or ssh url (empty → no repo / no codebase in code mode)
         repo_kind: str = "local"     # 'local' | 'ssh'
 
     class ProjectUpdateRequest(BaseModel):

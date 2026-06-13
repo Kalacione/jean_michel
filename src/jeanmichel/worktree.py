@@ -105,9 +105,12 @@ def _git(folder: Path, *args: str, timeout: int = _GIT_TIMEOUT_S) -> subprocess.
     )
 
 
-def _project_root() -> Path:
-    # Read through the module so tests can redirect config.PROJECT_ROOT.
-    return Path(config.PROJECT_ROOT)
+def _project_root() -> Path | None:
+    # Explicit global target ONLY (CLI). None unless JEANMICHEL_PROJECT_ROOT is
+    # set — no silent fallback to the jean-michel repo (security). Read through
+    # the module so tests can redirect config.PROJECT_ROOT.
+    pr = config.PROJECT_ROOT
+    return Path(pr) if pr else None
 
 
 def _is_git_repo(folder: Path) -> bool:
@@ -133,10 +136,11 @@ def worktree_path_for(conv_folder: Path) -> Path:
 def source_repo(conv_folder: Path) -> Path | None:
     """The canonical repo this conversation's worktree was cut from.
 
-    Per-conversation (dogfood = PROJECT_ROOT ; a project = its code_repo ; an ssh
-    project = its cached clone). Falls back to PROJECT_ROOT when there is no
-    worktree or the derivation fails. The graph + the test interpreter belong to
-    THIS repo (not the ephemeral worktree). ``None`` if no git repo is resolvable.
+    Per-conversation (a local project = its code_repo ; an ssh project = its
+    cached clone ; an explicit CLI global = JEANMICHEL_PROJECT_ROOT). The graph +
+    the test interpreter belong to THIS repo (not the ephemeral worktree).
+    ``None`` when there is no worktree and no explicit PROJECT_ROOT (no silent
+    fallback to the jean-michel repo).
     """
     wt = worktree_path_for(conv_folder)
     if wt.exists():
@@ -144,7 +148,7 @@ def source_repo(conv_folder: Path) -> Path | None:
         if src is not None and _is_git_repo(src):
             return src
     root = _project_root()
-    return root if _is_git_repo(root) else None
+    return root if (root is not None and _is_git_repo(root)) else None
 
 
 def create_worktree(
@@ -153,9 +157,10 @@ def create_worktree(
     """Add a git worktree on branch ``jm/conv-<id>`` from the target repo.
 
     ``source``/``kind`` select the repo: a LOCAL path, an SSH/remote url (cloned
-    once into the cache), or — when ``source`` is empty/None — the global
-    ``config.PROJECT_ROOT`` (dogfood fallback). Returns the worktree path, else
-    ``None`` (no-op). Idempotent on the worktree dir ; cleans a half-made dir.
+    once into the cache), or — when ``source`` is empty/None — an EXPLICIT
+    ``JEANMICHEL_PROJECT_ROOT`` (CLI global). No attached repo and no explicit
+    global ⇒ ``None`` (no worktree — no silent fallback to the jean-michel repo).
+    Returns the worktree path, else ``None``. Idempotent ; cleans a half-made dir.
     """
     if not _enabled() or not _git_available():
         return None
@@ -166,7 +171,11 @@ def create_worktree(
     elif source:
         repo = Path(source)
     else:
-        repo = _project_root()  # fallback (dogfood)
+        # No attached repo. No silent fallback to the jean-michel repo — an
+        # explicit JEANMICHEL_PROJECT_ROOT (CLI global) is the only non-None case.
+        repo = _project_root()
+        if repo is None:
+            return None  # no repo = no repo = no worktree
     if not _is_git_repo(repo):
         _log.debug("worktree: source %s is not a git repo — skipping", repo)
         return None

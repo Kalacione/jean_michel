@@ -1,11 +1,11 @@
 """Tool: repo_graph_refresh — rebuild the code graph (graphify update).
 
-Best-effort: runs ``graphify update`` on PROJECT_ROOT so structural queries
-(graphify MCP tools + the CRP structural slice) reflect the latest committed
-code. Deterministic (tree-sitter, no LLM), ~seconds. No-op error if graphify is
-not installed or no graph exists yet. Within a conversation, uncommitted
-worktree edits are covered by the CRP's recent-diff slice — this keeps the one
-canonical graph current as work lands.
+Best-effort: runs ``graphify update`` on the conversation's source repo
+(worktree.source_repo) so structural queries (graphify MCP tools + the CRP
+structural slice) reflect the latest committed code. Deterministic (tree-sitter,
+no LLM), ~seconds. No-op error if graphify is missing or no source repo. Within a
+conversation, uncommitted worktree edits are covered by the CRP's recent-diff
+slice — this keeps the canonical graph current as work lands.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ _TIMEOUT_S = 120
 
 
 def make_spec(conv_folder: Path) -> ToolSpec:
-    """Return a ToolSpec bound to ``conv_folder`` (refreshes PROJECT_ROOT's graph)."""
+    """Return a ToolSpec bound to ``conv_folder`` (refreshes the source repo's graph)."""
 
     def _handler() -> str:
         if _repo.worktree_root(conv_folder) is None:

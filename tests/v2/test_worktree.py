@@ -239,6 +239,16 @@ def test_source_repo_derives_from_worktree(project_repo, tmp_path, conv_folder):
 
 
 @requires_git
-def test_source_repo_fallback_without_worktree(project_repo, conv_folder):
-    # No worktree for this conv → falls back to PROJECT_ROOT.
+def test_source_repo_uses_explicit_global_without_worktree(project_repo, conv_folder):
+    # No worktree, but an EXPLICIT PROJECT_ROOT (project_repo) is set → returns it
+    # (the CLI-global case). Without an explicit global it would be None.
     assert worktree.source_repo(conv_folder).resolve() == project_repo.resolve()
+
+
+def test_no_repo_no_worktree(conv_folder, monkeypatch):
+    # Security: code worktrees ON, but NO attached repo and NO explicit
+    # PROJECT_ROOT → NO worktree. No silent fallback to the jean-michel repo.
+    monkeypatch.setattr(config, "CODE_WORKTREE_ENABLED", True)
+    monkeypatch.setattr(config, "PROJECT_ROOT", None)
+    assert worktree.create_worktree(conv_folder, "x", source=None, kind="local") is None
+    assert not worktree.worktree_path_for(conv_folder).exists()

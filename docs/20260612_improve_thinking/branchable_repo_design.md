@@ -19,7 +19,9 @@ attache le repo. Les conversations en mode `code` rattachées au projet **hérit
 
 **Pourquoi projet et pas conversation** : on attache un repo **une fois**, toutes les convs du projet
 en profitent ; fork/snapshot de conv triviaux (pas de duplication du repo) ; le dialog projet web
-existe déjà. Une conv code sans projet → fallback `config.PROJECT_ROOT` (rétro-compatible ; CLI inchangé).
+existe déjà. **Pas de repo de projet ⇒ AUCUN worktree** (pas de fallback silencieux vers le repo
+jean-michel — c'était un trou de sécu). `JEANMICHEL_PROJECT_ROOT` reste un override CLI **explicite**
+(vide par défaut).
 
 ## Stockage (migration `migrate_133`)
 
@@ -28,13 +30,13 @@ ALTER TABLE projects ADD COLUMN code_repo TEXT NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN repo_kind TEXT NOT NULL DEFAULT 'local'
   CHECK (repo_kind IN ('local','ssh'));
 ```
-- `code_repo` : chemin absolu (local) ou URL ssh (`git@host:org/repo.git`). Vide ⇒ fallback PROJECT_ROOT.
+- `code_repo` : chemin absolu (local) ou URL ssh (`git@host:org/repo.git`). Vide ⇒ aucun repo (pas de worktree).
 - Miroir `db/schema.sql` + dual-write ; `db.create_project/update_project/get_project` + `service/project.py`
   transportent les 2 champs. (Migration libre : 133 ; 132 = comparator.)
 
 ## Matérialisation du repo (`worktree.py`)
 
-`create_worktree(conv_folder, conv_id, source=None, kind="local")` — `source` vide ⇒ `config.PROJECT_ROOT`.
+`create_worktree(conv_folder, conv_id, source=None, kind="local")` — `source` vide ⇒ aucun worktree (sauf `JEANMICHEL_PROJECT_ROOT` explicite, usage CLI).
 - **local** : `git worktree add` depuis `source` (mécanisme actuel, inchangé).
 - **ssh** : pas de worktree direct sur une URL → **cloner d'abord**. `_ensure_clone_cached(url, project_id)`
   clone une fois dans un cache **par projet** hors de `conversations/` (ex. `repos-cache/<project_id>/repo`),
@@ -74,7 +76,8 @@ worktree) pour donner aux workers l'historique/contexte d'évolution. Granté co
 
 ## Rétro-compatibilité
 
-`code_repo` vide ⇒ `config.PROJECT_ROOT` (dogfood actuel). Conversations existantes + CLI (sans
+`code_repo` vide ⇒ aucun worktree (le dogfood passe par un PROJET explicite pointant sur le repo
+jean-michel — pas de défaut silencieux). Conversations existantes + CLI (sans
 project_id) : inchangés. Tout le mécanisme reste **opt-in** derrière `CODE_WORKTREE_ENABLED`.
 
 ## Fichiers impactés (sprint d'implémentation)

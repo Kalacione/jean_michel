@@ -52,8 +52,9 @@ def make_spec(conv_folder: Path) -> ToolSpec:
             # Resolve a relative path-like interpreter against the source repo
             # (e.g. '.venv/bin/python' lives in the project, not the worktree).
             if "/" in cmd[0] and not os.path.isabs(cmd[0]):
-                base = worktree.source_repo(conv_folder) or Path(config.PROJECT_ROOT)
-                cmd[0] = str((base / cmd[0]).resolve())
+                base = worktree.source_repo(conv_folder)
+                if base is not None:
+                    cmd[0] = str((base / cmd[0]).resolve())
         else:
             # Auto: no config needed for the common case (the dogfood).
             cmd = [_default_python(conv_folder), "-m", "pytest", "-q"]
