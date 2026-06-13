@@ -221,6 +221,16 @@ class PreToolUse:
         fp = _fingerprint(ctx.call.name, ctx.call.arguments)
         if fp in dedup_cache:
             cached = dedup_cache[fp]
+            if ctx.call.name == "delegate_to":
+                # F4 hard backstop : a verbatim re-delegation is the router looping.
+                # Redirect it to take stock + escalate rather than spin in place.
+                return Decision(deny=True, reason=(
+                    "ESCALATE: you just re-delegated an IDENTICAL task to "
+                    f"'{ctx.call.arguments.get('agent_code', '')}'. Repeating it will not help. Take "
+                    "stock of what was already produced (open the files_produced with workspace_view, "
+                    "re-read the summaries), then either conclude with what you have or escalate to the "
+                    "human with ask_human (offer choices when the options are known)."
+                ))
             return Decision(
                 deny=True,
                 reason=(
@@ -402,12 +412,20 @@ def _count_delegations(messages: list[dict[str, Any]]) -> int:
 def _refresh_plan_nudge(
     messages: list[dict[str, Any]], conv_folder: Path, state: ConversationState
 ) -> None:
-    """Deterministic plan discipline for the code-router (code mode only):
+    """Deterministic router discipline — fires for the MAIN agent only, i.e. for
+    the jean-michel router (chat/analyse/research) AND the code-router (code mode).
 
-    - PLAN: delegated a multi-step task (≥2 delegations) without a TODO ⇒ tell it
-      to decompose with todo_write first.
-    - ACT: a specialist just returned and a plan exists (``reeval_pending``) ⇒ tell
-      it to re-evaluate/update the TODO before the next delegation.
+    F4 stock-take : after ANY specialist returns (``state.reeval_pending``), inject
+    a reminder BEFORE the router re-delegates — analyse what the specialists already
+    produced (their files_produced + summaries ; the worktree diff in code mode),
+    re-delegate ONLY on a real remaining gap, otherwise synthesize the answer or
+    escalate to the human with ask_human. In code mode it folds in TODO discipline
+    (decompose if no plan, update it otherwise).
+
+    The determinism is in *when* the reminder fires (a specialist returned → the
+    router is about to decide), not in a content/confidence counter — those are
+    subjective or dodgeable by rewording. The hard backstop against a verbatim
+    re-delegation lives in ``PreToolUse`` (dedup → escalate).
 
     Idempotent (strips the prior nudge first). `[ORCHESTRATOR]`-prefixed, so it is
     stripped from messages.json and never surfaces as a user bubble in the UI.
@@ -420,22 +438,31 @@ def _refresh_plan_nudge(
             and m["content"].startswith(_PLAN_NUDGE_MARKER)
         )
     ]
-    if not worktree.worktree_path_for(conv_folder).exists():
-        return  # code mode only
-    todo = load_todo(conv_folder)
-    if todo is None:
-        if _count_delegations(messages) >= 2:
-            messages.append({"role": "user", "content": (
-                f"{_PLAN_NUDGE_MARKER} You are delegating a multi-step task without a plan. Decompose "
-                "it now with todo_write (3-7 scoped steps, exactly one in_progress) BEFORE delegating "
-                "further, then keep it current after every worker returns."
-            )})
-    elif state.reeval_pending:
-        messages.append({"role": "user", "content": (
-            f"{_PLAN_NUDGE_MARKER} A specialist just returned. Re-evaluate your plan with todo_write "
-            "(mark the finished step done, add or re-scope any steps the report surfaced, set the next "
-            "step in_progress) BEFORE your next delegation."
-        )})
+    if not state.reeval_pending:
+        return  # no specialist pending review → nothing to take stock of
+    parts = [
+        f"{_PLAN_NUDGE_MARKER} A specialist just returned. BEFORE delegating again, take stock of what "
+        "the specialists already produced — open their files_produced with workspace_view and re-read "
+        "their summaries."
+    ]
+    if worktree.worktree_path_for(conv_folder).exists():  # code mode
+        parts.append("Review the worktree diff (repo_git) as well.")
+        if load_todo(conv_folder) is not None:
+            parts.append(
+                "Update your todo_write (mark the finished step done, re-scope what the report surfaced, "
+                "set the next step in_progress)."
+            )
+        elif _count_delegations(messages) >= 2:
+            parts.append(
+                "You have no plan for this multi-step task — decompose it with todo_write (3-7 scoped "
+                "steps, exactly one in_progress)."
+            )
+    parts.append(
+        "Re-delegate ONLY if a concrete gap remains. Otherwise synthesize your answer — or, if you are "
+        "blocked on a decision only the user can make, escalate with ask_human (offer choices when the "
+        "options are known)."
+    )
+    messages.append({"role": "user", "content": " ".join(parts)})
 
 
 # ---- Registry helper -----------------------------------------------------

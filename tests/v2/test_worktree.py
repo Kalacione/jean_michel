@@ -270,9 +270,11 @@ def test_router_repo_notice_when_worktree_exists(conv_folder):
     assert "code-runner" in notices[0]["content"]
 
 
-def test_plan_nudge_code_router(conv_folder):
-    """Deterministic plan discipline: PLAN nudge (≥2 delegations, no todo) + ACT
-    nudge (a specialist returned, plan exists). Code mode only ; idempotent."""
+def test_router_stocktake_nudge(conv_folder):
+    """F4 router discipline: after a specialist returns (reeval_pending), a STOCKTAKE
+    nudge fires for BOTH routers (chat + code) telling the router to analyse what was
+    produced before re-delegating, with an ask_human escalation exit. Code mode folds
+    in TODO discipline. Gated on reeval_pending ; idempotent."""
     from jeanmichel import todo as todo_mod
     from jeanmichel.hooks import _PLAN_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
@@ -285,31 +287,40 @@ def test_plan_nudge_code_router(conv_folder):
     def nudges(ms):
         return [m for m in ms if (m.get("content") or "").startswith(_PLAN_NUDGE_MARKER)]
 
-    # No worktree (not code mode) → never nudges, even with many delegations.
+    # No specialist pending (reeval_pending False) → never nudges, any mode/count.
     msgs = [{"role": "user", "content": "go"}, *delegations(3)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert nudges(msgs) == []
 
-    worktree.worktree_path_for(conv_folder).mkdir(parents=True)  # → code mode
-
-    # PLAN: 1 delegation (trivial) → no nudge ; 2 without a todo → one (idempotent).
+    # Chat router (no worktree), a specialist just returned → stock-take nudge fires
+    # (both routers), with the ask_human escalation ; idempotent ; no TODO wording.
+    state.reeval_pending = True
     msgs = [*delegations(1)]
     _refresh_plan_nudge(msgs, conv_folder, state)
-    assert nudges(msgs) == []
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    assert len(nudges(msgs)) == 1
+    content = nudges(msgs)[0]["content"]
+    assert "ask_human" in content and "workspace_view" in content
+    assert "todo_write" not in content  # chat mode: no plan discipline
+
+    worktree.worktree_path_for(conv_folder).mkdir(parents=True)  # → code mode
+
+    # Code mode, no plan yet, ≥2 delegations → stock-take folds in "decompose" todo.
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
-    _refresh_plan_nudge(msgs, conv_folder, state)
-    assert len(nudges(msgs)) == 1 and "todo_write" in nudges(msgs)[0]["content"]
+    assert len(nudges(msgs)) == 1
+    assert "todo_write" in nudges(msgs)[0]["content"]
 
-    # A plan exists → PLAN nudge gone ; ACT nudge gated by reeval_pending.
+    # Code mode, a plan exists → stock-take folds in "update" todo wording.
     items, _ = todo_mod.normalize_items([{"text": "step 1", "status": "in_progress"}])
     todo_mod.save_todo(conv_folder, "do the thing", items)
-    state.reeval_pending = True
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
-    assert len(nudges(msgs)) == 1 and "Re-evaluate" in nudges(msgs)[0]["content"]
+    assert len(nudges(msgs)) == 1
+    assert "Update your todo_write" in nudges(msgs)[0]["content"]
 
-    state.reeval_pending = False  # router updated the plan (todo_write) → no ACT nudge
+    # Router acted (todo_write cleared reeval_pending) → no nudge.
+    state.reeval_pending = False
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert nudges(msgs) == []

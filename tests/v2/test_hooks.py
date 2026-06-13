@@ -196,6 +196,28 @@ def test_pre_tool_use_dedup_blocks_repeated_call():
     assert "Duplicate" in (d2.reason or "")
 
 
+def test_pre_tool_use_dedup_delegate_to_escalates():
+    """F4 backstop: a verbatim re-delegation is denied with an ESCALATE order
+    pointing at ask_human — not the generic 'Duplicate call' message."""
+    from jeanmichel.hooks import _fingerprint
+
+    hook = PreToolUse()
+    s = _state()
+    args = {"agent_code": "web-searcher", "briefing": "find X"}
+    ctx = _ctx("delegate_to", args=args, grants={"delegate_to"})
+    cache: dict = {}
+
+    assert hook(ctx, s, cache).deny is False
+    cache[_fingerprint("delegate_to", args)] = {"summary": "done", "agent": "web-searcher"}
+
+    d2 = hook(ctx, s, cache)
+    assert d2.deny is True
+    assert "ESCALATE" in (d2.reason or "")
+    assert "ask_human" in (d2.reason or "")
+    assert "web-searcher" in (d2.reason or "")
+    assert "Duplicate call" not in (d2.reason or "")
+
+
 def test_pre_tool_use_dedup_normalizes_string_args():
     """Args differing only in case/whitespace should hit the cache."""
     hook = PreToolUse()
