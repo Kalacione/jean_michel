@@ -12,3 +12,5 @@
 ## a faire
 
 - rafraichir le paradigm viewer/editor
+- un agent code plan qui sache faire de la todo
+- fix ruff
