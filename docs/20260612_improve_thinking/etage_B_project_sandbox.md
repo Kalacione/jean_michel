@@ -19,7 +19,11 @@
 1. **Périmètre des commandes arbitraires = conteneur** (jamais l'exec hôte : ça donne les clés de la machine).
 2. **Une image par projet**, buildée depuis un **Dockerfile fourni par le projet** ; **défaut** = image minimale alpine+git+coreutils.
 3. **Le réseau n'existe qu'au BUILD** (deps installées là, 1×, caché par layers docker) ; le conteneur d'exécution tourne **`--network=none` dès sa naissance** → le paradoxe réseau du `cloud_init` disparaît.
-4. **Checkout autonome par conversation** (clone, pas worktree lié) pour que `git` fonctionne DANS le conteneur (cf. §Checkout).
+4. **Le conteneur monte le worktree lié existant** (`/app`). Le clone autonome (pour que `git` marche DANS le
+   conteneur) est **différé** : à l'implémentation, il rippe sur la sémantique `source_repo`/`repo_test`/CRP
+   (le `git-common-dir` d'un clone ≠ la source ; `.venv`/graphify vivent dans la source) — risque > gain immédiat.
+   Sécurité **équivalente** (la source `.git` n'est montée dans aucun cas). git en conteneur via l'hôte `repo_git`
+   (read-only) ; on clonera SI un outil de build appelle git en interne et casse (cf. §Checkout).
 5. **Réutilise la machinerie existante** : `bash_sandbox._start_container` (déjà `--user uid:gid --cap-drop=ALL --memory --cpus --network=none`), `docker/sandbox/` + `jm.sh --build-docker`, colonne `agents.sandbox_image`.
 
 ## Modèle de checkout : clone autonome (changement vs P0)
@@ -86,7 +90,8 @@ confiné au repo) — pas `bash_sandbox` (qui ne voit que le scratch) ni l'hôte
 
 ## Découpage en sous-étapes (livrables testables)
 
-- **B1 — Checkout autonome** : `create_worktree` local → `git clone --local` ; tests worktree/clone + `repo_*` inchangés verts.
+- **B1 — Checkout autonome (DIFFÉRÉ)** : `create_worktree` local → `git clone --local`. Reporté : le conteneur
+  monte le worktree lié (sécurité équivalente) ; on clonera seulement si un build a besoin de git en conteneur.
 - **B2 — Image défaut** : `docker/sandbox/Dockerfile.repo-default` + `jm.sh --build-docker repo-default` (+ `all`).
 - **B3 — `repo_exec` + conteneur projet** : outil + `_start_repo_container` (mount `/app`, network=none) ; grants migrate ; tests (mock docker).
 - **B4 — Build per-projet** : résolution `.jm/Dockerfile`/config, build+tag+rebuild-on-hash, fallback défaut ; garde-fou confiance.

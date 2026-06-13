@@ -27,6 +27,7 @@ from . import manage_memory as _manage_memory_mod
 from . import news as _news_mod
 from . import pypi as _pypi_mod
 from . import repo_edit as _repo_edit_mod
+from . import repo_exec as _repo_exec_mod
 from . import repo_git as _repo_git_mod
 from . import repo_glob as _repo_glob_mod
 from . import repo_graph_refresh as _repo_graph_refresh_mod
@@ -156,6 +157,11 @@ def build_registry(
             _repo_graph_refresh_mod.make_spec(conv_folder),
         ):
             registry[repo_spec.name] = repo_spec
+        # repo_exec (project sandbox) needs the conv id + the agent's image.
+        repo_exec_spec = _repo_exec_mod.make_spec(
+            conv_folder, conv_id=conv_id, image=sandbox_image,
+        )
+        registry[repo_exec_spec.name] = repo_exec_spec
     # MCP-sourced tools (discovered from hosted servers) — added last; names are
     # namespaced (mcp__server__tool) so they can't collide with native tools.
     for spec in extra_tools or []:

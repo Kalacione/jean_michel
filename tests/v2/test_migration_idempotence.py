@@ -72,6 +72,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_133_project_repo.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_134_code_router.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_135_code_space_doctrine.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_136_repo_exec.sql")
     yield conn
     conn.close()
 
@@ -649,6 +650,26 @@ def test_repo_git_granted_to_coding_workers(v2_migrated_db, v2_consolidated_db):
             )
         }
         assert {"code-runner", "code-runner-node"} <= agents
+
+
+# ---- migrate_136 : repo_exec (project sandbox) -----------------------------
+
+
+def test_repo_exec_granted_and_doctrine_names_it(v2_migrated_db, v2_consolidated_db):
+    """migrate_136: repo_exec granted to both coding workers, and the doctrine
+    paradigm now names the project sandbox (repo_exec)."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        agents = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_tools t JOIN agents a ON a.id=t.agent_id "
+                "WHERE t.tool_code='repo_exec'"
+            )
+        }
+        assert {"code-runner", "code-runner-node"} <= agents
+        content = db.execute(
+            "SELECT content FROM paradigms WHERE code='code_space_doctrine'"
+        ).fetchone()["content"]
+        assert "repo_exec" in content and "PROJECT SANDBOX" in content
 
 
 # ---- migrate_132 : comparator delegation whitelist -------------------------
