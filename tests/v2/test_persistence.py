@@ -39,6 +39,27 @@ def test_load_messages_missing_file_returns_empty_list(conv_folder: Path):
     assert load_messages(conv_folder) == []
 
 
+def test_save_messages_strips_transient_injections(conv_folder: Path):
+    """TODO/repo recaps + orchestrator nudges (role:user) must NOT be persisted —
+    they'd show as fake user bubbles in the web UI on reload. Compaction summaries
+    (`[ORCHESTRATOR CONTEXT COLLAPSE]`) ARE real history and must stay."""
+    messages = [
+        {"role": "user", "content": "real question"},
+        {"role": "user", "content": "[TODO-RECAP] Plan (1/3 done)"},
+        {"role": "user", "content": "[CODE-REPO] A code repository is attached…"},
+        {"role": "user", "content": "[ORCHESTRATOR] You must terminate via report_back."},
+        {"role": "assistant", "content": "real answer"},
+        {"role": "user", "content": "[ORCHESTRATOR CONTEXT COLLAPSE]\nsummary…"},  # kept
+    ]
+    save_messages(conv_folder, messages)
+    loaded = load_messages(conv_folder)
+    assert [m["content"] for m in loaded] == [
+        "real question", "real answer", "[ORCHESTRATOR CONTEXT COLLAPSE]\nsummary…",
+    ]
+    # The in-memory list passed in is NOT mutated (the current turn still needs it).
+    assert len(messages) == 6
+
+
 def test_save_messages_creates_parent_dir(tmp_path: Path):
     # Use a sub-folder that doesn't exist yet.
     folder = tmp_path / "new_conv"

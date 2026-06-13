@@ -111,17 +111,37 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+# Transient `role:user` prompt-assembly injections — re-added fresh each turn by
+# the hooks/orchestrator. They are NOT conversation history: never persist them
+# (they'd bloat messages.json + render as fake user bubbles in the web UI on
+# reload). The `]` on `[ORCHESTRATOR]` is deliberate — it matches the one-shot
+# nudges but NOT the compaction summaries `[ORCHESTRATOR CONTEXT COLLAPSE]` /
+# `[ORCHESTRATOR AUTOCOMPACT]`, which ARE real (compacted) history and must stay.
+_TRANSIENT_USER_PREFIXES = ("[TODO-RECAP]", "[CODE-REPO]", "[ORCHESTRATOR]")
+
+
+def _is_transient_injection(m: dict[str, Any]) -> bool:
+    if m.get("role") != "user":
+        return False
+    content = m.get("content")
+    return isinstance(content, str) and content.lstrip().startswith(_TRANSIENT_USER_PREFIXES)
+
+
 def save_messages(conv_folder: Path, messages: list[dict[str, Any]]) -> None:
     """Atomic write of `messages.json` (main agent messages[]).
 
-    Strips any transient ``images`` (base64 vision input) so the conversation
-    file stays text-only — images live in the workspace, never in messages.json
-    (cf. DevNotes/WEBUI/03).
+    Drops transient prompt-assembly injections (TODO/repo recaps, orchestrator
+    nudges) — they are re-injected fresh each turn and must never become history.
+    Strips any transient ``images`` (base64 vision input) so the conversation file
+    stays text-only — images live in the workspace, never in messages.json (cf.
+    DevNotes/WEBUI/03). The in-memory list is untouched (the current turn still
+    sees the injections); only the persisted copy is sanitized.
     """
     path = conv_folder / _MESSAGES_FILE
     sanitized = [
         {k: v for k, v in m.items() if k != "images"} if "images" in m else m
         for m in messages
+        if not _is_transient_injection(m)
     ]
     _atomic_write_text(path, json.dumps(sanitized, ensure_ascii=False, indent=2))
 

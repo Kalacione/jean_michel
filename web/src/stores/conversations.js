@@ -3,6 +3,17 @@ import { defineStore } from 'pinia'
 import { api } from '@/api'
 import { connectTurn } from '@/ws'
 
+// Transient prompt-assembly injections (TODO/repo recaps, orchestrator nudges)
+// are role:user but are NOT conversation history — hide them from the chat view.
+// (Backend now also strips them from messages.json; this also cleans already-
+// persisted conversations on load.) Mirrors persistence._TRANSIENT_USER_PREFIXES.
+const INJECTION_PREFIXES = ['[TODO-RECAP]', '[CODE-REPO]', '[ORCHESTRATOR]']
+const isInjection = m =>
+  m.role === 'user' && typeof m.content === 'string' &&
+  INJECTION_PREFIXES.some(p => m.content.trimStart().startsWith(p))
+const chatBubbles = loaded =>
+  loaded.filter(m => (m.role === 'user' || m.role === 'assistant') && !isInjection(m))
+
 export const useConvStore = defineStore('conversations', () => {
   const list = ref([])
   const currentId = ref(null)
@@ -93,7 +104,7 @@ export const useConvStore = defineStore('conversations', () => {
     const meta = list.value.find(c => c.id === id)
     vocal.value = meta?.mode === 'vocal'
     const loaded = (await api.messages(id)).messages
-    messages.value = loaded.filter(m => m.role === 'user' || m.role === 'assistant')
+    messages.value = chatBubbles(loaded)
     trace.value = []
     dispatch.value = null
     busy.value = false
@@ -180,7 +191,7 @@ export const useConvStore = defineStore('conversations', () => {
   async function reloadCurrent () {
     if (!currentId.value) return
     const loaded = (await api.messages(currentId.value)).messages
-    messages.value = loaded.filter(m => m.role === 'user' || m.role === 'assistant')
+    messages.value = chatBubbles(loaded)
     trace.value = []
     dispatch.value = null
     await fetchWsFiles()
