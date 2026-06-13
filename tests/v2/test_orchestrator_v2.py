@@ -966,3 +966,22 @@ def test_subagent_does_not_clobber_main_conv_files(tmp_path: Path):
     assert not (tmp_path / "state.json").exists()
     # ... but the subagent audit file IS written.
     assert list(tmp_path.glob("subagent_*.json"))
+
+
+def test_subagent_prose_report_back_aborts_low_not_loop(tmp_path: Path):
+    """A subagent that emits report_back as PROSE (no tool_call) must abort low
+    after ≤3 turns — not loop to max_iterations (bug B, conv dfcafc75)."""
+    sub_agent = make_agent("code-analyst", role="specialist")
+    parent_state = ConversationState(depth_current=0)
+    # Always prose, never a real tool_call : would loop 50× before the fix.
+    prose = assistant_response('report_back(summary="introuvable", confidence="low")')
+    mock = MockClient(script=[prose] * 50)
+    result = spawn_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, tools_registry={}, llm_client=mock,
+        briefing="list deps from v1_analysis.md", support_files=[], expected="",
+        parent_state=parent_state, parent_agent_code="code-router",
+    )
+    assert result.confidence == "low"
+    assert "report_back" in (result.low_confidence_reason or "")
+    # Bounded : 2 correctives + the 3rd no-tool-call aborts → ≤3 LLM calls, not 50.
+    assert len(mock.calls_v2) <= 3

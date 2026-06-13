@@ -387,6 +387,7 @@ def _run_agent_loop(
     # giving up.
     empty_main_turns = 0
     plan_no_todo_turns = 0  # PLAN mode : tried to conclude without writing the plan
+    no_tool_call_turns = 0  # subagent : emitted prose instead of a report_back tool_call
 
     def _persist() -> None:
         # Subagents must NOT clobber the main conv files (messages.json/state.json):
@@ -520,7 +521,15 @@ def _run_agent_loop(
                 _persist()
                 return _LoopOutcome(kind="final_answer", content=resp.content)
             # Subagent emitted no tool_call → it MUST terminate via report_back.
-            # Inject a corrective user message and continue.
+            # Small models sometimes "narrate" report_back as prose instead of
+            # emitting the tool_call → the corrective would otherwise loop to
+            # max_iterations (50). Bound it : 2 correctives, then abort low.
+            no_tool_call_turns += 1
+            if no_tool_call_turns > 2:
+                return _LoopOutcome(
+                    kind="aborted",
+                    reason="subagent did not terminate via report_back (emitted prose instead)",
+                )
             messages.append({
                 "role": "user",
                 "content": (
