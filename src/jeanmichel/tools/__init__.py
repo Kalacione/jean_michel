@@ -152,17 +152,22 @@ def build_registry(
             _repo_glob_mod.make_spec(conv_folder),
             _repo_edit_mod.make_spec(conv_folder),
             _repo_write_mod.make_spec(conv_folder),
-            _repo_test_mod.make_spec(conv_folder),
             _repo_git_mod.make_spec(conv_folder),
         ):
             registry[repo_spec.name] = repo_spec
-        # repo_exec (project sandbox) needs the conv id + the project's Dockerfile
-        # (from project settings ; empty → repo-default image).
+        # repo_exec (project sandbox) + repo_test both need the conv id + the
+        # project's Dockerfile (from project settings ; empty → repo-default image,
+        # which sends repo_test to the host path).
         repo_exec_spec = _repo_exec_mod.make_spec(
             conv_folder, conv_id=conv_id, project_id=memory_project_id,
             dockerfile=project_dockerfile,
         )
         registry[repo_exec_spec.name] = repo_exec_spec
+        repo_test_spec = _repo_test_mod.make_spec(
+            conv_folder, conv_id=conv_id, project_id=memory_project_id,
+            dockerfile=project_dockerfile,
+        )
+        registry[repo_test_spec.name] = repo_test_spec
     # MCP-sourced tools (discovered from hosted servers) — added last; names are
     # namespaced (mcp__server__tool) so they can't collide with native tools.
     for spec in extra_tools or []:

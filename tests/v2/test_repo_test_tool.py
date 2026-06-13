@@ -14,7 +14,7 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from jeanmichel import config, worktree  # noqa: E402
-from jeanmichel.tools import build_registry, repo_test  # noqa: E402
+from jeanmichel.tools import build_registry, repo_exec, repo_test  # noqa: E402
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 
@@ -76,6 +76,64 @@ def test_repo_test_reports_failure_structured(wt):
 def test_repo_test_no_worktree(conv_folder):
     out = json.loads(repo_test.make_spec(conv_folder).handler())
     assert out["error_code"] == "no_worktree"
+
+
+# ---- project container branch (B7) ------------------------------------------
+
+
+@requires_git
+def test_repo_test_runs_in_project_container(wt, monkeypatch):
+    """Custom project image → tests run via `docker exec` in the shared sandbox,
+    NOT on the host."""
+    conv, _ = wt
+    calls = {}
+
+    def fake_resolve(_conv, _pid, _df):
+        return "jeanmichel-sandbox:project-7-deadbeef"  # ≠ repo-default
+
+    def fake_running(_name):
+        return True  # pretend the container is already up
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="1 passed in 0.01s\n", stderr="")
+
+    monkeypatch.setattr(repo_exec, "_resolve_image", fake_resolve)
+    monkeypatch.setattr(repo_exec, "_container_running", fake_running)
+    monkeypatch.setattr(repo_test.subprocess, "run", fake_run)
+
+    out = json.loads(
+        repo_test.make_spec(conv, conv_id="c1", project_id=7, dockerfile="FROM x").handler()
+    )
+    assert out["passed"] is True
+    assert out["counts"].get("passed") == 1
+    # Went through docker exec in the project's container, not the host.
+    assert calls["cmd"][:3] == ["docker", "exec", repo_exec._container_name("c1")]
+    assert calls["cmd"][3:5] == ["bash", "-lc"]
+
+
+@requires_git
+def test_repo_test_default_image_stays_on_host(wt, monkeypatch):
+    """repo-default image (no project Dockerfile) → host path, no docker exec."""
+    conv, _ = wt
+    seen = {}
+
+    real_run = subprocess.run
+
+    def spy_run(cmd, **kwargs):
+        seen.setdefault("first", cmd)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(
+        repo_exec, "_resolve_image", lambda *a: repo_exec._REPO_DEFAULT_IMAGE
+    )
+    monkeypatch.setattr(repo_test.subprocess, "run", spy_run)
+
+    out = json.loads(
+        repo_test.make_spec(conv, conv_id="c1", project_id=7, dockerfile="").handler()
+    )
+    assert out["passed"] is True
+    assert seen["first"][0] != "docker"  # host interpreter, not a container
 
 
 # ---- registry ---------------------------------------------------------------
