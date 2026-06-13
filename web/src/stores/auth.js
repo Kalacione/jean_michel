@@ -7,6 +7,7 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref(null)
   const error = ref('')
   const loading = ref(false)
+  const ready = ref(false) // startup token validation done (fetchMe resolved)
   const isAuthed = computed(() => !!token.value)
 
   async function login (username, password) {
@@ -32,14 +33,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // Validate a persisted token on startup ; drop it if the daemon rejects it.
+  // `ready` flips true once done so the app gates rendering on a VALIDATED token
+  // (else a stale token would mount the main UI, fire failing calls, and blank
+  // the screen instead of falling back to the login view).
   async function fetchMe () {
-    if (!token.value) return
     try {
-      user.value = (await api.me()).user
+      if (token.value) user.value = (await api.me()).user
     } catch {
       logout()
+    } finally {
+      ready.value = true
     }
   }
 
-  return { token, user, error, loading, isAuthed, login, logout, fetchMe }
+  return { token, user, error, loading, ready, isAuthed, login, logout, fetchMe }
 })

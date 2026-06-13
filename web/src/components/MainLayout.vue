@@ -85,17 +85,24 @@
 
   let notif = null
   let notifClosing = false
+  let notifTries = 0
 
   function openNotifications () {
     notif = connectNotifications({
       notification: m => {
+        notifTries = 0 // healthy connection
         if (m.kind !== 'project_image_build') return
         const name = m.project_name || 'projet'
         if (m.state === 'ok') snackbar.show(`Image du sandbox « ${name} » prête.`, 'success')
         else if (m.state === 'failed') snackbar.show(`Build de « ${name} » échoué : ${m.error || 'voir les logs'}`, 'error', 8000)
         else if (m.state === 'deferred') snackbar.show(`Image de « ${name} » : sera buildée à la 1ʳᵉ utilisation.`, 'info')
       },
-      close: () => { if (!notifClosing) setTimeout(openNotifications, 3000) },
+      // Reconnect on transient drops only — stop when logging out / logged out /
+      // after repeated failures (invalid token, daemon down) to avoid a hot loop.
+      close: () => {
+        if (notifClosing || !auth.isAuthed || notifTries++ > 5) return
+        setTimeout(openNotifications, 3000)
+      },
     })
   }
 

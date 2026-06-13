@@ -1,6 +1,11 @@
 <template>
   <v-app>
-    <LoginView v-if="!auth.isAuthed" />
+    <!-- Wait for startup token validation before choosing a view, so a stale
+         token never mounts the main UI (which would fail + blank the screen). -->
+    <v-container v-if="!auth.ready" class="fill-height" fluid>
+      <v-row align="center" justify="center"><v-progress-circular indeterminate /></v-row>
+    </v-container>
+    <LoginView v-else-if="!auth.isAuthed" />
     <MainLayout v-else />
   </v-app>
 </template>
