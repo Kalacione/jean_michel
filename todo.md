@@ -4,8 +4,6 @@
 
 ## a verifier
 
-- verifier qu'on a bien dans l'env les valeurs par defaut des routeurs "jean-michel" et code parametrables et definis
-
 ## a faire
 
 - rafraichir le paradigm viewer/editor
