@@ -104,6 +104,7 @@ jeanmichel.db-wal
 *.db
 *.db-shm
 *.db-wal
+*.db.bak.*
 cli_profile.toml
 conversations/*
 # MCP server config (no secrets — auth is via env-var refs — but kept local;
