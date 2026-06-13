@@ -4,7 +4,6 @@
 
 ## A verifier
 
-- [fix appliqué, à valider navigateur] relog token périmé : reload avec un token stale → doit afficher le login (plus d'écran blanc) ; spinner bref pendant la validation du token au démarrage (App gate sur `auth.ready`)
 - graphify vraiment utilise / utile (sinon ca degage) ?
 - on monte bien le workspace et le repo dans la sandbox (genre pour ecrire un script python d'action et le faire tourner sur le repo, en respectant le bon point de montage des 2; exemple un scrip python qui liste des elements du repo doit etre execute avec les bons chemins)
 
