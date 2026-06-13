@@ -79,7 +79,7 @@ _CONTROL_POINTS: list[dict[str, str]] = [
     {"name": "Repo edit gates", "kind": "gate", "where": "src/jeanmichel/tools/_repo.py · edit_preflight + repo_edit/repo_write",
      "governs": "REPO_PROTECTED_PATHS", "summary": "read-before-edit + freshness (mtime) + protected-path deny — in the tool layer."},
     {"name": "Context packet (CRP)", "kind": "pipeline", "where": "src/jeanmichel/context_packet.py",
-     "governs": "—", "summary": "deterministic per-delegation context (graphify + grep + source + git-diff + memory); code mode only."},
+     "governs": "—", "summary": "deterministic per-delegation context (grep + source + git-diff + memory); code mode only."},
     {"name": "repo_test", "kind": "code-mode", "where": "src/jeanmichel/tools/repo_test.py",
      "governs": "REPO_TEST_CMD, REPO_TEST_TIMEOUT", "summary": "structured test result (passed/failed/counts) instead of raw stdout."},
     {"name": "Deliberation trigger", "kind": "gate", "where": "src/jeanmichel/deliberation.py · should_deliberate",

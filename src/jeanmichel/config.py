@@ -38,7 +38,6 @@ REPO_PROTECTED_PATHS = (
     "backups/",
     "voice_models/",
     ".venv/",
-    "graphify-out/",
     ".git/",
 )
 

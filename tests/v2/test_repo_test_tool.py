@@ -1,4 +1,4 @@
-"""Tests for the P3 tools: repo_test (structured test runner) + repo_graph_refresh."""
+"""Tests for repo_test (structured test runner)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT / "src"))
 
 from jeanmichel import config, worktree  # noqa: E402
-from jeanmichel.tools import build_registry, repo_graph_refresh, repo_test  # noqa: E402
+from jeanmichel.tools import build_registry, repo_test  # noqa: E402
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
 
@@ -77,26 +77,10 @@ def test_repo_test_no_worktree(conv_folder):
     assert out["error_code"] == "no_worktree"
 
 
-# ---- repo_graph_refresh -----------------------------------------------------
-
-
-@requires_git
-def test_repo_graph_refresh_unavailable(wt, monkeypatch):
-    # Force graphify "absent" so the test never shells out to a real build.
-    monkeypatch.setattr(repo_graph_refresh.shutil, "which", lambda name: None)
-    out = json.loads(repo_graph_refresh.make_spec(wt[0]).handler())
-    assert out["error_code"] == "graphify_unavailable"
-
-
-def test_repo_graph_refresh_no_worktree(conv_folder):
-    out = json.loads(repo_graph_refresh.make_spec(conv_folder).handler())
-    assert out["error_code"] == "no_worktree"
-
-
 # ---- registry ---------------------------------------------------------------
 
 
 @requires_git
-def test_registry_includes_p3_tools(wt):
+def test_registry_includes_repo_test(wt):
     reg = build_registry(wt[0])
-    assert "repo_test" in reg and "repo_graph_refresh" in reg
+    assert "repo_test" in reg

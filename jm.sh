@@ -200,34 +200,8 @@ _truthy() {
   esac
 }
 
-# Optionally auto-start the local graphify MCP server (opt-in, idempotent).
-# Gated by JEANMICHEL_GRAPHIFY_ENABLED (env or .env) ; no-op otherwise. When the
-# port is already listening we reuse it ; the server is a persistent local dev
-# service (stop it with: pkill -f graphify.serve).
-maybe_start_graphify() {
-  _truthy "$(dotenv_val JEANMICHEL_GRAPHIFY_ENABLED)" || return 0
-  local port; port="$(dotenv_val GRAPHIFY_MCP_PORT)"; port="${port:-8765}"
-  if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
-    echo "✓ graphify : serveur MCP déjà en écoute (127.0.0.1:${port})"
-    return 0
-  fi
-  if [ ! -f "${PROJECT_ROOT}/graphify-out/graph.json" ]; then
-    echo "ℹ graphify activé mais pas de graphe — lance ./graphify.sh build (serveur non démarré)." >&2
-    return 0
-  fi
-  echo "▶ graphify : démarrage du serveur MCP en arrière-plan (127.0.0.1:${port}, log: graphify-out/serve.log)"
-  nohup "${PROJECT_ROOT}/graphify.sh" serve "${port}" >"${PROJECT_ROOT}/graphify-out/serve.log" 2>&1 &
-  disown 2>/dev/null || true
-  # Attend que le port réponde (cold start uv) avant que le client MCP se connecte.
-  for _ in 1 2 3 4 5 6 7 8; do
-    (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null && break
-    sleep 1
-  done
-}
-
 cmd_cli() {
   ensure_venv
-  maybe_start_graphify
   exec jean-michel "$@"
 }
 
@@ -236,7 +210,6 @@ cmd_serve() {
   # Runs in the foreground — "un daemon python à la main". Binds 0.0.0.0:8000
   # by default (override via JEANMICHEL_API_HOST / JEANMICHEL_API_PORT).
   ensure_venv
-  maybe_start_graphify
   exec jean-michel-serve "$@"
 }
 

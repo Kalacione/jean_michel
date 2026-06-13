@@ -1,5 +1,23 @@
 # Évaluation — graphify pour Jean-Michel (repo + outil code mode)
 
+> **⚠️ DÉ-CÂBLÉ DU SYSTÈME le 2026-06-13.** Vérification : graphify était **câblé mais inerte**
+> (0 appel `mcp__graphify__*` dans les runs réels ; les agents naviguent via repo_grep/read/glob/git),
+> il **s'auto-démarrait à chaque `jm.sh`** (serveur MCP = RAM pour rien), et le « graphify tiré par le LLM »
+> est contraire à la thèse (contexte **poussé** déterministe via la CRP, pas tiré au jugement du LLM). Donc
+> retiré : paradigme `graphify_codebase_navigation` (migrate_139), tranche CRP `_graphify_slice`, outil
+> `repo_graph_refresh`, entrée `mcp_servers.toml`, auto-start `jm.sh`, flags `.env`.
+>
+> **Ce que ça fait** : un graphe de code interrogeable (qui appelle X, qu'est-ce qui casse si je change X,
+> god-nodes…), via le CLI/serveur MCP graphify (https://github.com/safishamsi/graphify).
+>
+> **Comment le ré-instancier** : `./graphify.sh build` puis `./graphify.sh serve` (les scripts sont
+> conservés, dé-câblés). **Futur propre = option PAR-PROJET via le Dockerfile du projet** (cf. C3,
+> `etage_B_project_sandbox.md`) : un gros repo qui en veut l'installe dans son image (ou via une image
+> docker prête si elle existe), et on rebranche un paradigme/outil dédié.
+>
+> **On y réinvestit seulement si** : gain de perf **mesuré** + ça marche sur **tous les repos**. Sinon,
+> laissé de côté. (Évaluation d'origine ci-dessous, conservée comme référence.)
+
 ## Context
 
 L'utilisateur a repéré **graphify** (https://github.com/safishamsi/graphify) et veut savoir

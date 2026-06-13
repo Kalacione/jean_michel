@@ -78,8 +78,8 @@ def _worktree_source_repo(wt: Path) -> Path | None:
     """The ORIGINAL repo a checkout came from.
 
     For a standalone clone (the current model) that's ``remote.origin.url`` —
-    the original path, where ``.venv`` and the graphify graph live. Falls back to
-    the git-common-dir parent for a legacy LINKED worktree.
+    the original path, where ``.venv`` lives. Falls back to the git-common-dir
+    parent for a legacy LINKED worktree.
     """
     try:
         r = subprocess.run(

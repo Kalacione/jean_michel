@@ -57,18 +57,7 @@ def test_unmapped_agent_payload_excludes_mcp(tmp_db_v2, monkeypatch):
     assert "mcp__fake__do" not in payload_names
 
 
-# ---- enabled_env gating + tool-gated paradigms (graphify) -------------------
-
-def _graphify_manager() -> MCPManager:
-    """Fake manager exposing mcp__graphify__query_graph in category 'code'
-    (→ granted to jean-michel + code-fetcher)."""
-    servers = {"graphify": _ServerCfg(name="graphify", url="x", category="code")}
-    mgr = MCPManager(servers, {"code": ["jean-michel", "code-fetcher"]})
-    mgr._build_specs(
-        servers["graphify"],
-        [SimpleNamespace(name="query_graph", description="d", inputSchema={"type": "object"})],
-    )
-    return mgr
+# ---- enabled_env gating -----------------------------------------------------
 
 
 def test_enabled_env_gates_server(monkeypatch):
@@ -83,21 +72,3 @@ def test_enabled_env_gates_server(monkeypatch):
     assert cfg.disabled() is False
     # No enabled_env declared → never gated.
     assert _ServerCfg(name="g", url="x", category="code").disabled() is False
-
-
-def test_graphify_paradigm_hidden_without_tool(tmp_db_v2):
-    """requires_tool gate : the graphify paradigm is absent when no graphify tool is granted."""
-    with db.connect() as conn:
-        jm = load_agent_spec_v2(conn, "jean-michel", mode="code")
-    assert "mcp__graphify__" not in jm.system_prompt
-
-
-def test_graphify_paradigm_shown_with_tool(tmp_db_v2, monkeypatch):
-    """When the graphify tool is granted this session, its routing paradigm appears."""
-    monkeypatch.setattr(mcp_client, "_manager", _graphify_manager())
-    with db.connect() as conn:
-        jm = load_agent_spec_v2(conn, "jean-michel", mode="code")
-        cf = load_agent_spec_v2(conn, "code-fetcher", mode="code")
-    assert "mcp__graphify__query_graph" in jm.tool_grants
-    assert "mcp__graphify__" in jm.system_prompt          # paradigm content injected
-    assert "mcp__graphify__" in cf.system_prompt          # bound to code-fetcher too

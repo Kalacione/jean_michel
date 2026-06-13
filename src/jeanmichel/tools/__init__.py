@@ -30,7 +30,6 @@ from . import repo_edit as _repo_edit_mod
 from . import repo_exec as _repo_exec_mod
 from . import repo_git as _repo_git_mod
 from . import repo_glob as _repo_glob_mod
-from . import repo_graph_refresh as _repo_graph_refresh_mod
 from . import repo_grep as _repo_grep_mod
 from . import repo_read as _repo_read_mod
 from . import repo_test as _repo_test_mod
@@ -155,7 +154,6 @@ def build_registry(
             _repo_write_mod.make_spec(conv_folder),
             _repo_test_mod.make_spec(conv_folder),
             _repo_git_mod.make_spec(conv_folder),
-            _repo_graph_refresh_mod.make_spec(conv_folder),
         ):
             registry[repo_spec.name] = repo_spec
         # repo_exec (project sandbox) needs the conv id + the project's Dockerfile

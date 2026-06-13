@@ -239,21 +239,10 @@ INSERT INTO paradigms VALUES(147,28,'critical_coder_method','Critical coder meth
 INSERT INTO paradigms VALUES(148,12,'sergent_kiss_gate','Sergent KISS gate','You are the anti-over-engineering gate. You receive a proposed approach (or a diff) together with its critiques. Decide whether it is the SIMPLEST design that solves EXACTLY what was asked: no speculative generality, no features that were not requested, no abstraction or layer that does not earn its keep. Verdict via report_back: confidence=high or medium means PASS (appropriately simple); confidence=low means REWORK — put the specific cuts to make in low_confidence_reason (drop this layer, inline this helper, delete this option). If the task was trivial enough that this deliberation was unnecessary, say so. Be brief and decisive.','P5: the KISS gate — turns over-engineering into a structured PASS/REWORK verdict via report_back confidence (no hallucinated score, cf. convergence_gate lesson).',0,41,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
 INSERT INTO paradigms VALUES(149,29,'code_space_doctrine','Code space doctrine','In code mode you work on the project''s REPOSITORY, checked out in an isolated git worktree — that is where the real work and the files you create belong. Distinct spaces; do not confuse them. REPOSITORY (the attached repo): read, search, and find its files with repo_read / repo_grep / repo_glob, edit them with repo_edit / repo_write, inspect its history with repo_git (log / show / diff / status / blame), and run its tests with repo_test. This is the source of truth and where the bulk of the task happens. PROJECT SANDBOX (repo_exec): to RUN arbitrary commands against the attached repo — build, lint, run a script, move/rename/delete files — use repo_exec; it runs inside a per-project container that mounts the repo, offline and confined (no network, no host access). WORKSPACE (the per-conversation scratch, the workspace_* tools): use it only for reports, notes, or throwaway snippets — NOT as the place the task''s code lives when a repo is attached. SANDBOX (bash_sandbox): a locked, network-less container that mounts ONLY the scratch workspace and CANNOT see the repository; use it solely to run generated or throwaway code you wrote in the workspace. To inspect the repo use the repo_* tools (repo_git for git); to run commands against it use repo_exec; never bash_sandbox for the repo.','Étage A / code chain audit: a high-priority code-only doctrine that resolves the contradiction between the loud sandbox/workspace-centric paradigms and the buried repo paradigms, so the worker uses the repo (repo_* tools) instead of defaulting to bash_sandbox.',0,8,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
 INSERT INTO paradigms VALUES(150,14,'git_checkpoint_discipline','Git checkpoint discipline','After a coherent change that you have tested green in code mode, checkpoint it on the conversation branch via repo_exec: stage and commit your work (e.g. git add -A && git commit -m with a concise, specific message). The branch jm/conv-<id> IS the deliverable and your undo — prefer small, working commits over one giant change, and never commit a failing test suite. Review what changed with repo_git (status / diff) before committing.','Étage C/C1: the checkout is a clone with a committer identity, so the worker can git-commit via repo_exec; checkpointing gives a reviewable history + real undo (the git safety-net thesis).',0,40,1,'2026-06-12 00:00:00','2026-06-12 00:00:00');
-INSERT INTO paradigms VALUES(144,29,'graphify_codebase_navigation','Graphify codebase navigation','- This repo has a queryable structure graph exposed by the graphify MCP tools
-  (mcp__graphify__*). For STRUCTURAL questions about the codebase — who calls X, what
-  breaks if I change X, where does a symbol/feature live, how do modules connect — query
-  the graph BEFORE grepping the tree blindly.
-- get_node / get_neighbors / shortest_path / god_nodes / graph_stats are deterministic
-  reads of a prebuilt graph; query_graph answers a natural-language structural question;
-  get_pr_impact finds what a change ripples into.
-- The graph reflects the last build — for very recent edits, trust the live code.','Active uniquement quand graphify est branché (requires_tool mcp__graphify__) — évite de
-grep à l''aveugle sur une grosse codebase. Outil dev externe, opt-in par projet via
-JEANMICHEL_GRAPHIFY_ENABLED.',0,62,1,'2026-06-08 00:00:00','2026-06-08 00:00:00');
 CREATE TABLE paradigm_requires_tool (
   paradigm_id INTEGER PRIMARY KEY REFERENCES paradigms(id) ON DELETE CASCADE,
   tool_prefix TEXT NOT NULL
 );
-INSERT INTO paradigm_requires_tool VALUES(144,'mcp__graphify__');
 CREATE TABLE paradigm_modes (
   paradigm_id INTEGER NOT NULL REFERENCES paradigms(id) ON DELETE CASCADE,
   mode        TEXT    NOT NULL CHECK (mode IN ('analyse','chat','vocal','code')),
@@ -541,8 +530,6 @@ INSERT INTO agent_paradigms VALUES(9,122);
 INSERT INTO agent_paradigms VALUES(6,123);
 INSERT INTO agent_paradigms VALUES(1,124);
 INSERT INTO agent_paradigms VALUES(1,143);
-INSERT INTO agent_paradigms VALUES(1,144);
-INSERT INTO agent_paradigms VALUES(17,144);
 INSERT INTO agent_paradigms VALUES(12,125);
 INSERT INTO agent_paradigms VALUES(6,125);
 INSERT INTO agent_paradigms VALUES(8,125);
@@ -633,7 +620,6 @@ INSERT INTO agent_paradigms VALUES(12,149);
 INSERT INTO agent_paradigms VALUES(18,149);
 INSERT INTO agent_paradigms VALUES(12,150);
 INSERT INTO agent_paradigms VALUES(18,150);
-INSERT INTO agent_paradigms VALUES(12,144);
 -- migrate_131: deliberation agents (critical-coder=19, sergent-kiss=20).
 INSERT INTO agent_paradigms VALUES(19,147);
 INSERT INTO agent_paradigms VALUES(20,148);
@@ -659,7 +645,6 @@ INSERT INTO agent_paradigms VALUES(21,128);
 INSERT INTO agent_paradigms VALUES(21,139);
 INSERT INTO agent_paradigms VALUES(21,142);
 INSERT INTO agent_paradigms VALUES(21,143);
-INSERT INTO agent_paradigms VALUES(21,144);
 CREATE TABLE agent_tools (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   tool_code      TEXT NOT NULL,
@@ -740,9 +725,7 @@ INSERT INTO agent_tools VALUES(17,'repo_grep');
 INSERT INTO agent_tools VALUES(17,'repo_glob');
 -- migrate_129: structured test runner + code-graph refresh for the coding workers.
 INSERT INTO agent_tools VALUES(12,'repo_test');
-INSERT INTO agent_tools VALUES(12,'repo_graph_refresh');
 INSERT INTO agent_tools VALUES(18,'repo_test');
-INSERT INTO agent_tools VALUES(18,'repo_graph_refresh');
 INSERT INTO agent_tools VALUES(12,'repo_git');
 INSERT INTO agent_tools VALUES(18,'repo_git');
 INSERT INTO agent_tools VALUES(12,'repo_exec');

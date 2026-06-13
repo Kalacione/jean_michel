@@ -31,17 +31,6 @@ auth_env = "GITHUB_MCP_TOKEN"                # set the value in .env (a GitHub P
 # auth_header = "Authorization"              # default
 # auth_scheme = "Bearer"                     # default → header "Authorization: Bearer <token>"
 
-# graphify : graphe de code de CE repo, servi en LOCAL par `./graphify.sh serve`
-# (outil dev externe ; cf. docs/20260608_graphify). Démarre le serveur AVANT jean-michel ;
-# s'il est éteint, le client MCP no-op proprement. Port + token figés dans .env
-# (GRAPHIFY_MCP_PORT / GRAPHIFY_MCP_TOKEN). Outils exposés : mcp__graphify__{query_graph,
-# get_node, get_neighbors, get_community, god_nodes, graph_stats, shortest_path, ...}.
-[servers.graphify]
-url = "http://127.0.0.1:8765/mcp"
-category = "code"
-auth_env = "GRAPHIFY_MCP_TOKEN"
-enabled_env = "JEANMICHEL_GRAPHIFY_ENABLED"  # contacté UNIQUEMENT si cette var est vraie (opt-in par projet)
-
 # ---- Category → agents ------------------------------------------------------
 # Which agents receive each category's servers. Adding a new server in an
 # existing category auto-grants it to these agents (no per-server edits).

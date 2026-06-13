@@ -16,7 +16,6 @@ Slices (each deterministic, each capped):
   2. Recent diff      — `git diff` of the worktree (what prior steps changed).
   3. Source           — the support_files, read in cat -n form (read-before-edit anchors).
   4. Lexical (grep)   — ripgrep hits for identifiers named in the briefing.
-  5. Structural       — graphify `explain` for those identifiers (best-effort).
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import worktree
 from .todo import load_todo
 from .tools import _repo
 
@@ -39,10 +37,8 @@ _SRC_LINES_CAP = 160       # max lines read per support file
 _DIFF_LINES_CAP = 120      # max lines of recent diff
 _GREP_HITS_CAP = 12        # max grep hit lines total
 _MAX_IDENTS = 8            # identifiers mined from the briefing
-_MAX_GRAPH_IDENTS = 2      # graphify is the slowest slice — probe few
 _GIT_TIMEOUT_S = 10
 _RG_TIMEOUT_S = 10
-_GRAPHIFY_TIMEOUT_S = 10
 
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 # Common English / prose tokens that look like identifiers but aren't symbols.
@@ -149,34 +145,6 @@ def _grep_slice(root: Path, identifiers: list[str]) -> str:
     return "\n".join(proc.stdout.splitlines()[:_GREP_HITS_CAP])
 
 
-def _graphify_slice(identifiers: list[str], root: Path | None) -> str:
-    """Best-effort structural context via the graphify CLI (deterministic reads).
-
-    Skips silently unless the graphify binary is on PATH and a prebuilt graph
-    exists for the source repo. `explain` reads graph.json — no LLM at runtime.
-    """
-    if root is None or shutil.which("graphify") is None:
-        return ""
-    if not (root / "graphify-out" / "graph.json").exists():
-        return ""
-    blocks: list[str] = []
-    for ident in identifiers[:_MAX_GRAPH_IDENTS]:
-        try:
-            proc = subprocess.run(
-                ["graphify", "explain", f"{ident}()"],
-                cwd=str(root), capture_output=True, text=True, timeout=_GRAPHIFY_TIMEOUT_S,
-            )
-        except (subprocess.SubprocessError, OSError):
-            continue
-        out = (proc.stdout or "").strip()
-        if proc.returncode == 0 and out and "no unique node" not in out.lower():
-            blocks.append(f"### {ident}\n" + "\n".join(out.splitlines()[:25]))
-    if not blocks:
-        return ""
-    # The graph reflects the last build/commit; uncommitted edits live in the diff slice.
-    return "\n\n".join(blocks) + "\n\n(graph = last committed state; see 'Recent changes' for newer edits)"
-
-
 def build_context_packet(
     conv_folder: Path,
     *,
@@ -200,7 +168,6 @@ def build_context_packet(
         sections.append(("Recent changes (git diff)", _recent_diff(root)))
         sections.append(("Source (support files)", _source_slice(conv_folder, root, support_files)))
         sections.append(("Lexical hits (grep)", _grep_slice(root, idents)))
-        sections.append(("Structure (graphify)", _graphify_slice(idents, worktree.source_repo(conv_folder))))
     except Exception as exc:  # noqa: BLE001 — CRP must never break a delegation
         _log.warning("context_packet assembly error: %s", exc)
 

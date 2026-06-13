@@ -132,7 +132,7 @@ def test_git_absent_is_noop(project_repo, conv_folder, monkeypatch):
     "jeanmichel.db", ".env", ".api_secret",
     "conversations/2026/x.json", "backups/dump.sql",
     "voice_models/default.onnx", ".venv/lib/site.py",
-    "graphify-out/graph.json", ".git/config",
+    ".git/config",
     "./jeanmichel.db", "conversations",
 ])
 def test_is_protected_path_blocks(rel):

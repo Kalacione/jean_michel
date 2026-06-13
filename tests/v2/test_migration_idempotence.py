@@ -75,6 +75,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_136_repo_exec.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_137_git_checkpoint.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_138_project_dockerfile.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_139_remove_graphify.sql")
     yield conn
     conn.close()
 
@@ -218,12 +219,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
                                          prefer_repo_tools_over_bash)
     + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate)
     + 1 from migrate_135_code_space_doctrine (code_space_doctrine)
-    + 1 from migrate_137_git_checkpoint (git_checkpoint_discipline).
+    + 1 from migrate_137_git_checkpoint (git_checkpoint_discipline)
+    - 1 from migrate_139_remove_graphify (graphify_codebase_navigation removed).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 126
+    assert row["c"] == 125
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -347,7 +349,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 126
+    assert n == 125
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -525,7 +527,8 @@ def test_migrate_128_idempotent(v2_migrated_db):
 
 
 def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
-    """migrate_129 + schema.sql grant repo_test + repo_graph_refresh to the workers only."""
+    """migrate_129 grants repo_test to the workers only. (repo_graph_refresh was also
+    granted by 129 but removed by migrate_139 — graphify retiré.)"""
     for db in (v2_migrated_db, v2_consolidated_db):
         def codes(tool):
             return {
@@ -535,9 +538,9 @@ def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
                     "WHERE at.tool_code = ?", (tool,)
                 )
             }
-        for tool in ("repo_test", "repo_graph_refresh"):
-            assert codes(tool) >= {"code-runner", "code-runner-node"}, tool
-            assert "code-fetcher" not in codes(tool), tool  # lookup agent doesn't run code
+        assert codes("repo_test") >= {"code-runner", "code-runner-node"}
+        assert "code-fetcher" not in codes("repo_test")  # lookup agent doesn't run code
+        assert codes("repo_graph_refresh") == set()      # removed with graphify (migrate_139)
 
 
 # ---- migrate_130 : code-mode discipline paradigms --------------------------
@@ -571,14 +574,6 @@ def test_code_paradigms_present_gated_and_bound(v2_migrated_db, v2_consolidated_
                 )
             }
             assert {"code-runner", "code-runner-node"} <= agents, (code, agents)
-        # graphify navigation paradigm now bound to the editor too.
-        gx = {
-            r["code"] for r in db.execute(
-                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id = ap.agent_id "
-                "JOIN paradigms p ON p.id = ap.paradigm_id WHERE p.code = 'graphify_codebase_navigation'"
-            )
-        }
-        assert "code-runner" in gx
 
 
 def test_code_paradigms_only_render_in_code_mode(v2_consolidated_db):
@@ -752,7 +747,7 @@ def test_code_router_agent(v2_migrated_db, v2_consolidated_db):
             "SELECT COUNT(*) AS c FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
             "WHERE a.code='code-router'"
         ).fetchone()["c"]
-        assert n_para == 15
+        assert n_para == 14  # 15 à l'origine ; -1 graphify_codebase_navigation (migrate_139)
         targets = {
             r["target_code"] for r in db.execute(
                 "SELECT target_code FROM agent_delegation_targets ad JOIN agents a ON a.id=ad.agent_id "
