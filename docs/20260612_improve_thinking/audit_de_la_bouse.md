@@ -73,25 +73,27 @@ le repo, utiliser les outils repo (pas `bash_sandbox`, il ne voit pas le repo).*
 - **F2a — `repo_git` (read-only : `log/show/diff/status/blame`), hôte, `cwd=worktree`**, calqué verbatim
   sur [repo_test.py:34-55](src/jeanmichel/tools/repo_test.py#L34-L55). Sûr **même en hôte** (sous-commandes
   fixes en lecture seule, pas un shell, ne peut ni écrire ni s'échapper). Débloque à lui seul la requête testée.
-- **F2b — « sandbox projet » = conteneur montant UNIQUEMENT le repo** (`/repo`, `cwd=/repo`), réutilise la
-  machinerie docker de [bash_sandbox.py](src/jeanmichel/tools/bash_sandbox.py) (`jm-sandbox-*`,
-  `_container_running`, `reap_sandboxes`). Shell complet (mv/rm/rename/git/sed/find) **confiné, sans
-  home/clés hôte** → pas d'allowlist castratrice. **Local + SSH unifiés sur un checkout autonome par
-  conversation** (clone : `.git` self-contained → git marche en conteneur, corruption confinée, source
-  jamais montée).
-  - **Provisioning = pattern devcontainer (idée user).** Image de **base** (git + coreutils + runtimes) +
-    `cloud_init.sh` **fourni par le propriétaire du projet** (versionné, ex. `.jm/setup.sh`), exécuté UNE
-    fois à la création. Pas d'images par-projet à maintenir (≠ usine à gaz).
-  - **Paradoxe réseau résolu** : créer le conteneur AVEC réseau → lancer `cloud_init.sh` → **`docker
-    network disconnect`** → tous les `docker exec` de l'agent sont **offline**. Le réseau n'existe que
-    pendant le provisioning d'un script *de confiance* (jamais librement généré+lancé par le LLM →
-    sinon canal d'exfiltration : garde-fou non négociable).
-  - **Cycle de vie** : restart via `_container_running` (existe) ; **arrêt propre** = ajouter
-    `reap_sandboxes(None)` au `_lifespan` daemon ([api/app.py:57-64](src/jeanmichel/api/app.py#L57-L64),
+- **F2b — « sandbox projet » = conteneur PAR PROJET montant le repo** (chemin fixe `/app`, `WORKDIR /app`).
+  Étend la machinerie EXISTANTE `docker/sandbox/` + `jm.sh --build-docker` + colonne `sandbox_image`
+  (aujourd'hui per-variant : `jeanmichel-sandbox:py-alpine`/`:node-alpine`, choisi par agent) — on passe au
+  grain **par-projet**.
+  - **Image par-projet (idée user, meilleure que cloud_init).** Les projets sont hétérogènes (py/node/bun,
+    Node 22≠24) → pas de base unique. Dockerfile fourni par le projet (conventionnel `.jm/Dockerfile` ou
+    référencé en config projet) → buildé en `jeanmichel-sandbox:project-<id>` (rebuild si hash change).
+    **Défaut = alpine minimal (bash+git+coreutils)** si pas de Dockerfile → couvre git/fichiers sans setup.
+  - **Le paradoxe réseau DISPARAÎT** : deps installées au **build** (réseau ON, 1×, caché par layers) → le
+    conteneur de l'agent tourne **`--network=none` dès la naissance**. Plus de provision-puis-disconnect.
+    *Garde-fou* : on build depuis le Dockerfile *commité/propriétaire*, jamais un Dockerfile librement
+    édité-puis-buildé par le LLM avec réseau (surface d'exfiltration au build).
+  - **Droits (piège docker)** : `docker run --user $(id -u):$(id -g)` → fichiers créés = bonne propriété
+    hôte ; HOME écrivable. Shell complet (mv/rm/rename/git/sed/build) **confiné, sans home/clés hôte**.
+  - **Local + SSH unifiés sur un checkout autonome** (clone : `.git` self-contained → git marche en
+    conteneur, corruption confinée, source jamais montée).
+  - **Cycle de vie** : `--rm` + réutilisé tant que vivant (`_container_running`, existe) ; **arrêt propre**
+    = ajouter `reap_sandboxes(None)` au `_lifespan` daemon ([api/app.py:57-64](src/jeanmichel/api/app.py#L57-L64),
     aujourd'hui il ne coupe que MCP) ; **balayage orphelins au démarrage** ; idle-reap déjà là.
-  - *KISS d'abord* : re-run `cloud_init` à chaque recréation (`--rm`) ; cache deps (volume pip/npm) différé.
-- **F2c — (différé) `repo_test` reste hôte** pour la suite de tests tant que F2b n'est pas rodé ;
-  basculera dans le conteneur provisionné une fois F2b en place.
+- **F2c — (naturel une fois F2b en place) `repo_test` bascule DANS le conteneur du projet** (deps présentes,
+  isolation réseau). Reste hôte tant que F2b n'est pas rodé.
 
 **F3 — Réorienter la notice `[CODE-REPO]` + contrat de briefing.**
 Le chemin devient *informatif* ; **interdire** « exécute une commande dans `<path>` » ; préciser que le
@@ -100,13 +102,18 @@ worker inspecte/agit via `repo_*`/`repo_git` (pas de chemin shell). Ajouter les 
 **F4 — (secondaire, si encore observé après F1-F3) garde anti ré-délégation verbatim** (router change
 d'approche/escalade après 2× `low` sur tâche quasi identique).
 
-**Livrable demandé** : rapport versionné `docs/20260613_code_chain_audit/AUDIT.md` (C1-C5 + doctrine + F1-F4).
+**Livrable demandé** : rapport versionné `docs/20260612_improve_thinking/audit_de_la_bouse.md`
+(déjà créé par l'utilisateur — à finaliser : C1-C5 + doctrine + F1-F4 dans leur version à jour).
 
 ## Fichiers
-- **Neuf** : `src/jeanmichel/tools/repo_git.py` (+ `repo_exec.py` si option A), `db/migrations/migrate_135_*.sql`,
-  `docs/20260613_code_chain_audit/AUDIT.md`, `tests/v2/test_repo_git_tool.py`.
-- **Modifiés** : `tools/__init__.py` (registre), `hooks.py` (F3), `db/schema.sql` (miroir grants+paradigmes+
-  paradigm_modes), `tests/v2/test_migration_idempotence.py` (chaîne+compteurs), éventuellement mission DB (F1.4).
+- **Étage A — neuf** : `src/jeanmichel/tools/repo_git.py`, `db/migrations/migrate_135_*.sql`,
+  `tests/v2/test_repo_git_tool.py`. **Modifiés** : `tools/__init__.py` (registre), `hooks.py` (F3),
+  `db/schema.sql` (miroir grants+paradigmes+paradigm_modes), `tests/v2/test_migration_idempotence.py`
+  (chaîne+compteurs), `docs/20260612_improve_thinking/audit_de_la_bouse.md`, éventuellement mission DB (F1.4).
+- **Étage B — neuf** : `src/jeanmichel/tools/repo_sandbox.py` (conteneur projet), Dockerfile défaut
+  `docker/sandbox/Dockerfile.repo-default` (alpine+git), build per-projet dans `jm.sh --build-docker`.
+  **Modifiés** : `worktree.py` (checkout autonome local→clone), `api/app.py` (reap au shutdown + sweep
+  démarrage), `bash_sandbox.py`/lifecycle partagé, config (chemin Dockerfile projet).
 
 ## Vérification (backend `--serve`)
 1. Rejouer « de quand datent les derniers commits ? » → délègue → **`repo_git log`** (pas `bash_sandbox`) →
@@ -122,10 +129,11 @@ d'approche/escalade après 2× `low` sur tâche quasi identique).
    F1 (doctrine des espaces) + F3 (réorientation notice) + **F2a `repo_git` read-only** + `AUDIT.md`.
    → la requête « derniers commits » répond, la chaîne arrête de patiner. *Prérequis du reste : le prompt
    doit déjà enseigner `/repo` et la « sandbox projet ».*
-2. **Étage B — sandbox projet (le gros morceau)** : F2b conteneur (mount repo, provision `cloud_init.sh`,
-   provision-puis-disconnect réseau, checkout autonome local/ssh) + cycle de vie (shutdown propre +
-   balayage orphelins). → intervention complète (mv/rm/rename/git/build), confinée, sans clés hôte.
-3. **Étage C — finitions** : `repo_test` (F2c) bascule dans le conteneur provisionné ; cache deps ;
-   garde anti ré-délégation (F4) si encore observée.
+2. **Étage B — sandbox projet (le gros morceau)** : F2b conteneur PAR PROJET (Dockerfile projet, défaut
+   alpine ; `--network=none` dès la naissance ; mount repo `/app` ; `--user $(id -u):$(id -g)` ; checkout
+   autonome local/ssh) + cycle de vie (shutdown propre + balayage orphelins). → intervention complète
+   (mv/rm/rename/git/build), confinée, sans clés hôte.
+3. **Étage C — finitions** : `repo_test` (F2c) bascule dans le conteneur du projet ; garde anti
+   ré-délégation (F4) si encore observée.
 
 Étage A est livrable et testable seul. B est substantiel (pas « ce soir »). C optionnel/tuning.
