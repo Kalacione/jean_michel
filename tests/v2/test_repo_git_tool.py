@@ -97,3 +97,14 @@ def test_worktree_is_standalone_clone(wt):
     assert (root / ".git").is_dir()
     src = worktree.source_repo(conv)
     assert src is not None and src.resolve() != root.resolve()
+
+
+@requires_git
+def test_worktree_clone_has_committer_identity(wt):
+    """B1/C1: the clone carries a local committer identity so the agent can
+    `git commit` to checkpoint — including from the container (no global config)."""
+    _, root = wt
+    name = subprocess.run(
+        ["git", "-C", str(root), "config", "user.name"], capture_output=True, text=True
+    ).stdout.strip()
+    assert name == "jean-michel"

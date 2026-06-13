@@ -73,6 +73,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_134_code_router.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_135_code_space_doctrine.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_136_repo_exec.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_137_git_checkpoint.sql")
     yield conn
     conn.close()
 
@@ -215,12 +216,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 2 from migrate_130_code_paradigms (repo_intervention_discipline,
                                          prefer_repo_tools_over_bash)
     + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate)
-    + 1 from migrate_135_code_space_doctrine (code_space_doctrine).
+    + 1 from migrate_135_code_space_doctrine (code_space_doctrine)
+    + 1 from migrate_137_git_checkpoint (git_checkpoint_discipline).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 125
+    assert row["c"] == 126
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -344,7 +346,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 125
+    assert n == 126
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -670,6 +672,29 @@ def test_repo_exec_granted_and_doctrine_names_it(v2_migrated_db, v2_consolidated
             "SELECT content FROM paradigms WHERE code='code_space_doctrine'"
         ).fetchone()["content"]
         assert "repo_exec" in content and "PROJECT SANDBOX" in content
+
+
+# ---- migrate_137 : git checkpoint discipline -------------------------------
+
+
+def test_git_checkpoint_discipline_gated_and_bound(v2_migrated_db, v2_consolidated_db):
+    """migrate_137: git_checkpoint_discipline exists, gated to 'code' only, bound
+    to both coding workers."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        modes = {
+            r["mode"] for r in db.execute(
+                "SELECT mode FROM paradigm_modes pm JOIN paradigms p ON p.id=pm.paradigm_id "
+                "WHERE p.code='git_checkpoint_discipline'"
+            )
+        }
+        assert modes == {"code"}
+        agents = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+                "JOIN paradigms p ON p.id=ap.paradigm_id WHERE p.code='git_checkpoint_discipline'"
+            )
+        }
+        assert {"code-runner", "code-runner-node"} <= agents
 
 
 # ---- migrate_132 : comparator delegation whitelist -------------------------

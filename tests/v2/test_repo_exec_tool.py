@@ -102,6 +102,15 @@ def test_repo_exec_empty_command(wt):
 
 
 @requires_git
+def test_repo_exec_refuses_dangerous_footguns(wt):
+    # The container is the real boundary; this tripwire refuses obvious footguns
+    # before they waste a sandbox round (no docker call — fires before start).
+    for bad in ("rm -rf /", "rm -rf ~", ":(){ :|:& };:", "dd if=/dev/zero of=/dev/sda"):
+        out = json.loads(repo_exec.make_spec(wt, conv_id="c1").handler(command=bad))
+        assert out["error_code"] == "dangerous_command", bad
+
+
+@requires_git
 def test_registry_includes_repo_exec(wt):
     reg = build_registry(wt, conv_id="c1")
     assert "repo_exec" in reg

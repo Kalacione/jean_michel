@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -40,6 +41,17 @@ _BUILD_TIMEOUT_S = 600
 _MAX_OUTPUT_BYTES = 16_000
 _MOUNT = "/app"
 _PROJECT_DOCKERFILE = ".jm/Dockerfile"
+
+# Footgun tripwire. NOT the security boundary — the container is (network=none,
+# only /app mounted, no host access). These just refuse a few obviously
+# catastrophic commands before they waste a sandbox round.
+_DANGEROUS = (
+    re.compile(r"\brm\s+-\w*[rf]\w*\s+(-\w+\s+)*(/|/\*|~|~/\*|\$HOME)(\s|$)"),
+    re.compile(r":\(\)\s*\{.*\}\s*;\s*:"),          # fork bomb
+    re.compile(r"\bmkfs(\.\w+)?\b"),
+    re.compile(r"\bdd\b[^\n]*\bof=/dev/"),
+    re.compile(r">\s*/dev/(sd|nvme|hd|mapper)"),
+)
 
 
 def _container_name(conv_id: str) -> str:
@@ -116,6 +128,12 @@ def make_spec(conv_folder: Path, conv_id: str = "", image: str | None = None) ->
             return tool_error("no_worktree", "No code worktree for this conversation.")
         if not (command or "").strip():
             return tool_error("empty_command", "command is required.")
+        if any(p.search(command) for p in _DANGEROUS):
+            return tool_error(
+                "dangerous_command",
+                "Refused: this matches a blocked destructive pattern. The project sandbox already "
+                "confines commands to /app (offline, no host access) — scope your command to the repo.",
+            )
         if not _container_running(container):
             chosen = _resolve_image(conv_folder, img)
             try:

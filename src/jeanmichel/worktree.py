@@ -229,6 +229,14 @@ def create_worktree(
             _git(wt, "checkout", "-q", "-b", branch)
         except subprocess.CalledProcessError:
             _git(wt, "checkout", "-q", branch)
+        # Committer identity local to the clone, so the agent can `git commit` to
+        # checkpoint its work — including from the project sandbox container, which
+        # has no global git config. Best-effort.
+        try:
+            _git(wt, "config", "user.name", "jean-michel")
+            _git(wt, "config", "user.email", "jean-michel@localhost")
+        except (subprocess.SubprocessError, OSError):
+            pass
         return wt
     except (subprocess.SubprocessError, OSError) as exc:
         _log.warning("worktree create failed for %s: %s", conv_folder, exc)
