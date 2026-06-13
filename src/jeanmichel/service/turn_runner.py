@@ -248,7 +248,9 @@ def _run_deep_turn(
             event_emitter(MemoryNearCapacity(current_count=user_count, limit=100))
         main_agent = load_agent_spec_v2(
             conn,
-            "jean-michel",
+            # Dedicated lean code-router in `code` mode (reliable delegation,
+            # no generalist chit-chat) ; jean-michel for analyse/chat/vocal.
+            "code-router" if mode == "code" else "jean-michel",
             mode=mode,
             user_profile_text=profile.render(),
             memory_user_id=memory_user_id,

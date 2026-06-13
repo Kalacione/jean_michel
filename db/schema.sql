@@ -321,6 +321,7 @@ INSERT INTO agents VALUES(17,'code-fetcher','Code fetcher','specialist','Lookup 
 INSERT INTO agents VALUES(18,'code-runner-node','Code Runner (Node)','specialist','Like code-runner but for the Node.js / JavaScript / TypeScript stack: writes JS/TS files to the workspace (NEVER inline) and runs/tests them in the Node Docker sandbox (node, npm, npx). Same write-then-run-then-iterate cycle. When stuck on an error, need an API example, or need to pick an npm package, delegate to `code-fetcher` for a lookup rather than guessing.',0,0.1,1,'jeanmichel-sandbox:node-alpine','2026-06-02 00:00:00','2026-06-02 00:00:00','qwen3-coder:latest');
 INSERT INTO agents VALUES(19,'critical-coder','Critical Coder','specialist','Inspect a coding approach or a diff from ONE assigned angle (thesis / antithesis / synthesis, or a review angle). Verify against the real code with repo_read / repo_grep / repo_glob and the graph; surface unstated assumptions, failure modes, simpler alternatives, and side effects on callers. You do NOT write or run code — you return a focused critical analysis. Generalises critical-thinker to code and architecture.',1,0.2,1,NULL,'2026-06-12 00:00:00','2026-06-12 00:00:00','gemma4:26b');
 INSERT INTO agents VALUES(20,'sergent-kiss','Sergent KISS','specialist','The anti-over-engineering gate. Given a proposed approach (or a diff) and its critiques, decide whether it is the SIMPLEST design that solves exactly what was asked — no speculative generality, no unrequested features, no layer that does not earn its keep. Report PASS via report_back(confidence=high or medium) or REWORK via confidence=low with the precise cuts in low_confidence_reason.',1,0.1,1,NULL,'2026-06-12 00:00:00','2026-06-12 00:00:00',NULL);
+INSERT INTO agents VALUES(21,'code-router','Code Router','router','Router for code mode: you orchestrate work on the ATTACHED code repository — you do NOT write, run, or answer code yourself. Decompose the request into a living TODO (todo_write) and delegate each step to a fresh worker — code-runner (write/run/test in the repo worktree) or code-fetcher (external lookups) — with a precise briefing; the system assembles the repo context for them. Read their report_back, revise the TODO, repeat, then synthesize the result for the human. Never claim you cannot see the repo: delegate.',1,0.2,1,NULL,'2026-06-12 00:00:00','2026-06-12 00:00:00','qwen3:14b');
 CREATE TABLE agent_paradigms (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   paradigm_id    INTEGER NOT NULL REFERENCES paradigms(id) ON DELETE CASCADE,
@@ -632,6 +633,22 @@ INSERT INTO agent_paradigms VALUES(19,52);
 INSERT INTO agent_paradigms VALUES(19,112);
 INSERT INTO agent_paradigms VALUES(19,126);
 INSERT INTO agent_paradigms VALUES(20,126);
+-- migrate_134: code-router (21) — lean code/routing paradigm set (reused rows).
+INSERT INTO agent_paradigms VALUES(21,2);
+INSERT INTO agent_paradigms VALUES(21,14);
+INSERT INTO agent_paradigms VALUES(21,34);
+INSERT INTO agent_paradigms VALUES(21,68);
+INSERT INTO agent_paradigms VALUES(21,77);
+INSERT INTO agent_paradigms VALUES(21,80);
+INSERT INTO agent_paradigms VALUES(21,97);
+INSERT INTO agent_paradigms VALUES(21,121);
+INSERT INTO agent_paradigms VALUES(21,124);
+INSERT INTO agent_paradigms VALUES(21,125);
+INSERT INTO agent_paradigms VALUES(21,128);
+INSERT INTO agent_paradigms VALUES(21,139);
+INSERT INTO agent_paradigms VALUES(21,142);
+INSERT INTO agent_paradigms VALUES(21,143);
+INSERT INTO agent_paradigms VALUES(21,144);
 CREATE TABLE agent_tools (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   tool_code      TEXT NOT NULL,
@@ -668,6 +685,10 @@ INSERT INTO agent_tools VALUES(19,'repo_glob');
 INSERT INTO agent_tools VALUES(19,'workspace_view');
 INSERT INTO agent_tools VALUES(20,'repo_read');
 INSERT INTO agent_tools VALUES(20,'workspace_view');
+-- migrate_134: code-router (21) — owns the PDCA TODO + memory + scratch read.
+INSERT INTO agent_tools VALUES(21,'todo_write');
+INSERT INTO agent_tools VALUES(21,'manage_memory');
+INSERT INTO agent_tools VALUES(21,'workspace_view');
 INSERT INTO agent_tools VALUES(12,'self_inspect_architecture');
 INSERT INTO agent_tools VALUES(12,'workspace_create_file');
 INSERT INTO agent_tools VALUES(12,'workspace_str_replace');
@@ -843,6 +864,10 @@ INSERT INTO agent_delegation_targets VALUES(6,'web-search-specialist','2026-06-1
 INSERT INTO agent_delegation_targets VALUES(6,'wikipedia-specialist','2026-06-12 00:00:00');
 INSERT INTO agent_delegation_targets VALUES(6,'weather-specialist','2026-06-12 00:00:00');
 INSERT INTO agent_delegation_targets VALUES(6,'news-specialist','2026-06-12 00:00:00');
+-- migrate_134: code-router (21) delegates to the code workers.
+INSERT INTO agent_delegation_targets VALUES(21,'code-runner','2026-06-12 00:00:00');
+INSERT INTO agent_delegation_targets VALUES(21,'code-runner-node','2026-06-12 00:00:00');
+INSERT INTO agent_delegation_targets VALUES(21,'code-fetcher','2026-06-12 00:00:00');
 INSERT INTO agent_delegation_targets VALUES(1,'weather-specialist','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'summarizer','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(8,'web-search-specialist','2026-05-28 20:17:15');

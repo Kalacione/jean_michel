@@ -65,13 +65,17 @@ def render_synoptic(conn) -> str:
     }
 
     normal = [a for a in agents if a.code not in _DELIB_AGENTS]
-    router = next((a for a in normal if a.role == "router"), None)
+    routers = [a for a in normal if a.role == "router"]
+    # The code-mode entry (the deliberation edge anchors on it) ; else any router.
+    code_router = next((a for a in routers if a.code == "code-router"), None)
+    delib_anchor = code_router or (routers[0] if routers else None)
 
     lines: list[str] = ["```mermaid", "flowchart TD"]
     lines.append('  User([Human]) --> DISP["Dispatcher · Tier-0 (alexa | deep)"]')
     lines.append('  DISP -->|alexa| ALEXA["Direct answer"]')
-    if router is not None:
-        lines.append(f'  DISP -->|deep| {_nid(router.code)}')
+    for r in routers:
+        edge = "deep · code mode" if r.code == "code-router" else "deep · analyse/chat/vocal"
+        lines.append(f'  DISP -->|{edge}| {_nid(r.code)}')
 
     # Node declarations (label = code + role · model).
     for a in normal:
@@ -86,7 +90,7 @@ def render_synoptic(conn) -> str:
 
     # Deliberation subgraph (engine-invoked on hard code steps).
     present_delib = [c for c in _DELIB_AGENTS if c in by_code]
-    if present_delib and router is not None:
+    if present_delib and delib_anchor is not None:
         lines.append('  subgraph DELIB ["Deliberation · engine-invoked · code mode"]')
         if "critical-coder" in by_code:
             lines.append('    critical_coder["critical-coder<br/>thesis / antithesis / synthesis / review"]')
@@ -95,7 +99,7 @@ def render_synoptic(conn) -> str:
         if {"critical-coder", "sergent-kiss"} <= set(by_code):
             lines.append("    critical_coder --> sergent_kiss")
         lines.append("  end")
-        lines.append(f"  {_nid(router.code)} -. hard code step .-> DELIB")
+        lines.append(f"  {_nid(delib_anchor.code)} -. hard code step .-> DELIB")
 
     # Styling.
     lines.append("  classDef router fill:#e6f3ff,stroke:#0366d6,stroke-width:2px;")

@@ -49,4 +49,4 @@ enabled_env = "JEANMICHEL_GRAPHIFY_ENABLED"  # contacté UNIQUEMENT si cette var
 
 [categories]
 docs = ["jean-michel", "code-fetcher"]
-code = ["jean-michel", "code-fetcher", "code-runner"]
+code = ["jean-michel", "code-fetcher", "code-runner", "code-router"]

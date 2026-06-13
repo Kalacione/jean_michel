@@ -29,9 +29,13 @@ def test_render_synoptic_from_schema(tmp_db_v2):
     assert "jean_michel --> code_runner" in md
     # Reasoner models surface (model_override fetched directly, not via Agent).
     assert "gemma4:26b" in md
-    # Deliberation agents in their own subgraph, engine-invoked.
+    # Two routers: jean-michel (other modes) + code-router (code mode).
+    assert "code_router" in md
+    assert "deep · code mode" in md
+    # Deliberation agents in their own subgraph, anchored on the code router.
     assert "subgraph DELIB" in md
     assert "critical_coder --> sergent_kiss" in md
+    assert "code_router -. hard code step .-> DELIB" in md
     # The comparator whitelist fix (migrate_132) is visible as edges.
     assert "comparator_specialist --> web_search_specialist" in md
     # Roster table present.

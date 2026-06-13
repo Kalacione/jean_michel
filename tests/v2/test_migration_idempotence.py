@@ -70,6 +70,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_131_deliberation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_132_comparator_delegation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_133_project_repo.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_134_code_router.sql")
     yield conn
     conn.close()
 
@@ -614,3 +615,45 @@ def test_projects_repo_columns(v2_migrated_db, v2_consolidated_db):
     for db in (v2_migrated_db, v2_consolidated_db):
         cols = {r["name"] for r in db.execute("PRAGMA table_info(projects)")}
         assert {"code_repo", "repo_kind"} <= cols
+
+
+# ---- migrate_134 : dedicated code-router -----------------------------------
+
+
+def test_code_router_agent(v2_migrated_db, v2_consolidated_db):
+    """migrate_134 + schema.sql: code-router is a router on qwen3:14b, lean
+    paradigm set, delegating to the code workers."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        row = db.execute(
+            "SELECT role, model_override FROM agents WHERE code='code-router' AND active=1"
+        ).fetchone()
+        assert row is not None and row["role"] == "router"
+        assert row["model_override"] == "qwen3:14b"
+        n_para = db.execute(
+            "SELECT COUNT(*) AS c FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+            "WHERE a.code='code-router'"
+        ).fetchone()["c"]
+        assert n_para == 15
+        targets = {
+            r["target_code"] for r in db.execute(
+                "SELECT target_code FROM agent_delegation_targets ad JOIN agents a ON a.id=ad.agent_id "
+                "WHERE a.code='code-router'"
+            )
+        }
+        assert targets == {"code-runner", "code-runner-node", "code-fetcher"}
+
+
+def test_code_router_is_leaner_than_jean_michel(v2_consolidated_db):
+    """The whole point: code-router carries far fewer bound paradigms than the
+    generalist jean-michel (focus → reliable delegation for small models)."""
+    from jeanmichel.orchestrator_v2 import load_agent_spec_v2
+
+    cr = load_agent_spec_v2(v2_consolidated_db, "code-router", mode="code")
+    assert cr.role == "router" and cr.model == "qwen3:14b"
+
+    def n_bound(code):
+        return v2_consolidated_db.execute(
+            "SELECT COUNT(*) AS c FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+            "WHERE a.code=?", (code,)
+        ).fetchone()["c"]
+    assert n_bound("code-router") < n_bound("jean-michel")  # 15 vs 46

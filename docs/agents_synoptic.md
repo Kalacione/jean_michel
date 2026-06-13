@@ -1,6 +1,6 @@
 # Agent synoptic — chaînes logiques
 
-> Généré depuis `jeanmichel.db` le 2026-06-12 19:20 UTC (commit `5f75cb9`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
+> Généré depuis `jeanmichel.db` le 2026-06-13 00:53 UTC (commit `7f2be97`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
 
 Rectangles = maillons LLM · losange = dispatch · sous-graphe = délibération (invoquée par le moteur, mode code). Les arêtes pleines = `delegate_to` (table `agent_delegation_targets`).
 
@@ -10,7 +10,8 @@ Rectangles = maillons LLM · losange = dispatch · sous-graphe = délibération 
 flowchart TD
   User([Human]) --> DISP["Dispatcher · Tier-0 (alexa | deep)"]
   DISP -->|alexa| ALEXA["Direct answer"]
-  DISP -->|deep| jean_michel
+  DISP -->|deep · analyse/chat/vocal| jean_michel
+  DISP -->|deep · code mode| code_router
   jean_michel["jean-michel<br/>router · default"]
   summarizer["summarizer<br/>specialist · default"]
   synthesizer["synthesizer<br/>finalizer · default"]
@@ -27,6 +28,7 @@ flowchart TD
   news_specialist["news-specialist<br/>specialist · default"]
   code_fetcher["code-fetcher<br/>specialist · default"]
   code_runner_node["code-runner-node<br/>specialist · qwen3-coder:latest"]
+  code_router["code-router<br/>router · qwen3:14b"]
   jean_michel --> code_fetcher
   jean_michel --> code_runner
   jean_michel --> code_runner_node
@@ -49,22 +51,27 @@ flowchart TD
   critical_thinker --> wikipedia_specialist
   code_runner --> code_fetcher
   code_runner_node --> code_fetcher
+  code_router --> code_fetcher
+  code_router --> code_runner
+  code_router --> code_runner_node
   subgraph DELIB ["Deliberation · engine-invoked · code mode"]
     critical_coder["critical-coder<br/>thesis / antithesis / synthesis / review"]
     sergent_kiss["sergent-kiss<br/>PASS / REWORK gate"]
     critical_coder --> sergent_kiss
   end
-  jean_michel -. hard code step .-> DELIB
+  code_router -. hard code step .-> DELIB
   classDef router fill:#e6f3ff,stroke:#0366d6,stroke-width:2px;
   classDef finalizer fill:#eaffea,stroke:#2da44e;
   class jean_michel router;
   class synthesizer finalizer;
+  class code_router router;
 ```
 
 ## Roster
 
 | Agent | Role | Model | Tools | Paradigms | Delegates to |
 |---|---|---|--:|--:|---|
+| `code-router` | router | qwen3:14b | 3 | 15 | code-fetcher, code-runner, code-runner-node |
 | `jean-michel` | router | default | 8 | 46 | code-fetcher, code-runner, code-runner-node, comparator-specialist, critical-thinker, document-builder, meta-analyst, news-specialist, strategist, summarizer, weather-specialist, web-search-specialist, wikipedia-specialist, workspace-manager |
 | `code-fetcher` | specialist | default | 13 | 12 | — |
 | `code-runner` | specialist | qwen3-coder:latest | 18 | 16 | code-fetcher |
