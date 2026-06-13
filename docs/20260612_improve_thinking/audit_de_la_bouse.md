@@ -78,6 +78,7 @@ le repo, utiliser les outils repo (pas `bash_sandbox`, il ne voit pas le repo).*
   verbatim sur [repo_test.py:34-55](src/jeanmichel/tools/repo_test.py#L34-L55). Sûr **même en hôte** (sous-commandes
   fixes en lecture seule, pas un shell, ne peut ni écrire ni s'échapper). Débloque à lui seul la requête testée.
 - **F2b — « sandbox projet » = conteneur PAR PROJET montant le repo** (chemin fixe `/app`, `WORKDIR /app`).
+  → **Spec détaillée + découpage B1-B7 : [etage_B_project_sandbox.md](etage_B_project_sandbox.md).**
   Étend la machinerie EXISTANTE `docker/sandbox/` + `jm.sh --build-docker` + colonne `sandbox_image`
   (aujourd'hui per-variant : `jeanmichel-sandbox:py-alpine`/`:node-alpine`, choisi par agent) — on passe au
   grain **par-projet**.
