@@ -90,10 +90,11 @@ confiné au repo) — pas `bash_sandbox` (qui ne voit que le scratch) ni l'hôte
 
 ## Découpage en sous-étapes (livrables testables)
 
-- **B1 — Checkout autonome (PROCHAINE ÉTAPE — confirmé)** : `create_worktree` local → `git clone --local`
-  (clone autonome ⇒ `.git` self-contained ⇒ **git marche dans le conteneur** + débloque git-write/checkpoint) ;
-  `source_repo` lira `remote.origin.url` pour rester sur le repo d'origine (`.venv`/graphify). *Décision user :
-  on l'a séquencé après B4/B5 ; le worktree lié actuel monte déjà OK (sécurité équivalente, git en lecture via repo_git hôte).*
+- **B1 — Checkout autonome — ✅ LIVRÉ** : `create_worktree` fait un `git clone --local` (fallback
+  `--no-hardlinks` si cross-device) ⇒ `.git` self-contained ⇒ **git marche dans le conteneur** + débloque
+  git-write/checkpoint ; `source_repo` lit `remote.origin.url` pour rester sur le repo d'origine
+  (`.venv`/graphify). `remove_worktree` = rmtree (+ prune/branch-D best-effort pour les worktrees liés
+  legacy). Validé dogfood sur le vrai repo (git status rc=0 dans le clone, source_repo = origine).
 - **B2 — Image défaut : ABANDONNÉ** — `repo_exec` réutilise l'image `sandbox_image` de l'agent (py/node-alpine, déjà buildées). Pas de nouvelle image à maintenir.
 - **B3 — `repo_exec` + conteneur projet — ✅ LIVRÉ** : outil + `_start_repo_container` (mount `/app`, network=none, --user, --cap-drop) ; grant migrate_136 ; tests (mock docker).
 - **B4 — Build per-projet — ✅ LIVRÉ** : `_resolve_image` lit `<source_repo>/.jm/Dockerfile` (OWNER, pas le worktree éditable), build tagé par hash (`project-<sha1>`), rebuild si changement, fallback image agent ; build = seul moment réseau.

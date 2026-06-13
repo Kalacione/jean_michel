@@ -86,3 +86,14 @@ def test_repo_git_no_worktree(conv_folder):
 def test_registry_includes_repo_git(wt):
     reg = build_registry(wt[0])
     assert "repo_git" in reg
+
+
+@requires_git
+def test_worktree_is_standalone_clone(wt):
+    """B1: the checkout is a standalone clone — .git is a real directory (not a
+    worktree pointer file), so git works when the dir is mounted in a container;
+    source_repo tracks the ORIGINAL repo (origin), not the clone itself."""
+    conv, root = wt
+    assert (root / ".git").is_dir()
+    src = worktree.source_repo(conv)
+    assert src is not None and src.resolve() != root.resolve()

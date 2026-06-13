@@ -1,14 +1,17 @@
-"""`code`-mode git worktrees — an isolated checkout of the target project repo.
+"""`code`-mode checkouts — an isolated CLONE of the target project repo.
 
 In `code` interaction mode the system intervenes on a REAL codebase
 (``config.PROJECT_ROOT``) by editing files in place. To keep the live working
-tree untouched, each such conversation gets its own **git worktree** on a
-dedicated branch (``jm/conv-<id>``): a second checkout that shares
-PROJECT_ROOT's ``.git`` but has independent working files. git is the safety net
-— the branch holds every edit, the live tree never changes.
+tree untouched, each such conversation gets its own **standalone clone**
+(``git clone --local`` → hardlinked objects, cheap) on a dedicated branch
+(``jm/conv-<id>``). git is the safety net — the branch holds every edit, the
+live tree never changes. A clone (rather than a linked git worktree) has a
+self-contained ``.git`` directory, so the checkout works as a normal repo when
+mounted into the project sandbox container (``git`` runs there). The original
+repo is recoverable via ``remote.origin.url`` (see ``source_repo``).
 
 Distinct from ``snapshot.py`` (which turns each *conversation folder* into its
-own repo to snapshot workspace/state). Here we add a worktree OF the target repo.
+own repo to snapshot workspace/state). Here we clone the target repo.
 
 Opt-in via ``config.CODE_WORKTREE_ENABLED`` (off by default). BEST-EFFORT: if the
 flag is off, git is absent, PROJECT_ROOT is not a git repo, or any git command
@@ -72,7 +75,23 @@ def _ensure_clone_cached(url: str) -> Path | None:
 
 
 def _worktree_source_repo(wt: Path) -> Path | None:
-    """The repo a worktree belongs to (so remove/branch ops hit the right repo)."""
+    """The ORIGINAL repo a checkout came from.
+
+    For a standalone clone (the current model) that's ``remote.origin.url`` —
+    the original path, where ``.venv`` and the graphify graph live. Falls back to
+    the git-common-dir parent for a legacy LINKED worktree.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(wt), "config", "--get", "remote.origin.url"],
+            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            p = Path(r.stdout.strip())
+            if p.exists():
+                return p
+    except (subprocess.SubprocessError, OSError):
+        pass
     try:
         r = subprocess.run(
             ["git", "-C", str(wt), "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -154,13 +173,17 @@ def source_repo(conv_folder: Path) -> Path | None:
 def create_worktree(
     conv_folder: Path, conv_id: str, source: str | None = None, kind: str = "local",
 ) -> Path | None:
-    """Add a git worktree on branch ``jm/conv-<id>`` from the target repo.
+    """Create an isolated CLONE of the target repo on branch ``jm/conv-<id>``.
 
-    ``source``/``kind`` select the repo: a LOCAL path, an SSH/remote url (cloned
-    once into the cache), or — when ``source`` is empty/None — an EXPLICIT
-    ``JEANMICHEL_PROJECT_ROOT`` (CLI global). No attached repo and no explicit
-    global ⇒ ``None`` (no worktree — no silent fallback to the jean-michel repo).
-    Returns the worktree path, else ``None``. Idempotent ; cleans a half-made dir.
+    A standalone clone (``git clone --local`` → hardlinked objects, cheap) rather
+    than a linked git worktree: its ``.git`` is a real, self-contained directory,
+    so the checkout behaves as a normal repo when mounted into the project sandbox
+    container (``git`` works there — a linked worktree's ``.git`` is a pointer file
+    to the source, which is not mounted). ``source``/``kind`` select the repo: a
+    LOCAL path, an SSH/remote url (cloned once into the cache), or — when ``source``
+    is empty/None — an EXPLICIT ``JEANMICHEL_PROJECT_ROOT`` (CLI global). No attached
+    repo and no explicit global ⇒ ``None`` (no silent fallback to the jean-michel
+    repo). Returns the clone path, else ``None``. Idempotent ; cleans a half-made dir.
     """
     if not _enabled() or not _git_available():
         return None
@@ -176,6 +199,7 @@ def create_worktree(
         repo = _project_root()
         if repo is None:
             return None  # no repo = no repo = no worktree
+    repo = Path(repo).resolve()  # absolute → clone's remote.origin.url is resolvable
     if not _is_git_repo(repo):
         _log.debug("worktree: source %s is not a git repo — skipping", repo)
         return None
@@ -185,12 +209,26 @@ def create_worktree(
     branch = branch_name(conv_id)
     try:
         wt.parent.mkdir(parents=True, exist_ok=True)
+        # Standalone clone (hardlinked objects → cheap) → self-contained .git ;
+        # origin = repo. Hardlinks need the same filesystem (the common case: the
+        # checkout lives under conversations/, inside the repo) ; on a cross-device
+        # target git --local fails, so fall back to copying objects.
         try:
-            # Create the branch at current HEAD and check it out into the worktree.
-            _git(repo, "worktree", "add", "-b", branch, str(wt), "HEAD")
+            subprocess.run(
+                ["git", "clone", "--local", "--quiet", str(repo), str(wt)],
+                check=True, capture_output=True, text=True, timeout=_CLONE_TIMEOUT_S,
+            )
         except subprocess.CalledProcessError:
-            # Branch already exists (e.g. a resume) → attach the worktree to it.
-            _git(repo, "worktree", "add", str(wt), branch)
+            shutil.rmtree(wt, ignore_errors=True)
+            subprocess.run(
+                ["git", "clone", "--no-hardlinks", "--quiet", str(repo), str(wt)],
+                check=True, capture_output=True, text=True, timeout=_CLONE_TIMEOUT_S,
+            )
+        # Dedicated branch for this conversation's work (resume → just switch).
+        try:
+            _git(wt, "checkout", "-q", "-b", branch)
+        except subprocess.CalledProcessError:
+            _git(wt, "checkout", "-q", branch)
         return wt
     except (subprocess.SubprocessError, OSError) as exc:
         _log.warning("worktree create failed for %s: %s", conv_folder, exc)
@@ -199,10 +237,12 @@ def create_worktree(
 
 
 def remove_worktree(conv_folder: Path, conv_id: str) -> bool:
-    """Remove the worktree dir and delete its branch. Best-effort.
+    """Remove the conversation's checkout. Best-effort.
 
-    No-op (returns ``False``) when there is no worktree dir for this conversation
-    — so deleting a non-code conversation never touches PROJECT_ROOT.
+    No-op (returns ``False``) when there is no checkout for this conversation — so
+    deleting a non-code conversation never touches PROJECT_ROOT. The clone is a
+    standalone dir (its branch lives inside it), so removing the dir is enough; the
+    prune/branch-D below only matter for LEGACY linked worktrees (no-op for clones).
     """
     if not _git_available():
         return False
@@ -210,20 +250,14 @@ def remove_worktree(conv_folder: Path, conv_id: str) -> bool:
     if not wt.exists():
         return False
     source = _worktree_source_repo(wt) or _project_root()
-    removed = False
-    try:
-        _git(source, "worktree", "remove", "--force", str(wt))
-        removed = True
-    except (subprocess.SubprocessError, OSError) as exc:
-        _log.debug("worktree remove failed for %s: %s", conv_folder, exc)
-        shutil.rmtree(wt, ignore_errors=True)
-    # Prune stale registrations + delete the branch (best-effort).
-    try:
-        _git(source, "worktree", "prune")
-        _git(source, "branch", "-D", branch_name(conv_id))
-    except (subprocess.SubprocessError, OSError):
-        pass
-    return removed
+    shutil.rmtree(wt, ignore_errors=True)
+    if source is not None:
+        try:
+            _git(source, "worktree", "prune")
+            _git(source, "branch", "-D", branch_name(conv_id))
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return not wt.exists()
 
 
 def is_protected_path(relative_path: str) -> bool:
