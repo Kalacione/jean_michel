@@ -77,6 +77,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_138_project_dockerfile.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_139_remove_graphify.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_140_doctrine_mounts.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_141_ground_facts.sql")
     yield conn
     conn.close()
 
@@ -221,12 +222,27 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate)
     + 1 from migrate_135_code_space_doctrine (code_space_doctrine)
     + 1 from migrate_137_git_checkpoint (git_checkpoint_discipline)
-    - 1 from migrate_139_remove_graphify (graphify_codebase_navigation removed).
+    - 1 from migrate_139_remove_graphify (graphify_codebase_navigation removed)
+    + 1 from migrate_141_ground_facts (ground_every_fact).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 125
+    assert row["c"] == 126
+
+
+def test_ground_every_fact_paradigm(v2_migrated_db, v2_consolidated_db):
+    """migrate_141: global anti-hallucination paradigm present, and paradigm 79 no
+    longer licenses parametric memory for 'stable facts'."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        r = db.execute(
+            "SELECT is_global, active FROM paradigms WHERE code = 'ground_every_fact'"
+        ).fetchone()
+        assert r is not None, "ground_every_fact missing"
+        assert int(r["is_global"]) == 1 and int(r["active"]) == 1
+        c79 = db.execute("SELECT content FROM paradigms WHERE id = 79").fetchone()["content"]
+        assert "parametric memory is fine" not in c79
+        assert "ground_every_fact" in c79
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -350,7 +366,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 125
+    assert n == 126
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
