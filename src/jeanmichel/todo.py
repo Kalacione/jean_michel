@@ -97,6 +97,40 @@ def normalize_items(items: Any) -> tuple[list[dict[str, Any]] | None, str | None
     return out, None
 
 
+def set_status(
+    conv_folder: Path, item_id: str, status: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Update ONE item's status (granular alternative to whole-list todo_write).
+
+    Returns ``(updated_todo, None)`` or ``(None, error)``. Keeps the AT-MOST-ONE
+    ``in_progress`` invariant by rejecting a second in_progress with a clear hint.
+    """
+    if status not in STATUSES:
+        return None, f"status must be one of {STATUSES}. Got: {status!r}."
+    todo = load_todo(conv_folder)
+    if todo is None:
+        return None, "no plan to update — create one first with todo_write."
+    items = todo.get("items") or []
+    sid = str(item_id)
+    target = next((it for it in items if str(it.get("id")) == sid), None)
+    if target is None:
+        ids = ", ".join(str(it.get("id")) for it in items) or "(none)"
+        return None, f"unknown item id {sid!r}. Existing ids: {ids}."
+    if status == "in_progress":
+        other = next(
+            (it for it in items if it is not target and it.get("status") == "in_progress"),
+            None,
+        )
+        if other is not None:
+            return None, (
+                f"item {other.get('id')} is already in_progress — mark it 'done' or "
+                "'pending' before starting another (at most one in_progress)."
+            )
+    target["status"] = status
+    save_todo(conv_folder, todo.get("goal", ""), items)
+    return {"goal": todo.get("goal", ""), "items": items}, None
+
+
 def render_recap(todo: dict[str, Any]) -> str:
     """Render the ``[TODO-RECAP]`` block injected into the orchestrator each turn."""
     items = todo.get("items") or []

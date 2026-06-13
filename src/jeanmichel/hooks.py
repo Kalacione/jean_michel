@@ -490,8 +490,8 @@ def _refresh_plan_nudge(
         parts.append("Review the worktree diff (repo_git) as well.")
         if load_todo(conv_folder) is not None:
             parts.append(
-                "Update your todo_write (mark the finished step done, re-scope what the report surfaced, "
-                "set the next step in_progress)."
+                "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
+                "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
             )
         elif _count_delegations(messages) >= 2:
             parts.append(

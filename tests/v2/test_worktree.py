@@ -317,7 +317,7 @@ def test_router_stocktake_nudge(conv_folder):
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert len(nudges(msgs)) == 1
-    assert "Update your todo_write" in nudges(msgs)[0]["content"]
+    assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
 
     # Router acted (todo_write cleared reeval_pending) → no nudge.
     state.reeval_pending = False

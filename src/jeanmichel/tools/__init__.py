@@ -38,6 +38,7 @@ from . import self_inspect_activity as _si_activity_mod
 from . import self_inspect_architecture as _si_architecture_mod
 from . import self_inspect_config as _si_config_mod
 from . import stackoverflow as _stackoverflow_mod
+from . import todo_update as _todo_update_mod
 from . import todo_write as _todo_write_mod
 from . import weather as _weather_mod
 from . import web_fetch as _web_fetch_mod
@@ -95,6 +96,7 @@ def build_registry(
     ws_delfile_spec = _ws_delfile_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     ws_deldir_spec = _ws_deldir_mod.make_spec(conv_folder, has_write_grant=has_workspace_write)
     todo_write_spec = _todo_write_mod.make_spec(conv_folder)
+    todo_update_spec = _todo_update_mod.make_spec(conv_folder)
     # Bind memory to the conversation context : owner (None → reserved cli user)
     # + the conversation's project (None → no project ; project-scope notes denied).
     mum_spec = _manage_memory_mod.make_spec(memory_user_id, memory_project_id)
@@ -126,6 +128,7 @@ def build_registry(
         ws_delfile_spec.name: ws_delfile_spec,
         ws_deldir_spec.name: ws_deldir_spec,
         todo_write_spec.name: todo_write_spec,
+        todo_update_spec.name: todo_update_spec,
         mum_spec.name: mum_spec,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,

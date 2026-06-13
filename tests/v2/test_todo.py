@@ -8,7 +8,7 @@ import json
 from jeanmichel import todo as todomod
 from jeanmichel.hooks import PreLLMCall
 from jeanmichel.models import ConversationState
-from jeanmichel.tools import build_registry, todo_write
+from jeanmichel.tools import build_registry, todo_update, todo_write
 from jeanmichel.tools.report_back import validate_report_back_args
 
 # ---- Helpers --------------------------------------------------------------
@@ -89,6 +89,48 @@ def test_todo_write_tolerates_extra_keys(tmp_path):
     spec = todo_write.make_spec(tmp_path)
     res = json.loads(spec.handler(goal="g", items=_items("in_progress"), notes="ignored"))
     assert "error" not in res
+
+
+# ---- todo_update tool (granular status flip) ------------------------------
+
+
+def test_todo_update_in_registry(tmp_path):
+    assert "todo_update" in build_registry(tmp_path)
+
+
+def test_todo_update_marks_done(tmp_path):
+    todo_write.make_spec(tmp_path).handler(goal="g", items=_items("in_progress", "pending"))
+    res = json.loads(todo_update.make_spec(tmp_path).handler(item_id="1", status="done"))
+    assert "error" not in res
+    todo = todomod.load_todo(tmp_path)
+    assert [it["status"] for it in todo["items"]] == ["done", "pending"]
+
+
+def test_todo_update_clears_when_last_done(tmp_path):
+    todo_write.make_spec(tmp_path).handler(goal="g", items=_items("done", "in_progress"))
+    res = json.loads(todo_update.make_spec(tmp_path).handler(item_id="2", status="done"))
+    assert res.get("all_done") is True
+    assert todomod.load_todo(tmp_path) is None
+
+
+def test_todo_update_rejects_second_in_progress(tmp_path):
+    todo_write.make_spec(tmp_path).handler(goal="g", items=_items("in_progress", "pending"))
+    res = json.loads(todo_update.make_spec(tmp_path).handler(item_id="2", status="in_progress"))
+    assert res["error_code"] == "todo_update_rejected"
+    assert "already in_progress" in res["summary"]
+    # unchanged on rejection
+    assert [it["status"] for it in todomod.load_todo(tmp_path)["items"]] == ["in_progress", "pending"]
+
+
+def test_todo_update_unknown_item(tmp_path):
+    todo_write.make_spec(tmp_path).handler(goal="g", items=_items("pending"))
+    res = json.loads(todo_update.make_spec(tmp_path).handler(item_id="99", status="done"))
+    assert res["error_code"] == "todo_update_rejected" and "unknown item" in res["summary"]
+
+
+def test_todo_update_no_plan(tmp_path):
+    res = json.loads(todo_update.make_spec(tmp_path).handler(item_id="1", status="done"))
+    assert res["error_code"] == "todo_update_rejected" and "no plan" in res["summary"]
 
 
 # ---- render_recap ---------------------------------------------------------

@@ -79,6 +79,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_140_doctrine_mounts.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_141_ground_facts.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_142_code_analyst.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_143_todo_update.sql")
     yield conn
     conn.close()
 
@@ -533,6 +534,19 @@ def test_repo_tools_granted(v2_migrated_db, v2_consolidated_db):
         assert "code-analyst" not in codes("repo_write")
         assert "code-analyst" not in codes("repo_exec")
         assert "code-analyst" not in codes("repo_test")
+
+
+def test_todo_update_granted_to_routers(v2_migrated_db, v2_consolidated_db):
+    """migrate_143 : the granular todo_update tool is granted to the plan owners
+    (the agents that have todo_write) — jean-michel + code-router."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        granted = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_tools t JOIN agents a ON a.id = t.agent_id "
+                "WHERE t.tool_code = 'todo_update'"
+            )
+        }
+        assert granted == {"jean-michel", "code-router"}
 
 
 def test_code_analyst_cast(v2_migrated_db, v2_consolidated_db):
