@@ -35,6 +35,7 @@ from .. import worktree
 from . import _repo
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
+from ._workspace import workspace_root_for
 from .bash_sandbox import _container_running
 
 _log = logging.getLogger(__name__)
@@ -120,9 +121,10 @@ def _resolve_image(conv_folder: Path, project_id: int | None, dockerfile: str) -
     return tag
 
 
-def _start_repo_container(name: str, worktree_path: Path, image: str) -> None:
-    """Start the project sandbox: the repo worktree mounted at /app, offline,
-    as the host uid, capabilities dropped, resource-capped."""
+def _start_repo_container(name: str, worktree_path: Path, workspace_path: Path, image: str) -> None:
+    """Start the project sandbox: the repo at /app (cwd, the target) AND the
+    conversation scratch at /workspace (action scripts + outputs that must not
+    pollute the repo). Offline, host uid, capabilities dropped, resource-capped."""
     current_user = f"{os.getuid()}:{os.getgid()}"
     subprocess.run(
         [
@@ -133,7 +135,8 @@ def _start_repo_container(name: str, worktree_path: Path, image: str) -> None:
             "--memory=1g",
             "--cpus=2",
             "--user", current_user,
-            "-v", f"{worktree_path}:{_MOUNT}:rw",
+            "-v", f"{worktree_path}:{_MOUNT}:rw",       # /app = the repo (cwd, read/modify target)
+            "-v", f"{workspace_path}:/workspace:rw",     # /workspace = scratch (action scripts + outputs)
             "-w", _MOUNT,
             image,
             "tail", "-f", "/dev/null",
@@ -149,6 +152,7 @@ def make_spec(
     """Return a ToolSpec bound to this conversation's repo worktree + the project's
     Dockerfile (from the project settings; empty ⇒ repo-default image)."""
     root = _repo.worktree_root(conv_folder)
+    ws_root = workspace_root_for(conv_folder)  # mounted alongside the repo for action scripts
     container = _container_name(conv_id or Path(conv_folder).name)
 
     def _handler(command: str) -> str:
@@ -165,7 +169,7 @@ def make_spec(
         if not _container_running(container):
             chosen = _resolve_image(conv_folder, project_id, dockerfile)
             try:
-                _start_repo_container(container, root, chosen)
+                _start_repo_container(container, root, ws_root, chosen)
             except subprocess.CalledProcessError as e:
                 return tool_error(
                     "sandbox_start_failed",

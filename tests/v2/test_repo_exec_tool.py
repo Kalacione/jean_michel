@@ -85,7 +85,9 @@ def test_repo_exec_starts_confined_container_if_down(wt, monkeypatch):
     start = runs[0]
     assert start[:3] == ["docker", "run", "-d"]
     assert "--network=none" in start and "--cap-drop=ALL" in start
+    # Both spaces mounted: the repo at /app (cwd) AND the scratch at /workspace.
     assert any(tok.endswith(":/app:rw") for tok in start)
+    assert any(tok.endswith(":/workspace:rw") for tok in start)
     # Then the command runs via docker exec.
     assert any(c[:2] == ["docker", "exec"] for c in runs)
 

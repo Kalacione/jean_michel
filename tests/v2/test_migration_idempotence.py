@@ -76,6 +76,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_137_git_checkpoint.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_138_project_dockerfile.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_139_remove_graphify.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_140_doctrine_mounts.sql")
     yield conn
     conn.close()
 
@@ -668,6 +669,8 @@ def test_repo_exec_granted_and_doctrine_names_it(v2_migrated_db, v2_consolidated
             "SELECT content FROM paradigms WHERE code='code_space_doctrine'"
         ).fetchone()["content"]
         assert "repo_exec" in content and "PROJECT SANDBOX" in content
+        # migrate_140: the two mount points are spelled out (repo /app + scratch /workspace).
+        assert "/app" in content and "/workspace" in content
 
 
 # ---- migrate_137 : git checkpoint discipline -------------------------------
