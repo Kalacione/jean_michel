@@ -55,6 +55,11 @@ def create_app() -> Any:
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app):
+        from ..tools.bash_sandbox import reap_sandboxes
+
+        # Sweep orphan sandbox/project containers left by a previous (possibly
+        # crashed) run before serving. Best-effort.
+        await asyncio.to_thread(reap_sandboxes)
         # Connect to MCP servers at startup (off-loop : startup() blocks on a
         # bounded connect). No-op when MCP is off/unconfigured. Best-effort.
         await asyncio.to_thread(mcp_client.startup)
@@ -62,6 +67,8 @@ def create_app() -> Any:
             yield
         finally:
             await asyncio.to_thread(mcp_client.shutdown)
+            # Stop all jm-sandbox-* / jm-repo-* containers on clean shutdown.
+            await asyncio.to_thread(reap_sandboxes)
 
     app = FastAPI(title="Jean-Michel API", version="0.1.0", lifespan=_lifespan)
 

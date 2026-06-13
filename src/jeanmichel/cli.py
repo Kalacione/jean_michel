@@ -643,6 +643,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             _log.debug("close_conversation failed: %s", exc)
         mcp_client.shutdown()  # tear down MCP sessions/loop (no-op when off)
+        # Stop THIS conversation's sandbox/project containers (not a daemon's).
+        try:
+            from .tools.bash_sandbox import reap_sandboxes
+            reap_sandboxes(conv_id=conv_id)
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("reap_sandboxes failed: %s", exc)
 
     # ----- --once : single non-interactive turn -----
     if args.once:

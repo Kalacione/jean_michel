@@ -44,6 +44,10 @@ _DEFAULT_SANDBOX_IMAGE = "jeanmichel-sandbox:py-alpine"
 _SANDBOX_TIMEOUT_S = 30
 _MAX_OUTPUT_BYTES = 50_000
 
+# Container name prefixes we own and may reap: bash_sandbox (scratch workspace)
+# + repo_exec (the project sandbox). Both names end with the conversation id.
+_SANDBOX_PREFIXES = ("jm-sandbox-", "jm-repo-")
+
 
 def _container_name(conv_id: str) -> str:
     return f"jm-sandbox-{conv_id}"
@@ -85,14 +89,14 @@ def _start_container(name: str, workspace_path: Path, image: str) -> None:
 
 
 def _list_sandbox_containers() -> list[str]:
-    """Names of currently running jm-sandbox-* containers."""
+    """Names of currently running jm-sandbox-* / jm-repo-* containers."""
     result = subprocess.run(
-        ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=jm-sandbox-"],
+        ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=jm-"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         return []
-    return [n.strip() for n in result.stdout.splitlines() if n.strip().startswith("jm-sandbox-")]
+    return [n.strip() for n in result.stdout.splitlines() if n.strip().startswith(_SANDBOX_PREFIXES)]
 
 
 def _container_age_seconds(name: str) -> float | None:
@@ -115,17 +119,22 @@ def _container_age_seconds(name: str) -> float | None:
     return (datetime.now(UTC) - started).total_seconds()
 
 
-def reap_sandboxes(max_idle_minutes: int | None = None) -> list[str]:
-    """Stop lingering jm-sandbox-* containers and return the names stopped.
+def reap_sandboxes(max_idle_minutes: int | None = None, conv_id: str | None = None) -> list[str]:
+    """Stop lingering jm-sandbox-* / jm-repo-* containers; return the names stopped.
 
-    Sandbox containers run detached with `--rm`, so stopping them removes them.
-    This is SAFE: an active conversation respawns its container on the next
-    `bash_sandbox` call (only ephemeral in-container state is lost; the mounted
-    workspace persists). With `max_idle_minutes`, only containers running longer
-    than that are stopped; `None` stops all.
+    Containers run detached with `--rm`, so stopping them removes them. SAFE: an
+    active conversation respawns its container on the next `bash_sandbox` /
+    `repo_exec` call (only ephemeral in-container state is lost; the mounted
+    workspace/worktree persists). With `max_idle_minutes`, only containers running
+    longer than that are stopped; `None` stops all. With `conv_id`, only that
+    conversation's containers are stopped (both names end with the conv id) — so a
+    single CLI session reaps its own without touching a daemon's other sandboxes.
     """
+    targets = _list_sandbox_containers()
+    if conv_id:
+        targets = [n for n in targets if n.endswith(conv_id)]
     stopped: list[str] = []
-    for name in _list_sandbox_containers():
+    for name in targets:
         if max_idle_minutes is not None:
             age = _container_age_seconds(name)
             if age is None or age < max_idle_minutes * 60:

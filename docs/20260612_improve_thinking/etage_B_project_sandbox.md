@@ -90,13 +90,15 @@ confiné au repo) — pas `bash_sandbox` (qui ne voit que le scratch) ni l'hôte
 
 ## Découpage en sous-étapes (livrables testables)
 
-- **B1 — Checkout autonome (DIFFÉRÉ)** : `create_worktree` local → `git clone --local`. Reporté : le conteneur
-  monte le worktree lié (sécurité équivalente) ; on clonera seulement si un build a besoin de git en conteneur.
-- **B2 — Image défaut** : `docker/sandbox/Dockerfile.repo-default` + `jm.sh --build-docker repo-default` (+ `all`).
-- **B3 — `repo_exec` + conteneur projet** : outil + `_start_repo_container` (mount `/app`, network=none) ; grants migrate ; tests (mock docker).
-- **B4 — Build per-projet** : résolution `.jm/Dockerfile`/config, build+tag+rebuild-on-hash, fallback défaut ; garde-fou confiance.
-- **B5 — Cycle de vie** : généraliser `reap_sandboxes` (2 préfixes) + reap au shutdown daemon/CLI + sweep démarrage.
-- **B6 — Doctrine** : étendre `code_space_doctrine` (repo_exec) ; dual-write + tests par mode.
+- **B1 — Checkout autonome (PROCHAINE ÉTAPE — confirmé)** : `create_worktree` local → `git clone --local`
+  (clone autonome ⇒ `.git` self-contained ⇒ **git marche dans le conteneur** + débloque git-write/checkpoint) ;
+  `source_repo` lira `remote.origin.url` pour rester sur le repo d'origine (`.venv`/graphify). *Décision user :
+  on l'a séquencé après B4/B5 ; le worktree lié actuel monte déjà OK (sécurité équivalente, git en lecture via repo_git hôte).*
+- **B2 — Image défaut : ABANDONNÉ** — `repo_exec` réutilise l'image `sandbox_image` de l'agent (py/node-alpine, déjà buildées). Pas de nouvelle image à maintenir.
+- **B3 — `repo_exec` + conteneur projet — ✅ LIVRÉ** : outil + `_start_repo_container` (mount `/app`, network=none, --user, --cap-drop) ; grant migrate_136 ; tests (mock docker).
+- **B4 — Build per-projet — ✅ LIVRÉ** : `_resolve_image` lit `<source_repo>/.jm/Dockerfile` (OWNER, pas le worktree éditable), build tagé par hash (`project-<sha1>`), rebuild si changement, fallback image agent ; build = seul moment réseau.
+- **B5 — Cycle de vie — ✅ LIVRÉ** : `reap_sandboxes` couvre `jm-sandbox-`/`jm-repo-` + filtre `conv_id` ; reap au shutdown daemon (`_lifespan`) + sweep démarrage + reap par-conv au teardown CLI.
+- **B6 — Doctrine — ✅ LIVRÉ** : `code_space_doctrine` nomme la PROJECT SANDBOX (`repo_exec`) ; dual-write + tests par mode.
 - **B7 — (Étage C) `repo_test` → conteneur** ; garde anti ré-délégation (F4) si encore observée.
 
 ## Risques / questions ouvertes
