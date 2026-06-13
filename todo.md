@@ -5,6 +5,7 @@
 ## en cours
 
 - B7 (Étage C) : faire tourner `repo_test` DANS le conteneur du projet (image projet, deps présentes) au lieu de l'hôte, une fois la sandbox projet rodée
+- verifier le bon fonctionnement de `ask_human` surtout dans l'interface web. Possibilite de question a choix multiple (select one or multiple) ?
 
 ## a faire
 
