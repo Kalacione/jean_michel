@@ -78,6 +78,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_139_remove_graphify.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_140_doctrine_mounts.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_141_ground_facts.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_142_code_analyst.sql")
     yield conn
     conn.close()
 
@@ -223,12 +224,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_135_code_space_doctrine (code_space_doctrine)
     + 1 from migrate_137_git_checkpoint (git_checkpoint_discipline)
     - 1 from migrate_139_remove_graphify (graphify_codebase_navigation removed)
-    + 1 from migrate_141_ground_facts (ground_every_fact).
+    + 1 from migrate_141_ground_facts (ground_every_fact)
+    + 1 from migrate_142_code_analyst (route_analysis_to_code_analyst).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 126
+    assert row["c"] == 127
 
 
 def test_ground_every_fact_paradigm(v2_migrated_db, v2_consolidated_db):
@@ -366,7 +368,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 126
+    assert n == 127
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -519,10 +521,36 @@ def test_repo_tools_granted(v2_migrated_db, v2_consolidated_db):
             }
         for tool in ("repo_read", "repo_grep", "repo_glob", "repo_edit", "repo_write"):
             assert {"code-runner", "code-runner-node"} <= codes(tool), tool
-        # code-fetcher gets read-only navigation only — never edit/write.
-        assert "code-fetcher" in codes("repo_read")
+        # code-fetcher is EXTERNAL-only since migrate_142 : no repo tools at all.
+        assert "code-fetcher" not in codes("repo_read")
         assert "code-fetcher" not in codes("repo_edit")
         assert "code-fetcher" not in codes("repo_write")
+        # code-analyst is the read-only analyst : reads but never edits/runs.
+        assert "code-analyst" in codes("repo_read")
+        assert "code-analyst" in codes("repo_grep")
+        assert "code-analyst" in codes("repo_git")
+        assert "code-analyst" not in codes("repo_edit")
+        assert "code-analyst" not in codes("repo_write")
+        assert "code-analyst" not in codes("repo_exec")
+        assert "code-analyst" not in codes("repo_test")
+
+
+def test_code_analyst_cast(v2_migrated_db, v2_consolidated_db):
+    """migrate_142 : code-analyst is the read-only analyst cast — a code-router
+    delegation target, and NOT a CODE_WORKER (so analysis never triggers the
+    code-production deliberation that exploded the 129-call run)."""
+    from jeanmichel.deliberation import CODE_WORKERS
+    assert "code-analyst" not in CODE_WORKERS
+    for db in (v2_migrated_db, v2_consolidated_db):
+        targets = {
+            r["target_code"] for r in db.execute(
+                "SELECT target_code FROM agent_delegation_targets adt "
+                "JOIN agents a ON a.id = adt.agent_id WHERE a.code = 'code-router'"
+            )
+        }
+        assert "code-analyst" in targets
+        row = db.execute("SELECT role, active FROM agents WHERE code = 'code-analyst'").fetchone()
+        assert row is not None and row["role"] == "specialist" and int(row["active"]) == 1
 
 
 _P1_REPO_TOOLS = "('repo_read','repo_grep','repo_glob','repo_edit','repo_write')"
@@ -530,17 +558,18 @@ _P1_REPO_TOOLS = "('repo_read','repo_grep','repo_glob','repo_edit','repo_write')
 
 def test_migrate_128_idempotent(v2_migrated_db):
     """migrate_128 (INSERT OR IGNORE) can be re-applied without duplicate grants."""
-    # Scope to the agents migrate_128 grants (workers + fetcher) so later
-    # migrations granting repo_* to other agents don't perturb the count.
+    # Scope to the WORKERS only : migrate_142 strips code-fetcher's repo_* grants
+    # (external-only), so re-applying migrate_128 would resurrect them — including
+    # code-fetcher here would muddy the pure no-duplicate check.
     q = (
         f"SELECT COUNT(*) AS c FROM agent_tools at JOIN agents a ON a.id = at.agent_id "
         f"WHERE at.tool_code IN {_P1_REPO_TOOLS} "
-        f"AND a.code IN ('code-runner','code-runner-node','code-fetcher')"
+        f"AND a.code IN ('code-runner','code-runner-node')"
     )
     n1 = v2_migrated_db.execute(q).fetchone()["c"]
     _apply_sql(v2_migrated_db, _ROOT / "db" / "migrations" / "migrate_128_repo_tools.sql")
     n2 = v2_migrated_db.execute(q).fetchone()["c"]
-    assert n1 == n2 == 13  # 5 (code-runner) + 5 (code-runner-node) + 3 (code-fetcher)
+    assert n1 == n2 == 10  # 5 (code-runner) + 5 (code-runner-node)
 
 
 def test_migrate_129_repo_test_granted(v2_migrated_db, v2_consolidated_db):
@@ -766,14 +795,14 @@ def test_code_router_agent(v2_migrated_db, v2_consolidated_db):
             "SELECT COUNT(*) AS c FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
             "WHERE a.code='code-router'"
         ).fetchone()["c"]
-        assert n_para == 14  # 15 à l'origine ; -1 graphify_codebase_navigation (migrate_139)
+        assert n_para == 15  # 15 à l'origine ; -1 graphify (migrate_139) ; +1 route_analysis_to_code_analyst (migrate_142)
         targets = {
             r["target_code"] for r in db.execute(
                 "SELECT target_code FROM agent_delegation_targets ad JOIN agents a ON a.id=ad.agent_id "
                 "WHERE a.code='code-router'"
             )
         }
-        assert targets == {"code-runner", "code-runner-node", "code-fetcher"}
+        assert targets == {"code-runner", "code-runner-node", "code-fetcher", "code-analyst"}
 
 
 def test_code_router_is_leaner_than_jean_michel(v2_consolidated_db):
