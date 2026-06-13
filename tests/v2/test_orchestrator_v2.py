@@ -941,3 +941,28 @@ def test_plan_mode_propagates_to_subagent(tmp_path: Path):
     second = mock.calls_v2[1]["messages"]
     denied = [m for m in second if m.get("role") == "tool" and "PLAN mode" in (m.get("content") or "")]
     assert denied, "subagent mutating tool should be denied in plan mode"
+
+
+# Section 9 : subagent persistence isolation (bug D)
+
+
+def test_subagent_does_not_clobber_main_conv_files(tmp_path: Path):
+    """A subagent must persist ONLY its own subagent_<id>.json — never the main
+    messages.json / state.json (those belong to the main agent)."""
+    sub_agent = make_agent("specialist", role="specialist")
+    parent_state = ConversationState(depth_current=0)
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="done", files_produced=[], confidence="high",
+        )]),
+    ])
+    spawn_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, tools_registry={}, llm_client=mock,
+        briefing="x", support_files=[], expected="", parent_state=parent_state,
+        parent_agent_code="jean-michel",
+    )
+    # The main files are untouched by the subagent ...
+    assert not (tmp_path / "messages.json").exists()
+    assert not (tmp_path / "state.json").exists()
+    # ... but the subagent audit file IS written.
+    assert list(tmp_path.glob("subagent_*.json"))

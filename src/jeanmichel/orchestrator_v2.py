@@ -388,6 +388,14 @@ def _run_agent_loop(
     empty_main_turns = 0
     plan_no_todo_turns = 0  # PLAN mode : tried to conclude without writing the plan
 
+    def _persist() -> None:
+        # Subagents must NOT clobber the main conv files (messages.json/state.json):
+        # their audit is written once at the end via save_sub_messages. Only the
+        # main agent owns these files.
+        if is_main_agent:
+            save_messages(conv_folder, messages)
+            save_state(conv_folder, state)
+
     for _iteration in range(max_iterations):
         # PreLLMCall : compaction escalation (may mutate messages).
         level = hooks.pre_llm_call(messages, state)
@@ -466,8 +474,7 @@ def _run_agent_loop(
                                 "Do not return another empty turn."
                             ),
                         })
-                        save_messages(conv_folder, messages)
-                        save_state(conv_folder, state)
+                        _persist()
                         continue
                     # 3 empty turns in a row : give up cleanly with an
                     # honest fallback instead of returning silence to the user.
@@ -484,8 +491,7 @@ def _run_agent_loop(
                             final_content_summary=fallback[:200],
                         ),
                     )
-                    save_messages(conv_folder, messages)
-                    save_state(conv_folder, state)
+                    _persist()
                     return _LoopOutcome(kind="final_answer", content=fallback)
 
                 # PLAN mode : the plan must be the structured todo.json (the
@@ -500,8 +506,7 @@ def _run_agent_loop(
                         "plan. Call todo_write(goal, items) with 3-7 scoped steps BEFORE your summary "
                         "— a prose plan is not usable for review or execution."
                     )})
-                    save_messages(conv_folder, messages)
-                    save_state(conv_folder, state)
+                    _persist()
                     continue
 
                 _emit(
@@ -512,8 +517,7 @@ def _run_agent_loop(
                         final_content_summary=resp.content[:200],
                     ),
                 )
-                save_messages(conv_folder, messages)
-                save_state(conv_folder, state)
+                _persist()
                 return _LoopOutcome(kind="final_answer", content=resp.content)
             # Subagent emitted no tool_call → it MUST terminate via report_back.
             # Inject a corrective user message and continue.
@@ -525,8 +529,7 @@ def _run_agent_loop(
                     "files_produced, confidence, low_confidence_reason?)."
                 ),
             })
-            save_messages(conv_folder, messages)
-            save_state(conv_folder, state)
+            _persist()
             continue
 
         # Process each tool_call sequentially.
@@ -551,8 +554,7 @@ def _run_agent_loop(
                 # Only `report_back` produces an outcome inside the per-call loop.
                 report_back_outcome = outcome
 
-        save_messages(conv_folder, messages)
-        save_state(conv_folder, state)
+        _persist()
 
         if report_back_outcome is not None:
             return report_back_outcome
