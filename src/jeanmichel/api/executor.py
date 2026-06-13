@@ -62,6 +62,7 @@ async def run_turn_streaming(
     main_llm: Any,
     memory_user_id: int | None = None,
     attachments: list[str] | None = None,
+    plan_mode: bool = False,
 ) -> None:
     """Run one turn in a worker thread, streaming events ; handle ask_human.
 
@@ -132,6 +133,7 @@ async def run_turn_streaming(
                 on_dispatch=on_dispatch,
                 memory_user_id=memory_user_id,
                 attachments=attachments,
+                plan_mode=plan_mode,
             )
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
             # Shadow consolidation : the answer is already on its way to the

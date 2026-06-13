@@ -324,3 +324,21 @@ def test_router_stocktake_nudge(conv_folder):
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert nudges(msgs) == []
+
+
+def test_plan_mode_nudge(conv_folder):
+    """plan_mode → a PLAN MODE nudge fires (any mode), takes priority, idempotent."""
+    from jeanmichel.hooks import _PLAN_NUDGE_MARKER, _refresh_plan_nudge
+    from jeanmichel.models import ConversationState
+
+    def nudges(ms):
+        return [m for m in ms if (m.get("content") or "").startswith(_PLAN_NUDGE_MARKER)]
+
+    state = ConversationState(plan_mode=True)
+    msgs = [{"role": "user", "content": "build feature X"}]
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    _refresh_plan_nudge(msgs, conv_folder, state)  # idempotent
+    assert len(nudges(msgs)) == 1
+    content = nudges(msgs)[0]["content"]
+    assert "PLAN mode" in content and "todo_write" in content
+    assert "execution happens in a separate Edit turn" in content

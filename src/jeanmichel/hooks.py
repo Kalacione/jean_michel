@@ -53,6 +53,22 @@ _WORKSPACE_WRITE_TOOLS: frozenset[str] = frozenset({
     "workspace_str_replace",
 })
 
+# PLAN mode : tools that MUTATE the repo, the workspace, or run arbitrary commands.
+# Denied while state.plan_mode is set (router + delegated specialists) so a plan turn
+# stays read-only — reads, repo_test, web_search, delegate_to and todo_write stay
+# allowed for exploration + plan drafting. Execution happens in a separate (Edit) turn.
+_PLAN_MODE_BLOCKED: frozenset[str] = frozenset({
+    "repo_edit",
+    "repo_write",
+    "repo_exec",
+    "workspace_create_file",
+    "workspace_append",
+    "workspace_str_replace",
+    "workspace_create_dir",
+    "workspace_delete_file",
+    "workspace_delete_dir",
+})
+
 # Threshold above which PostToolUse injects a force-persist nudge.
 _FORCE_PERSIST_AFTER_N_RESEARCH_CALLS = 3
 
@@ -173,6 +189,19 @@ class PreToolUse:
                     f"Tool '{ctx.call.name}' not granted to agent "
                     f"'{ctx.agent_code}'. Available: "
                     f"{sorted(ctx.agent_grants)}"
+                ),
+            )
+
+        # 1b. PLAN mode : deny mutating tools (read-only planning turn). Applies to
+        # the router AND delegated specialists (state.plan_mode propagates).
+        if state.plan_mode and ctx.call.name in _PLAN_MODE_BLOCKED:
+            return Decision(
+                deny=True,
+                reason=(
+                    f"PLAN mode: '{ctx.call.name}' mutates and is disabled while planning. "
+                    "Produce the plan with todo_write and conclude with a summary — execution "
+                    "runs in a separate Edit turn after the human approves. You may still read "
+                    "(repo_read/grep/glob/git), test, search, and delegate for exploration."
                 ),
             )
 
@@ -438,6 +467,18 @@ def _refresh_plan_nudge(
             and m["content"].startswith(_PLAN_NUDGE_MARKER)
         )
     ]
+    # PLAN mode takes priority : the router drafts a plan and STOPS (no execution).
+    # Mutating tools are already denied by PreToolUse ; this nudge sets the intent.
+    if state.plan_mode:
+        messages.append({"role": "user", "content": (
+            f"{_PLAN_NUDGE_MARKER} You are in PLAN mode. Explore read-only — you may read "
+            "(repo_read/grep/glob/git, workspace_view), run repo_test, search, and delegate FOR "
+            "EXPLORATION — but nothing writes, runs, or implements. Produce a concrete plan with "
+            "todo_write (3-7 scoped steps), then CONCLUDE with a short summary of the plan for the "
+            "human to approve. Do NOT edit files, run commands, or implement: execution happens in a "
+            "separate Edit turn once the human approves."
+        )})
+        return
     if not state.reeval_pending:
         return  # no specialist pending review → nothing to take stock of
     parts = [

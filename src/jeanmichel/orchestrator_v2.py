@@ -799,6 +799,7 @@ def run_main_loop(
     agent_resolver: AgentResolver | None = None,
     event_emitter: EventEmitter | None = None,
     max_iterations: int = 50,
+    plan_mode: bool = False,
 ) -> str:
     """Run the main agent loop on a deep request.
 
@@ -823,7 +824,7 @@ def run_main_loop(
         user_msg["images"] = images  # transient vision input ; stripped on save
     messages.append(user_msg)
 
-    state = ConversationState(depth_current=0)
+    state = ConversationState(depth_current=0, plan_mode=plan_mode)
     hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
     )
@@ -915,9 +916,11 @@ def spawn_subagent(
         {"role": "user", "content": briefing_block},
     ]
 
-    # Fresh state for the subagent — depth incremented.
+    # Fresh state for the subagent — depth incremented ; PLAN mode propagates so the
+    # no-mutation gate applies to delegated specialists too (read-only exploration).
     sub_state = ConversationState(
         depth_current=parent_state.depth_current + 1,
+        plan_mode=parent_state.plan_mode,
     )
     sub_hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=False

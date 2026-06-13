@@ -119,6 +119,7 @@ def run_turn(
     on_dispatch: Callable[[Any], None] | None = None,
     memory_user_id: int | None = None,
     attachments: list[str] | None = None,
+    plan_mode: bool = False,
 ) -> str:
     """Process one user turn end-to-end and return the user-facing answer.
 
@@ -206,6 +207,7 @@ def run_turn(
             ask_human_callback=ask_human_callback,
             memory_user_id=memory_user_id,
             images=image_b64,
+            plan_mode=plan_mode,
         )
 
     # Mark last interaction LAST so it wins over any modified_at writes made
@@ -237,6 +239,7 @@ def _run_deep_turn(
     ask_human_callback: AskHumanCallback | None,
     memory_user_id: int | None,
     images: list[str] | None = None,
+    plan_mode: bool = False,
 ) -> str:
     """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
     project_id = _conversation_project_id(conv_id)
@@ -344,4 +347,5 @@ def _run_deep_turn(
         ask_human_callback=ask_human_callback,
         agent_resolver=agent_resolver,
         event_emitter=event_emitter,
+        plan_mode=plan_mode,
     )

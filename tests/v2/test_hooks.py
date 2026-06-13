@@ -236,6 +236,48 @@ def test_pre_tool_use_dedup_normalizes_string_args():
     assert d2.deny is True
 
 
+# ---- PLAN mode gate -------------------------------------------------------
+
+
+def test_plan_mode_denies_mutating_tools():
+    """In plan_mode, repo/workspace mutators + repo_exec are denied with a PLAN reason."""
+    hook = PreToolUse()
+    s = _state(plan_mode=True)
+    for tool in ("repo_edit", "repo_write", "repo_exec", "workspace_create_file",
+                 "workspace_str_replace", "workspace_delete_dir"):
+        ctx = _ctx(tool, args={}, grants={tool})
+        d = hook(ctx, s, dedup_cache={})
+        assert d.deny is True, tool
+        assert "PLAN mode" in (d.reason or ""), tool
+
+
+def test_plan_mode_allows_reads_search_delegate_and_todo():
+    """In plan_mode, read/exploration/plan tools stay available."""
+    hook = PreToolUse()
+    s = _state(plan_mode=True)
+    for tool, grants in (
+        ("repo_read", {"repo_read"}),
+        ("repo_grep", {"repo_grep"}),
+        ("repo_git", {"repo_git"}),
+        ("repo_test", {"repo_test"}),
+        ("workspace_view", {"workspace_view"}),
+        ("web_search", {"web_search"}),
+        ("todo_write", {"todo_write"}),
+        ("delegate_to", {"delegate_to"}),
+    ):
+        args = {"agent_code": "code-runner", "briefing": "explore"} if tool == "delegate_to" else {}
+        ctx = _ctx(tool, args=args, grants=grants)
+        assert hook(ctx, s, dedup_cache={}).deny is False, tool
+
+
+def test_mutating_tools_allowed_outside_plan_mode():
+    """Without plan_mode, the mutating tools are not gated by the plan rule."""
+    hook = PreToolUse()
+    s = _state(plan_mode=False)
+    ctx = _ctx("repo_edit", args={}, grants={"repo_edit"})
+    assert hook(ctx, s, dedup_cache={}).deny is False
+
+
 # ---- PostToolUse ----------------------------------------------------------
 
 

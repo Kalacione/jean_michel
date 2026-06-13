@@ -654,6 +654,9 @@ def create_app() -> Any:
                     continue
                 if executor.turn_lock.locked():
                     await websocket.send_json({"type": "queued"})
+                # PLAN mode is only meaningful where execution happens (code) or
+                # multi-step delegation (analyse) ; ignored in chat/vocal.
+                plan_mode = bool(data.get("plan_mode")) and mode in ("code", "analyse")
                 async with executor.turn_lock:
                     await executor.run_turn_streaming(
                         websocket,
@@ -666,6 +669,7 @@ def create_app() -> Any:
                         main_llm=main_llm,
                         memory_user_id=user["id"],
                         attachments=workspace_svc.filter_existing(folder, data.get("files") or []),
+                        plan_mode=plan_mode,
                     )
         except WebSocketDisconnect:
             return
