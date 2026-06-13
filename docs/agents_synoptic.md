@@ -1,6 +1,6 @@
 # Agent synoptic — chaînes logiques
 
-> Généré depuis `jeanmichel.db` le 2026-06-13 00:53 UTC (commit `7f2be97`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
+> Généré depuis `jeanmichel.db` le 2026-06-13 02:08 UTC (commit `3ffc6fb`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
 
 Rectangles = maillons LLM · losange = dispatch · sous-graphe = délibération (invoquée par le moteur, mode code). Les arêtes pleines = `delegate_to` (table `agent_delegation_targets`).
 
@@ -74,8 +74,8 @@ flowchart TD
 | `code-router` | router | qwen3:14b | 3 | 15 | code-fetcher, code-runner, code-runner-node |
 | `jean-michel` | router | default | 8 | 46 | code-fetcher, code-runner, code-runner-node, comparator-specialist, critical-thinker, document-builder, meta-analyst, news-specialist, strategist, summarizer, weather-specialist, web-search-specialist, wikipedia-specialist, workspace-manager |
 | `code-fetcher` | specialist | default | 13 | 12 | — |
-| `code-runner` | specialist | qwen3-coder:latest | 18 | 16 | code-fetcher |
-| `code-runner-node` | specialist | qwen3-coder:latest | 18 | 15 | code-fetcher |
+| `code-runner` | specialist | qwen3-coder:latest | 19 | 17 | code-fetcher |
+| `code-runner-node` | specialist | qwen3-coder:latest | 19 | 16 | code-fetcher |
 | `comparator-specialist` | specialist | gemma4:26b | 5 | 29 | news-specialist, weather-specialist, web-search-specialist, wikipedia-specialist |
 | `critical-coder` · engine | specialist | gemma4:26b | 4 | 7 | — |
 | `critical-thinker` | specialist | gemma4:26b | 5 | 38 | web-search-specialist, wikipedia-specialist |

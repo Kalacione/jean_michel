@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .. import worktree as _worktree_mod
 from . import analyze_image as _analyze_image_mod
 from . import bash_sandbox as _bash_sandbox_mod
 from . import clock as _clock_mod
@@ -26,6 +27,7 @@ from . import manage_memory as _manage_memory_mod
 from . import news as _news_mod
 from . import pypi as _pypi_mod
 from . import repo_edit as _repo_edit_mod
+from . import repo_git as _repo_git_mod
 from . import repo_glob as _repo_glob_mod
 from . import repo_graph_refresh as _repo_graph_refresh_mod
 from . import repo_grep as _repo_grep_mod
@@ -50,7 +52,6 @@ from . import workspace_list as _ws_list_mod
 from . import workspace_str_replace as _ws_replace_mod
 from . import workspace_view as _ws_view_mod
 from ._base import ToolSpec
-from .. import worktree as _worktree_mod
 
 # Workspace write tools — exposing any of these without an
 # agent_workspace_grants row will always fail at runtime with no_write_grant.
@@ -151,6 +152,7 @@ def build_registry(
             _repo_edit_mod.make_spec(conv_folder),
             _repo_write_mod.make_spec(conv_folder),
             _repo_test_mod.make_spec(conv_folder),
+            _repo_git_mod.make_spec(conv_folder),
             _repo_graph_refresh_mod.make_spec(conv_folder),
         ):
             registry[repo_spec.name] = repo_spec

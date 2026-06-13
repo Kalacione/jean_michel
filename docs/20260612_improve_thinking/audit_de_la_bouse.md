@@ -4,6 +4,10 @@
 > (worktree, repo tools, CRP, délibération). Le problème n'est PAS « il manque une feature » :
 > **l'enchaînement casse parce que le prompt ne dit pas clairement QUEL espace de code utiliser QUAND.**
 > C'est l'audit demandé (« on analyse, on trace, on check… on écrit un rapport ») + le correctif minimal.
+>
+> **STATUT 2026-06-13 — ÉTAGE A LIVRÉ** (732 tests verts, migrate_135 appliqué live) : `code_space_doctrine`
+> (prio 8), `workspace_tools_only` retiré du mode code, outil read-only `repo_git`, notice `[CODE-REPO]`
+> réorientée. ÉTAGE B (sandbox projet conteneurisée) et C (finitions) restent à faire.
 
 ## Context (tracé sur un vrai run)
 
@@ -55,9 +59,9 @@ le repo, utiliser les outils repo (pas `bash_sandbox`, il ne voit pas le repo).*
 > On **recâble**, on n'empile pas. Paradigmes code = `paradigm_modes='code'` (anti-fuite), anglais,
 > model-agnostic. Dual-write `schema.sql` ↔ migration ↔ live + chaîne d'idempotence.
 
-**F1 — Doctrine des espaces dans le prompt (LE fix, headline).**
+**F1 — Doctrine des espaces dans le prompt (LE fix, headline). — ✅ LIVRÉ (migrate_135).**
 1. Nouveau paradigme `code`-only `code_space_doctrine` (anglais) encodant le tableau ci-dessus, placé
-   en **tête de comportement**, bindé à `code-runner` + `code-runner-node`.
+   en **tête de comportement** (`order_priority=8`), bindé à `code-runner` + `code-runner-node`.
 2. **Gate `workspace_tools_only` HORS du mode code** (lignes `paradigm_modes` = tous modes sauf `code` ;
    mécanisme [db.py:73-74](src/jeanmichel/db.py#L73-L74)). En code, le scratch n'est plus « la source de vérité ».
 3. On **garde** `test_in_sandbox_when_runnable`/`verify_execution_output` (le sandbox reste légitime pour
@@ -70,8 +74,8 @@ le repo, utiliser les outils repo (pas `bash_sandbox`, il ne voit pas le repo).*
 (c'est le job ; le worktree git le contient). Le risque est qu'une commande **s'échappe du repo**
 (`rm -rf ~`, `~/.ssh`, `.env` du repo live, réseau, autres projets). → l'exec hôte arbitraire est
 **exclue** (donne les clés de la machine). Le bon périmètre pour des commandes arbitraires = **conteneur**.
-- **F2a — `repo_git` (read-only : `log/show/diff/status/blame`), hôte, `cwd=worktree`**, calqué verbatim
-  sur [repo_test.py:34-55](src/jeanmichel/tools/repo_test.py#L34-L55). Sûr **même en hôte** (sous-commandes
+- **F2a — `repo_git` (read-only : `log/show/diff/status/blame`), hôte, `cwd=worktree` — ✅ LIVRÉ.** Calqué
+  verbatim sur [repo_test.py:34-55](src/jeanmichel/tools/repo_test.py#L34-L55). Sûr **même en hôte** (sous-commandes
   fixes en lecture seule, pas un shell, ne peut ni écrire ni s'échapper). Débloque à lui seul la requête testée.
 - **F2b — « sandbox projet » = conteneur PAR PROJET montant le repo** (chemin fixe `/app`, `WORKDIR /app`).
   Étend la machinerie EXISTANTE `docker/sandbox/` + `jm.sh --build-docker` + colonne `sandbox_image`
@@ -95,9 +99,9 @@ le repo, utiliser les outils repo (pas `bash_sandbox`, il ne voit pas le repo).*
 - **F2c — (naturel une fois F2b en place) `repo_test` bascule DANS le conteneur du projet** (deps présentes,
   isolation réseau). Reste hôte tant que F2b n'est pas rodé.
 
-**F3 — Réorienter la notice `[CODE-REPO]` + contrat de briefing.**
-Le chemin devient *informatif* ; **interdire** « exécute une commande dans `<path>` » ; préciser que le
-worker inspecte/agit via `repo_*`/`repo_git` (pas de chemin shell). Ajouter les nouveaux outils à la liste citée.
+**F3 — Réorienter la notice `[CODE-REPO]` + contrat de briefing. — ✅ LIVRÉ.**
+Plus de chemin live ; on briefe le worker par **ce qu'il faut accomplir dans le repo**, jamais « exécute une
+commande à tel chemin » ; `repo_git` ajouté à la liste d'outils citée.
 
 **F4 — (secondaire, si encore observé après F1-F3) garde anti ré-délégation verbatim** (router change
 d'approche/escalade après 2× `low` sur tâche quasi identique).
@@ -121,8 +125,10 @@ d'approche/escalade après 2× `low` sur tâche quasi identique).
 2. `events.jsonl` : aucun `bash_sandbox` pour inspecter le repo ; il n'apparaît que pour du code généré.
 3. Vraie petite édition multi-fichiers : repo_read→repo_edit (gate)→repo_test, diff sur branche, tree live intact.
 4. Non-régression hors code : chat + research → `workspace_tools_only` s'applique encore, zéro fuite `code`.
-5. `pytest tests/v2` vert (+ repo_git, + chaîne migrate_135, + assert « `workspace_tools_only` absent du
-   prompt code-runner en mode code, présent en chat »).
+5. ✅ `pytest tests/v2` vert (**732 passed**) — repo_git, chaîne migrate_135, doctrine présente en mode code /
+   `workspace_tools_only` absente du code (présente en chat), via le loader réel.
+
+> Reste à valider en `--serve` : items 1-3 (le run E2E réel — le test de la thèse).
 
 ## Séquence recommandée (avis éclairé — du rentable/sûr au plus lourd)
 1. **Étage A — recâblage prompt + git read-only + audit** (rapide, zéro risque sécu, feedback immédiat) :

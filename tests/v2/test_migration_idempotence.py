@@ -71,6 +71,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_132_comparator_delegation.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_133_project_repo.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_134_code_router.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_135_code_space_doctrine.sql")
     yield conn
     conn.close()
 
@@ -212,12 +213,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_127_graphify_paradigm (graphify_codebase_navigation)
     + 2 from migrate_130_code_paradigms (repo_intervention_discipline,
                                          prefer_repo_tools_over_bash)
-    + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate).
+    + 2 from migrate_131_deliberation (critical_coder_method, sergent_kiss_gate)
+    + 1 from migrate_135_code_space_doctrine (code_space_doctrine).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 124
+    assert row["c"] == 125
 
 
 # ---- Idempotence ---------------------------------------------------------
@@ -341,7 +343,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 124
+    assert n == 125
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
@@ -587,6 +589,66 @@ def test_code_paradigms_only_render_in_code_mode(v2_consolidated_db):
     assert "repo_intervention_discipline" not in in_chat
     assert "prefer_repo_tools_over_bash" in in_code
     assert "prefer_repo_tools_over_bash" not in in_chat
+
+
+# ---- migrate_135 : code space doctrine + workspace gating + repo_git -------
+
+
+def test_code_space_doctrine_gated_and_bound(v2_migrated_db, v2_consolidated_db):
+    """migrate_135 + schema.sql: code_space_doctrine exists, leads (low priority),
+    is gated to 'code' only, and is bound to BOTH coding workers."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        row = db.execute(
+            "SELECT order_priority FROM paradigms WHERE code='code_space_doctrine' AND active=1"
+        ).fetchone()
+        assert row is not None and row["order_priority"] == 8  # leads behavioural paradigms
+        modes = {
+            r["mode"] for r in db.execute(
+                "SELECT mode FROM paradigm_modes pm JOIN paradigms p ON p.id=pm.paradigm_id "
+                "WHERE p.code='code_space_doctrine'"
+            )
+        }
+        assert modes == {"code"}
+        agents = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+                "JOIN paradigms p ON p.id=ap.paradigm_id WHERE p.code='code_space_doctrine'"
+            )
+        }
+        assert {"code-runner", "code-runner-node"} <= agents
+
+
+def test_workspace_tools_only_gated_out_of_code(v2_migrated_db, v2_consolidated_db):
+    """migrate_135: workspace_tools_only no longer applies in code mode (the scratch
+    is not 'the source of truth' when a repo is attached), but still in the others.
+    Verified through the real loader for code-runner."""
+    from jeanmichel import db as jdb
+    for db in (v2_migrated_db, v2_consolidated_db):
+        modes = {
+            r["mode"] for r in db.execute(
+                "SELECT mode FROM paradigm_modes pm JOIN paradigms p ON p.id=pm.paradigm_id "
+                "WHERE p.code='workspace_tools_only'"
+            )
+        }
+        assert modes == {"analyse", "chat", "vocal"}  # gated OUT of code
+        cr = db.execute("SELECT id FROM agents WHERE code='code-runner'").fetchone()["id"]
+        in_code = {p.code for p in jdb.load_paradigms_for_agent(db, cr, "code")}
+        in_chat = {p.code for p in jdb.load_paradigms_for_agent(db, cr, "chat")}
+        assert "code_space_doctrine" in in_code and "code_space_doctrine" not in in_chat
+        assert "workspace_tools_only" not in in_code  # the fix
+        assert "workspace_tools_only" in in_chat       # non-regression
+
+
+def test_repo_git_granted_to_coding_workers(v2_migrated_db, v2_consolidated_db):
+    """migrate_135: the read-only repo_git tool is granted to both coding workers."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        agents = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_tools t JOIN agents a ON a.id=t.agent_id "
+                "WHERE t.tool_code='repo_git'"
+            )
+        }
+        assert {"code-runner", "code-runner-node"} <= agents
 
 
 # ---- migrate_132 : comparator delegation whitelist -------------------------

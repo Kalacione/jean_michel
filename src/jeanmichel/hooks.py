@@ -368,16 +368,16 @@ def _refresh_repo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> No
     ]
     if not worktree.worktree_path_for(conv_folder).exists():
         return
-    src = worktree.source_repo(conv_folder)
-    where = f" ({src})" if src is not None else ""
     messages.append({"role": "user", "content": (
-        f"{_REPO_RECAP_MARKER} A code repository is attached to this conversation{where}, "
-        "checked out in an isolated git worktree. You are the router and do NOT hold repo "
-        "tools yourself. To read, search, edit, or test this codebase, delegate to "
-        "`code-runner` (it has repo_read/grep/glob/edit/write + repo_test and receives an "
-        "auto-assembled context of the repo) or `code-fetcher` for external lookups. Answer "
-        "questions about this code by delegating — never claim you cannot see it, and never "
-        "assume a remote GitHub repo."
+        f"{_REPO_RECAP_MARKER} A code repository is attached to this conversation, checked out "
+        "in an isolated git worktree. You are the router and do NOT hold repo tools yourself. "
+        "Delegate code work to `code-runner`: it operates ON the repo through dedicated tools — "
+        "repo_read/grep/glob to inspect, repo_edit/write to change, repo_git (log/show/diff/"
+        "status/blame) for git history, repo_test to run tests — and receives an auto-assembled "
+        "context of the repo. Brief it by WHAT to achieve in the repo; never tell it to run a "
+        "shell command at a filesystem path (it has no shell over the repo, and bash_sandbox "
+        "cannot see the repo). Use `code-fetcher` for external lookups. Answer questions about "
+        "this code by delegating — never claim you cannot see it, and never assume a remote GitHub repo."
     )})
 
 
