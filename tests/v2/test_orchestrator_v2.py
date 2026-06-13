@@ -871,6 +871,37 @@ def test_spawn_subagent_returns_low_confidence_on_abort(tmp_path: Path):
     assert result.low_confidence_reason  # non-empty
 
 
+def test_subagent_prose_abort_injects_no_corrective(tmp_path: Path):
+    """A subagent that emits prose instead of report_back aborts low — WITHOUT an
+    '[ORCHESTRATOR] must terminate' corrective. A role=user nudge there makes the
+    model mistake orchestrator control for the user and spiral (conv 9f428b47, P3)."""
+    sub_agent = make_agent("specialist", role="specialist")
+    parent_state = ConversationState(depth_current=0)
+    mock = MockClient(script=[
+        assistant_response("Here is my prose answer, no tool call."),
+        assistant_response("Still prose."),
+        assistant_response("Prose again."),
+    ])
+    result = spawn_subagent(
+        conv_folder=tmp_path,
+        sub_agent=sub_agent,
+        tools_registry={},
+        llm_client=mock,
+        briefing="x",
+        support_files=[],
+        expected="",
+        parent_state=parent_state,
+        max_iterations=5,
+    )
+    assert result.confidence == "low"
+    assert "report_back" in result.low_confidence_reason
+    injected = [
+        m for call in mock.calls_v2 for m in call["messages"]
+        if m.get("role") == "user" and "must terminate" in (m.get("content") or "")
+    ]
+    assert not injected, "no '[ORCHESTRATOR] must terminate' corrective may be injected into a subagent"
+
+
 # Section 7 : PLAN mode — the plan must be recorded via todo_write
 
 

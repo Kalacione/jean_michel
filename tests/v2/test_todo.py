@@ -147,6 +147,8 @@ def test_render_recap_format():
     }
     recap = todomod.render_recap(todo)
     assert recap.startswith(todomod.RECAP_MARKER)
+    # Framed as orchestrator control so the model can't mistake it for the user (P3).
+    assert "not the human user" in recap
     assert "(1/3 done)" in recap
     assert "[x] 1. inspect" in recap
     assert "[>] 2. implement" in recap

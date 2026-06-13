@@ -136,7 +136,7 @@ def render_recap(todo: dict[str, Any]) -> str:
     items = todo.get("items") or []
     goal = (todo.get("goal") or "").strip()
     done = sum(1 for it in items if it.get("status") == "done")
-    lines = [f"{RECAP_MARKER} Plan ({done}/{len(items)} done)"]
+    lines = [f"{RECAP_MARKER} (orchestrator control — not the human user) Plan ({done}/{len(items)} done)"]
     if goal:
         lines.append(f"Goal: {goal}")
     for it in items:

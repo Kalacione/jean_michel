@@ -45,9 +45,9 @@ def test_save_messages_strips_transient_injections(conv_folder: Path):
     (`[ORCHESTRATOR CONTEXT COLLAPSE]`) ARE real history and must stay."""
     messages = [
         {"role": "user", "content": "real question"},
-        {"role": "user", "content": "[TODO-RECAP] Plan (1/3 done)"},
-        {"role": "user", "content": "[CODE-REPO] A code repository is attached…"},
-        {"role": "user", "content": "[ORCHESTRATOR] You must terminate via report_back."},
+        {"role": "user", "content": "[TODO-RECAP] (orchestrator control — not the human user) Plan (1/3 done)"},
+        {"role": "user", "content": "[CODE-REPO] (orchestrator control — not the human user) A code repository is attached…"},
+        {"role": "user", "content": "[ORCHESTRATOR] (orchestrator control — not the human user) Your last turn was empty."},
         {"role": "assistant", "content": "real answer"},
         {"role": "user", "content": "[ORCHESTRATOR CONTEXT COLLAPSE]\nsummary…"},  # kept
     ]

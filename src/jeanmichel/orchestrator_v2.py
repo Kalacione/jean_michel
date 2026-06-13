@@ -495,7 +495,8 @@ def _run_agent_loop(
                         messages.append({
                             "role": "user",
                             "content": (
-                                "[ORCHESTRATOR] Your last assistant turn was "
+                                "[ORCHESTRATOR] (orchestrator control — not the "
+                                "human user) Your last assistant turn was "
                                 "empty. The user is waiting for an answer. "
                                 "Produce the user-facing response NOW, in "
                                 "plain text, based on the tool results above. "
@@ -530,7 +531,8 @@ def _run_agent_loop(
                     # Distinct prefix (still transient) so the PLAN nudge refresher
                     # in PreLLMCall doesn't strip it as its own nudge.
                     messages.append({"role": "user", "content": (
-                        "[ORCHESTRATOR] You tried to conclude the PLAN turn without recording the "
+                        "[ORCHESTRATOR] (orchestrator control — not the human user) You tried to "
+                        "conclude the PLAN turn without recording the "
                         "plan. Call todo_write(goal, items) with 3-7 scoped steps BEFORE your summary "
                         "— a prose plan is not usable for review or execution."
                     )})
@@ -551,20 +553,17 @@ def _run_agent_loop(
             # Small models sometimes "narrate" report_back as prose instead of
             # emitting the tool_call → the corrective would otherwise loop to
             # max_iterations (50). Bound it : 2 correctives, then abort low.
+            # Subagent emitted prose instead of a report_back tool_call. We do NOT
+            # inject a "[ORCHESTRATOR] must terminate" corrective : a role=user nudge
+            # here makes the model mistake orchestrator control for the user and
+            # spiral (cf. conv 9f428b47). It also can't help — the model just can't
+            # tool-call. Retry once (it sees its own dangling turn) ; then abort low.
             no_tool_call_turns += 1
             if no_tool_call_turns > 2:
                 return _LoopOutcome(
                     kind="aborted",
                     reason="subagent did not terminate via report_back (emitted prose instead)",
                 )
-            messages.append({
-                "role": "user",
-                "content": (
-                    "[ORCHESTRATOR] You must terminate via report_back. "
-                    "Re-emit your conclusion using report_back(summary, "
-                    "files_produced, confidence, low_confidence_reason?)."
-                ),
-            })
             _persist()
             continue
 

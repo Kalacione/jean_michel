@@ -305,7 +305,8 @@ class PostToolUse:
             nudge = {
                 "role": "user",
                 "content": (
-                    f"[ORCHESTRATOR] You have made "
+                    f"[ORCHESTRATOR] (orchestrator control — not the human user) "
+                    f"You have made "
                     f"{state.search_calls_since_last_persist} research calls "
                     "without writing to the workspace. Persist your findings "
                     "via workspace_create_file or workspace_append before "
@@ -414,7 +415,8 @@ def _refresh_repo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> No
     if not worktree.worktree_path_for(conv_folder).exists():
         return
     messages.append({"role": "user", "content": (
-        f"{_REPO_RECAP_MARKER} A code repository is attached to this conversation, checked out "
+        f"{_REPO_RECAP_MARKER} (orchestrator control — not the human user) "
+        "A code repository is attached to this conversation, checked out "
         "in an isolated git worktree. You are the router and do NOT hold repo tools yourself. "
         "Delegate code work to `code-runner`: it operates ON the repo through dedicated tools — "
         "repo_read/grep/glob to inspect, repo_edit/write to change, repo_git (log/show/diff/"
@@ -471,7 +473,8 @@ def _refresh_plan_nudge(
     # Mutating tools are already denied by PreToolUse ; this nudge sets the intent.
     if state.plan_mode:
         messages.append({"role": "user", "content": (
-            f"{_PLAN_NUDGE_MARKER} You are in PLAN mode. Explore read-only — you may read "
+            f"{_PLAN_NUDGE_MARKER} (orchestrator control — not the human user) You are in PLAN "
+            "mode. Explore read-only — you may read "
             "(repo_read/grep/glob/git, workspace_view), run repo_test, search, and delegate FOR "
             "EXPLORATION — but nothing writes, runs, or implements. Produce a concrete plan with "
             "todo_write (3-7 scoped steps), then CONCLUDE with a short summary of the plan for the "
@@ -482,7 +485,8 @@ def _refresh_plan_nudge(
     if not state.reeval_pending:
         return  # no specialist pending review → nothing to take stock of
     parts = [
-        f"{_PLAN_NUDGE_MARKER} A specialist just returned. BEFORE delegating again, take stock of what "
+        f"{_PLAN_NUDGE_MARKER} (orchestrator control — not the human user) A specialist just "
+        "returned. BEFORE delegating again, take stock of what "
         "the specialists already produced — open their files_produced with workspace_view and re-read "
         "their summaries."
     ]
