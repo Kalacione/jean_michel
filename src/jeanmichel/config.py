@@ -222,6 +222,64 @@ DEFAULT_OLLAMA_MODEL = os.environ.get(
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
+# ---- models.toml — foyer unique de la config modèle ----------------------
+#
+# TOUTE la config modèle vit ici : rôles (dispatch/main/code/…), fenêtres de
+# contexte, et voice. Les défauts génériques sont dans `models.example.toml`
+# (committé) ; `models.toml` (gitignored) override LOCALEMENT, par clé (merge,
+# pas tout-ou-rien : un models.toml partiel n'écrase que ce qu'il déclare). Une
+# env var gagne toujours quand elle est présente (test rapide d'un modèle, CI).
+MODELS_CONFIG_PATH = REPO_ROOT / "models.toml"
+MODELS_EXAMPLE_PATH = REPO_ROOT / "models.example.toml"
+
+
+def _read_toml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_models_config() -> dict[str, Any]:
+    """Exemple (défauts) comme base, models.toml local par-dessus (merge 1 niveau)."""
+    base = _read_toml(MODELS_EXAMPLE_PATH)
+    over = _read_toml(MODELS_CONFIG_PATH)
+    merged = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = {**merged[k], **v}
+        else:
+            merged[k] = v
+    return merged
+
+
+_MODELS_CONFIG = _load_models_config()
+
+
+def _models_section(name: str) -> dict[str, Any]:
+    sec = _MODELS_CONFIG.get(name)
+    return sec if isinstance(sec, dict) else {}
+
+
+def _role_model(env_name: str, toml_key: str, default: str) -> str:
+    """Résout un modèle de rôle : env → models.toml [roles] → ultime défaut.
+
+    Le défaut intégré n'est qu'un filet de sécurité (models.example.toml absent
+    ou corrompu) — la source réelle des défauts est le fichier exemple.
+    """
+    env = os.environ.get(env_name)
+    if env is not None and env.strip():
+        return env.strip()
+    val = _models_section("roles").get(toml_key)
+    if isinstance(val, str) and val.strip():
+        return val.strip()
+    return default
+
+
 # =============================================================================
 # v2 — paramètres de la nouvelle architecture (cf. DevNotes/REVOLUCION/06)
 # =============================================================================
@@ -230,15 +288,15 @@ DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 # pour la rétrocompat tant que le code legacy n'est pas retiré (Phase 6).
 # Tous ces paramètres sont overridables par env var pour tuning sans recompile.
 
-# Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : CLI > env > default.
-DISPATCH_MODEL = os.environ.get("JEANMICHEL_DISPATCH_MODEL", "granite4.1:8b")
-MAIN_MODEL = os.environ.get("JEANMICHEL_MAIN_MODEL", "gemma4:latest")
-COMPACTOR_MODEL = os.environ.get("JEANMICHEL_COMPACTOR_MODEL", "gemma4:latest")
-SUBAGENT_DEFAULT_MODEL = os.environ.get("JEANMICHEL_SUBAGENT_MODEL", "gemma4:latest")
+# Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : env > models.toml > default.
+DISPATCH_MODEL = _role_model("JEANMICHEL_DISPATCH_MODEL", "dispatch", "granite4.1:8b")
+MAIN_MODEL = _role_model("JEANMICHEL_MAIN_MODEL", "main", "gemma4:26b")
+COMPACTOR_MODEL = _role_model("JEANMICHEL_COMPACTOR_MODEL", "compactor", "gemma4:26b")
+SUBAGENT_DEFAULT_MODEL = _role_model("JEANMICHEL_SUBAGENT_MODEL", "subagent", "gemma4:26b")
 # Router (jean-michel) model used in the `code` interaction mode — a stronger
 # model for methodical decomposition over a codebase. Other modes use the agent
 # default (MAIN_MODEL / gemma4, vision-capable). Env-overridable.
-CODE_MODEL = os.environ.get("JEANMICHEL_CODE_MODEL", "qwen3:14b")
+CODE_MODEL = _role_model("JEANMICHEL_CODE_MODEL", "code", "qwen3:14b")
 # Per-mode router-model overrides (mode → Ollama model). A mode absent here uses
 # the agent's resolved default. Consumed in service.turn_runner._run_deep_turn.
 MODE_ROUTER_MODEL = {"code": CODE_MODEL}
@@ -250,7 +308,7 @@ MODE_ROUTER_MODEL = {"code": CODE_MODEL}
 # lit pas encore — il sera consommé si on bascule de model_override sur un
 # flag d'agent (cognitive_tier='high', par exemple). Documenté ici comme
 # point d'extension stable.
-REASONER_MODEL = os.environ.get("JEANMICHEL_REASONER_MODEL", "gemma4:26b")
+REASONER_MODEL = _role_model("JEANMICHEL_REASONER_MODEL", "reasoner", "gemma4:26b")
 
 # Budget de contexte partitionné (cf. §1.7 et §7 doc 06).
 # 4 seuils d'escalade pour la compaction sur le WORKING : snip / microcompact /
@@ -288,10 +346,17 @@ MEMORY_TOOL_CAP_PER_TOOL = _int_env("JEANMICHEL_MEMORY_TOOL_CAP", 5)
 SUBAGENT_BUDGET_RATIO = float(os.environ.get("JEANMICHEL_SUBAGENT_BUDGET_RATIO", "0.40"))
 
 # Fenêtre de contexte par modèle (en tokens). Utilisée pour calculer
-# SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE. Override par modèle via env :
-# `JEANMICHEL_CTX_WINDOW_<model_slug>` où model_slug est le nom du modèle
-# avec ':' et '-' remplacés par '_'.
-DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 128_000)
+# SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE, et ÉPINGLÉE comme `num_ctx` Ollama.
+# La valeur = le BESOIN RÉEL du modèle dans son rôle, PAS son contexte natif max :
+# granite (dispatcher, natif 128k) n'a besoin que de ~8k, qwen3-coder (code, natif
+# 256k) a besoin de 128k. On épingle num_ctx = cette valeur ; un KV cache 128k sur
+# un 8B ≈ 54 GB → OOM sur 2×32 GB quand on chaîne les modèles. D'où le plafond dur.
+#
+# Résolution (cf. model_context_window) : env `JEANMICHEL_CTX_WINDOW_<slug>` →
+# `models.toml [context_window]` → défaut ; puis min(plafond). Les valeurs par
+# modèle (générique) vivent dans models.example.toml, pas en dur ici.
+MODEL_CONTEXT_CEILING = _int_env("JEANMICHEL_CTX_CEILING", 128_000)
+DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 32_768)
 
 # How long Ollama keeps a model resident after a call. We CHAIN different models
 # within one turn (dispatch → router → analyst → coder), so the old hardcoded "30m"
@@ -307,15 +372,37 @@ OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
 LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "llm_streams"))
 
 
-def model_context_window(model: str) -> int:
-    """Return the context window size (in tokens) for a given Ollama model.
+def _ctx_ceiling() -> int:
+    raw = _MODELS_CONFIG.get("ceiling")
+    return int(raw) if isinstance(raw, int) and raw > 0 else MODEL_CONTEXT_CEILING
 
-    Lookup order : env var `JEANMICHEL_CTX_WINDOW_<slug>` → default 128k.
-    The slug is the model name with non-alphanumeric chars replaced by '_'
-    (e.g. 'gemma4:latest' → 'gemma4_latest').
+
+def _ctx_default() -> int:
+    raw = _MODELS_CONFIG.get("default")
+    return int(raw) if isinstance(raw, int) and raw > 0 else DEFAULT_MODEL_CONTEXT_WINDOW
+
+
+def model_context_window(model: str) -> int:
+    """Context window (tokens) pinned as Ollama `num_ctx` for a given model.
+
+    Resolution, most specific first, then capped at the ceiling :
+      1. env `JEANMICHEL_CTX_WINDOW_<slug>` (slug = non-alnum → '_'),
+      2. models.toml/example `[context_window]` (exact model name),
+      3. `default` (models config) / `DEFAULT_MODEL_CONTEXT_WINDOW`.
+    The cap (`MODEL_CONTEXT_CEILING`, 128k) keeps a single model's KV cache from
+    blowing VRAM (a 256k window on a coder ≈ 45 GB) regardless of the source.
     """
     slug = "".join(c if c.isalnum() else "_" for c in model)
-    return _int_env(f"JEANMICHEL_CTX_WINDOW_{slug}", DEFAULT_MODEL_CONTEXT_WINDOW)
+    env = os.environ.get(f"JEANMICHEL_CTX_WINDOW_{slug}")
+    if env is not None:
+        try:
+            resolved = max(1, int(env))
+        except ValueError:
+            resolved = _ctx_default()
+    else:
+        table = _models_section("context_window")
+        resolved = table[model] if isinstance(table.get(model), int) and table[model] > 0 else _ctx_default()
+    return min(resolved, _ctx_ceiling())
 
 
 # Audit sandbox cross-conversation : fichier JSONL global (cf. §6 bis doc 06).
@@ -326,19 +413,24 @@ SANDBOX_AUDIT_LOG = Path(
     )
 )
 
-# Vocal mode — Piper TTS model. The matching .onnx.json config is auto-
-# discovered by Piper. Falls back to `voice_models/default.onnx` at the
-# repo root if unset ; vocal mode degrades gracefully (text-only) when
-# neither resolves.
+# Vocal mode — Piper TTS model. Resolved like the model roles : env
+# `JEANMICHEL_VOICE_MODEL` → models config `[voice].model` → `voice_models/
+# default.onnx`. The matching .onnx.json is auto-discovered by Piper ; vocal mode
+# degrades gracefully (text-only) when the model file doesn't resolve.
+def _voice_setting(env_name: str, toml_key: str, default: str) -> str:
+    env = os.environ.get(env_name)
+    if env is not None and env.strip():
+        return env.strip()
+    val = _models_section("voice").get(toml_key)
+    return val.strip() if isinstance(val, str) and val.strip() else default
+
+
 VOICE_MODEL_PATH = Path(
-    os.environ.get(
-        "JEANMICHEL_VOICE_MODEL",
-        str(REPO_ROOT / "voice_models" / "default.onnx"),
-    )
+    _voice_setting("JEANMICHEL_VOICE_MODEL", "model", str(REPO_ROOT / "voice_models" / "default.onnx"))
 )
 # Audio player command to feed the synthesised WAV. Empty = auto-detect
 # in this order : paplay → aplay → ffplay.
-VOICE_AUDIO_PLAYER = os.environ.get("JEANMICHEL_AUDIO_PLAYER", "").strip()
+VOICE_AUDIO_PLAYER = _voice_setting("JEANMICHEL_AUDIO_PLAYER", "audio_player", "")
 
 
 # ---- User profile ---------------------------------------------------------

@@ -304,7 +304,17 @@ def test_router_stocktake_nudge(conv_folder):
     assert len(nudges(msgs)) == 1
     content = nudges(msgs)[0]["content"]
     assert "ask_human" in content and "workspace_view" in content
-    assert "todo_write" not in content  # chat mode: no plan discipline
+    assert "todo_write" not in content  # chat mode, no plan yet, <2 delegations: no plan wording
+
+    # Chat router (no worktree) WITH a plan → the stock-take now folds in TODO
+    # progression. Regression fix: this discipline used to be code-mode only, so
+    # analyse-mode plans never advanced (a step finished but stayed pending).
+    items_chat, _ = todo_mod.normalize_items([{"text": "research", "status": "in_progress"}])
+    todo_mod.save_todo(conv_folder, "answer the question", items_chat)
+    msgs = [*delegations(1)]
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
+    todo_mod.clear_todo(conv_folder)  # reset for the code-mode cases below
 
     worktree.worktree_path_for(conv_folder).mkdir(parents=True)  # → code mode
 

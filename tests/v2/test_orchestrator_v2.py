@@ -71,7 +71,10 @@ def test_build_tools_payload_filters_by_grants():
     assert "not_granted" not in names
 
 
-def test_initialize_state_partitions_budget():
+def test_initialize_state_partitions_budget(monkeypatch):
+    # Pin the model's ctx window explicitly so the partition is independent of the
+    # (VRAM-driven) default — the override mechanism the orchestrator relies on.
+    monkeypatch.setenv("JEANMICHEL_CTX_WINDOW_mock_model", "128000")
     state = ConversationState()
     messages = [{"role": "system", "content": "x" * 400}]  # ~100 tokens
     tools = [{"function": {"name": "t", "description": "d", "parameters": {}}}]

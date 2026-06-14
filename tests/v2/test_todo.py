@@ -164,6 +164,43 @@ def test_render_recap_next_action_falls_back_to_pending():
     assert "Next action: b" in todomod.render_recap(todo)
 
 
+# ---- workspace plan artifact ---------------------------------------------
+
+
+def test_save_todo_mirrors_plan_to_workspace(tmp_path):
+    todo_write.make_spec(tmp_path).handler(goal="ship X", items=_items("done", "in_progress", "pending"))
+    plan = tmp_path / "workspace" / "plan.md"
+    assert plan.exists()
+    md = plan.read_text(encoding="utf-8")
+    assert "# Plan (1/3 done)" in md
+    assert "**Goal:** ship X" in md
+    assert "- [x] 1. step 1" in md
+    assert "- [ ] 2. step 2 _(in progress)_" in md
+    assert "- [ ] 3. step 3" in md
+
+
+def test_plan_artifact_refreshed_on_each_save(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    spec.handler(goal="g", items=_items("in_progress", "pending"))
+    spec.handler(goal="g", items=_items("done", "in_progress"))
+    md = (tmp_path / "workspace" / "plan.md").read_text(encoding="utf-8")
+    assert "# Plan (1/2 done)" in md  # reflects the latest save, not accumulated
+
+
+def test_clear_todo_removes_plan_artifact(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    assert (tmp_path / "workspace" / "plan.md").exists()
+    todomod.clear_todo(tmp_path)
+    assert not (tmp_path / "workspace" / "plan.md").exists()
+
+
+def test_todo_write_all_done_clears_plan_artifact(tmp_path):
+    spec = todo_write.make_spec(tmp_path)
+    spec.handler(goal="g", items=_items("in_progress"))
+    spec.handler(goal="g", items=_items("done", "done"))  # all done → cleared
+    assert not (tmp_path / "workspace" / "plan.md").exists()
+
+
 # ---- PreLLMCall recap injection ------------------------------------------
 
 

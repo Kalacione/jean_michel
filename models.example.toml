@@ -1,0 +1,47 @@
+# =============================================================================
+# Jean-Michel — model configuration (single home for ALL model config)
+# =============================================================================
+# This file ships the GENERIC defaults (committed). To override locally, copy
+# the keys you care about into `models.toml` (gitignored) — it is MERGED on top
+# of this file per key, so a partial `models.toml` only overrides what it lists.
+#
+# An environment variable always wins when present (quick one-off / CI):
+#   roles            → JEANMICHEL_DISPATCH_MODEL, _MAIN_MODEL, _CODE_MODEL,
+#                       _COMPACTOR_MODEL, _SUBAGENT_MODEL, _REASONER_MODEL
+#   context windows  → JEANMICHEL_CTX_WINDOW_<slug>  (slug = model id, non-alnum → '_')
+#   voice            → JEANMICHEL_VOICE_MODEL, JEANMICHEL_AUDIO_PLAYER
+# =============================================================================
+
+# ---- Role → model -----------------------------------------------------------
+# Which Ollama model plays each role in the deterministic orchestration chain.
+[roles]
+dispatch  = "granite4.1:8b"   # tier-0 classifier — small & fast
+main      = "gemma4:26b"      # jean-michel router (analyse / chat / vocal) — 26b, latest is too dumb
+code      = "qwen3:14b"       # code-router (code mode) — methodical decomposition
+compactor = "gemma4:26b"      # context summarizer
+subagent  = "gemma4:26b"      # default for specialists without a model_override
+reasoner  = "gemma4:26b"      # reasoning-heavy roles (strategist, critical-thinker…)
+
+# ---- Context window (pinned as Ollama num_ctx, in tokens) -------------------
+# The value is the model's REAL need in its role, NOT its native max: a 256k
+# window on an 8B ≈ 54 GB of KV cache → OOM. Only the code model needs the big
+# window. Everything is capped at `ceiling`.
+ceiling = 128000   # hard cap on every resolved window (VRAM safety)
+default = 32768    # fallback for any model not listed below
+
+[context_window]
+"qwen3-coder:latest" = 128000   # code-runner — code needs the large context
+"qwen3:14b"          = 40960    # code-router / analyst (native)
+"granite4.1:8b"      = 8192     # dispatcher (tier-0) — tiny prompts
+"gemma4:latest"      = 32768    # main router
+"gemma4:26b"         = 32768    # reasoners / strategist
+# Example for a personal orchestrator model pulled locally:
+# "hf.co/MaziyarPanahi/Nemotron-Orchestrator-8B-GGUF:Q5_K_M" = 40960
+
+# ---- Vocal mode (Piper TTS) -------------------------------------------------
+[voice]
+# Path to the Piper .onnx model (the .onnx.json is auto-found alongside it).
+# Generic default = the repo's bundled model ; set your own in models.toml.
+model = "voice_models/default.onnx"
+# Force an audio player (paplay / aplay / ffplay …). Empty = auto-detect.
+audio_player = ""

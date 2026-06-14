@@ -499,16 +499,19 @@ def _refresh_plan_nudge(
         )
         if worktree.worktree_path_for(conv_folder).exists():  # code mode
             parts.append("Review the worktree diff (repo_git) as well.")
-            if load_todo(conv_folder) is not None:
-                parts.append(
-                    "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
-                    "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
-                )
-            elif _count_delegations(messages) >= 2:
-                parts.append(
-                    "You have no plan for this multi-step task — decompose it with todo_write (as many "
-                    "scoped steps as it needs, exactly one in_progress)."
-                )
+        # Keep the plan current in EVERY mode (not just code). This is the discipline
+        # pdca used to carry on the router ; without it, analyse-mode todos never
+        # progress (a step finishes but stays pending, the next never starts).
+        if load_todo(conv_folder) is not None:
+            parts.append(
+                "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
+                "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
+            )
+        elif _count_delegations(messages) >= 2:
+            parts.append(
+                "You have no plan for this multi-step task — decompose it with todo_write (as many "
+                "scoped steps as it needs, exactly one in_progress)."
+            )
         parts.append(
             "Re-delegate ONLY if a concrete gap remains. Otherwise synthesize your answer — or, if you are "
             "blocked on a decision only the user can make, escalate with ask_human (offer choices when the "

@@ -7,7 +7,7 @@ Skipped by default. To run :
 Prerequisites :
 - Ollama running locally (`ollama serve`).
 - The configured DISPATCH_MODEL (default granite4.1:8b) and MAIN_MODEL
-  (default gemma4:latest) pulled (`ollama pull <model>`).
+  (default gemma4:26b) pulled (`ollama pull <model>`).
 - For the CODE scenario : CODE_MODEL (default qwen3:14b) and the code workers'
   model (qwen3-coder:latest) pulled, plus Docker running with the
   jeanmichel-sandbox:py-alpine image built (`./jm.sh --build-docker`).

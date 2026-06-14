@@ -22,9 +22,41 @@ RECAP_MARKER = "[TODO-RECAP]"
 STATUSES = ("pending", "in_progress", "done")
 _GLYPH = {"done": "[x]", "in_progress": "[>]", "pending": "[ ]"}
 
+# The plan is also mirrored as a human-readable artifact in the workspace, so it
+# is findable alongside the agents' outputs (todo.json itself lives at the conv
+# root, which is not surfaced as a workspace artifact).
+PLAN_ARTIFACT_NAME = "plan.md"
+
 
 def todo_path(conv_folder: Path) -> Path:
     return conv_folder / TODO_FILENAME
+
+
+def _plan_artifact_path(conv_folder: Path) -> Path:
+    return conv_folder / "workspace" / PLAN_ARTIFACT_NAME
+
+
+def render_plan_md(goal: str, items: list[dict[str, Any]]) -> str:
+    """Render the plan as a markdown checklist (the workspace artifact)."""
+    done = sum(1 for it in items if it.get("status") == "done")
+    lines = [f"# Plan ({done}/{len(items)} done)", ""]
+    if goal.strip():
+        lines += [f"**Goal:** {goal.strip()}", ""]
+    for it in items:
+        box = "[x]" if it.get("status") == "done" else "[ ]"
+        active = " _(in progress)_" if it.get("status") == "in_progress" else ""
+        lines.append(f"- {box} {it.get('id')}. {it.get('text')}{active}")
+    return "\n".join(lines) + "\n"
+
+
+def _mirror_plan_to_workspace(conv_folder: Path, goal: str, items: list[dict[str, Any]]) -> None:
+    """Best-effort write of the plan artifact ; never breaks the todo save."""
+    p = _plan_artifact_path(conv_folder)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(render_plan_md(goal, items), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def load_todo(conv_folder: Path) -> dict[str, Any] | None:
@@ -52,11 +84,13 @@ def save_todo(conv_folder: Path, goal: str, items: list[dict[str, Any]]) -> None
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
+    _mirror_plan_to_workspace(conv_folder, goal, items)
 
 
 def clear_todo(conv_folder: Path) -> None:
     """Remove the TODO file (called when every item is done)."""
     todo_path(conv_folder).unlink(missing_ok=True)
+    _plan_artifact_path(conv_folder).unlink(missing_ok=True)
 
 
 def normalize_items(items: Any) -> tuple[list[dict[str, Any]] | None, str | None]:

@@ -112,6 +112,10 @@ llm_streams/
 # the curated list ships as mcp_servers.example.toml).
 mcp_servers.toml
 !mcp_servers.example.toml
+# Per-model runtime config (local override ; defaults ship in models.example.toml
+# and the built-in table in config.py).
+models.toml
+!models.example.toml
 
 # Piper voice models (30-150 MB each) — keep only the README tracked
 voice_models/*.onnx
