@@ -598,9 +598,11 @@ def test_ask_human_main_agent_invokes_callback(tmp_path: Path):
 
     # The human reply appears as a role=user message in the next call.
     second_msgs = mock.calls_v2[1]["messages"]
-    user_msgs = [m for m in second_msgs if m.get("role") == "user"]
-    # First user msg = original user_text ; second user msg = human reply.
-    assert user_msgs[-1]["content"] == "Yes, of course."
+    # The human reply is the last genuine user message (a transient [ORCHESTRATOR] mode
+    # banner may follow it — that's a nudge, not user content).
+    human_msgs = [m for m in second_msgs
+                  if m.get("role") == "user" and not (m.get("content") or "").startswith("[ORCHESTRATOR]")]
+    assert human_msgs[-1]["content"] == "Yes, of course."
 
 
 def test_ask_human_forwards_choices_and_multi(tmp_path: Path):
@@ -635,8 +637,9 @@ def test_ask_human_forwards_choices_and_multi(tmp_path: Path):
     assert result == "Got it."
     assert captured == [("Which colors?", "palette unclear", ["Red", "Green", "Blue"], True)]
     second_msgs = mock.calls_v2[1]["messages"]
-    user_msgs = [m for m in second_msgs if m.get("role") == "user"]
-    assert user_msgs[-1]["content"] == "Red, Blue"
+    human_msgs = [m for m in second_msgs
+                  if m.get("role") == "user" and not (m.get("content") or "").startswith("[ORCHESTRATOR]")]
+    assert human_msgs[-1]["content"] == "Red, Blue"
 
 
 def test_ask_human_in_subagent_is_unavailable(tmp_path: Path):

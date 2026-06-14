@@ -48,7 +48,8 @@ def make_spec(conv_folder: Path) -> ToolSpec:
         description=(
             "SIGNATURE: todo_write(goal, items). "
             "Maintain your living plan for a complex / multi-step task. You OWN this plan: "
-            "decompose the task into 3-7 scoped steps BEFORE delegating, then call todo_write "
+            "decompose the task into as many scoped steps as it genuinely needs (no minimum, no "
+            "cap — 2 for a simple task, 12 for a 12-item inventory) BEFORE delegating, then call todo_write "
             "AGAIN after every worker report to keep it current — keeping the plan up to date is "
             "the key to a good result. "
             "WHOLE-LIST REPLACE: always pass the COMPLETE intended list (it overwrites the previous "

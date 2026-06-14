@@ -173,8 +173,7 @@ def test_recap_injected_for_main_agent(tmp_path):
     msgs = _msgs()
     hook(msgs, _state())
     recaps = [m for m in msgs if m["content"].startswith(todomod.RECAP_MARKER)]
-    assert len(recaps) == 1
-    assert msgs[-1]["content"].startswith(todomod.RECAP_MARKER)  # appended last
+    assert len(recaps) == 1  # recap injected (the EDIT-mode banner is appended after it)
 
 
 def test_recap_refreshed_not_accumulated(tmp_path):
@@ -191,7 +190,7 @@ def test_recap_noop_without_todo(tmp_path):
     hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
     msgs = _msgs()
     hook(msgs, _state())
-    assert len(msgs) == 2
+    # No TODO-RECAP without a todo.json (the EDIT-mode banner is a separate nudge).
     assert not any(m["content"].startswith(todomod.RECAP_MARKER) for m in msgs)
 
 

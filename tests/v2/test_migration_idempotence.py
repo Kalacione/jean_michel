@@ -84,6 +84,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_145_runner_bounces_readonly.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_146_apply_dont_describe.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_147_router_delegates_web_search.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_148_router_planning_sobriety.sql")
     yield conn
     conn.close()
 
@@ -275,6 +276,19 @@ def test_apply_dont_describe_paradigm(v2_migrated_db, v2_consolidated_db):
             )
         }
         assert bound == {"code-runner", "code-runner-node"}
+
+
+def test_router_planning_sobriety(v2_migrated_db, v2_consolidated_db):
+    """migrate_148: pdca is OFF jean-michel (it over-planned simple queries) but STAYS on
+    code-router ; and no paradigm pins the rigid '3-7' step count anymore ('free the todo').
+    Identical in chain AND schema.sql."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        bound = {r["code"] for r in db.execute(
+            "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+            "JOIN paradigms p ON p.id=ap.paradigm_id WHERE p.code='pdca_decompose_delegate_revise'")}
+        assert "jean-michel" not in bound
+        assert "code-router" in bound
+        assert db.execute("SELECT COUNT(*) AS c FROM paradigms WHERE content LIKE '%3-7%'").fetchone()["c"] == 0
 
 
 def test_router_delegates_web_search(v2_migrated_db, v2_consolidated_db):

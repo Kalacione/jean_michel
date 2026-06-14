@@ -564,8 +564,8 @@ def _run_agent_loop(
                     messages.append({"role": "user", "content": (
                         "[ORCHESTRATOR] (orchestrator control — not the human user) You tried to "
                         "conclude the PLAN turn without recording the "
-                        "plan. Call todo_write(goal, items) with 3-7 scoped steps BEFORE your summary "
-                        "— a prose plan is not usable for review or execution."
+                        "plan. Call todo_write(goal, items) with as many scoped steps as the task needs "
+                        "(no minimum, no cap) BEFORE your summary — a prose plan is not usable for review or execution."
                     )})
                     _persist()
                     continue

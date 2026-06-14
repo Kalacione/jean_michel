@@ -276,7 +276,7 @@ def test_router_stocktake_nudge(conv_folder):
     produced before re-delegating, with an ask_human escalation exit. Code mode folds
     in TODO discipline. Gated on reeval_pending ; idempotent."""
     from jeanmichel import todo as todo_mod
-    from jeanmichel.hooks import _PLAN_NUDGE_MARKER, _refresh_plan_nudge
+    from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
 
     state = ConversationState()
@@ -285,12 +285,15 @@ def test_router_stocktake_nudge(conv_folder):
         return [{"role": "tool", "tool_name": "delegate_to", "content": "{}"} for _ in range(n)]
 
     def nudges(ms):
-        return [m for m in ms if (m.get("content") or "").startswith(_PLAN_NUDGE_MARKER)]
+        return [m for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER)]
 
-    # No specialist pending (reeval_pending False) → never nudges, any mode/count.
+    # EDIT mode, no specialist pending (reeval_pending False) → the MODE banner fires
+    # (execute & answer directly) but WITHOUT the stock-take (no specialist returned).
     msgs = [{"role": "user", "content": "go"}, *delegations(3)]
     _refresh_plan_nudge(msgs, conv_folder, state)
-    assert nudges(msgs) == []
+    assert len(nudges(msgs)) == 1
+    assert "EDIT mode" in nudges(msgs)[0]["content"]
+    assert "take stock" not in nudges(msgs)[0]["content"]  # no stock-take without a return
 
     # Chat router (no worktree), a specialist just returned → stock-take nudge fires
     # (both routers), with the ask_human escalation ; idempotent ; no TODO wording.
@@ -319,20 +322,21 @@ def test_router_stocktake_nudge(conv_folder):
     assert len(nudges(msgs)) == 1
     assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
 
-    # Router acted (todo_write cleared reeval_pending) → no nudge.
+    # Router acted (todo_write cleared reeval_pending) → MODE banner only, no stock-take.
     state.reeval_pending = False
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
-    assert nudges(msgs) == []
+    assert len(nudges(msgs)) == 1
+    assert "take stock" not in nudges(msgs)[0]["content"]
 
 
 def test_plan_mode_nudge(conv_folder):
     """plan_mode → a PLAN MODE nudge fires (any mode), takes priority, idempotent."""
-    from jeanmichel.hooks import _PLAN_NUDGE_MARKER, _refresh_plan_nudge
+    from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
 
     def nudges(ms):
-        return [m for m in ms if (m.get("content") or "").startswith(_PLAN_NUDGE_MARKER)]
+        return [m for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER)]
 
     state = ConversationState(plan_mode=True)
     msgs = [{"role": "user", "content": "build feature X"}]

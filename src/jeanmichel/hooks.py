@@ -428,7 +428,7 @@ def _refresh_repo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> No
     )})
 
 
-_PLAN_NUDGE_MARKER = "[ORCHESTRATOR] PLAN:"
+_MODE_NUDGE_MARKER = "[ORCHESTRATOR] MODE:"
 
 
 def _count_delegations(messages: list[dict[str, Any]]) -> int:
@@ -466,47 +466,54 @@ def _refresh_plan_nudge(
         if not (
             m.get("role") == "user"
             and isinstance(m.get("content"), str)
-            and m["content"].startswith(_PLAN_NUDGE_MARKER)
+            and m["content"].startswith(_MODE_NUDGE_MARKER)
         )
     ]
     # PLAN mode takes priority : the router drafts a plan and STOPS (no execution).
     # Mutating tools are already denied by PreToolUse ; this nudge sets the intent.
     if state.plan_mode:
         messages.append({"role": "user", "content": (
-            f"{_PLAN_NUDGE_MARKER} (orchestrator control — not the human user) You are in PLAN "
+            f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) You are in PLAN "
             "mode. Explore read-only — you may read "
             "(repo_read/grep/glob/git, workspace_view), run repo_test, search, and delegate FOR "
             "EXPLORATION — but nothing writes, runs, or implements. Produce a concrete plan with "
-            "todo_write (3-7 scoped steps), then CONCLUDE with a short summary of the plan for the "
+            "todo_write (as many scoped steps as the task needs — no minimum, no cap), then CONCLUDE "
+            "with a short summary of the plan for the "
             "human to approve. Do NOT edit files, run commands, or implement: execution happens in a "
             "separate Edit turn once the human approves."
         )})
         return
-    if not state.reeval_pending:
-        return  # no specialist pending review → nothing to take stock of
+    # EDIT mode : execute and ANSWER directly. The banner is injected EVERY turn (not only
+    # after a specialist returns) so the router never hallucinates a plan-to-execute or an
+    # approval flow (convs 15-43 / 15-51 : it asked to approve a non-existent plan).
     parts = [
-        f"{_PLAN_NUDGE_MARKER} (orchestrator control — not the human user) A specialist just "
-        "returned. BEFORE delegating again, take stock of what "
-        "the specialists already produced — open their files_produced with workspace_view and re-read "
-        "their summaries."
+        f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: execute and "
+        "ANSWER the user directly. A targeted question → delegate to the right specialist, then "
+        "synthesize the answer. You have NO plan to execute or to get approved — planning-for-approval "
+        "is PLAN mode only ; never ask the user to approve a plan here."
     ]
-    if worktree.worktree_path_for(conv_folder).exists():  # code mode
-        parts.append("Review the worktree diff (repo_git) as well.")
-        if load_todo(conv_folder) is not None:
-            parts.append(
-                "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
-                "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
-            )
-        elif _count_delegations(messages) >= 2:
-            parts.append(
-                "You have no plan for this multi-step task — decompose it with todo_write (3-7 scoped "
-                "steps, exactly one in_progress)."
-            )
-    parts.append(
-        "Re-delegate ONLY if a concrete gap remains. Otherwise synthesize your answer — or, if you are "
-        "blocked on a decision only the user can make, escalate with ask_human (offer choices when the "
-        "options are known)."
-    )
+    if state.reeval_pending:
+        parts.append(
+            "A specialist just returned : take stock first — open their files_produced with "
+            "workspace_view and re-read their summaries."
+        )
+        if worktree.worktree_path_for(conv_folder).exists():  # code mode
+            parts.append("Review the worktree diff (repo_git) as well.")
+            if load_todo(conv_folder) is not None:
+                parts.append(
+                    "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
+                    "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
+                )
+            elif _count_delegations(messages) >= 2:
+                parts.append(
+                    "You have no plan for this multi-step task — decompose it with todo_write (as many "
+                    "scoped steps as it needs, exactly one in_progress)."
+                )
+        parts.append(
+            "Re-delegate ONLY if a concrete gap remains. Otherwise synthesize your answer — or, if you are "
+            "blocked on a decision only the user can make, escalate with ask_human (offer choices when the "
+            "options are known)."
+        )
     messages.append({"role": "user", "content": " ".join(parts)})
 
 
