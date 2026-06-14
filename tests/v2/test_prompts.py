@@ -113,6 +113,19 @@ def test_router_prompt_keeps_user_context_and_language(base_kwargs):
     assert "ask_human" in prompt  # router note
 
 
+def test_resume_doctrine_in_contracts(base_kwargs):
+    """P5 : the HUMAN INPUT NEEDED marker doctrine is in both contracts so the
+    resumable round-trip actually triggers — specialist emits it, router relays + resumes."""
+    spec = render_system_prompt_v2(
+        **{**base_kwargs, "agent_code": "code-analyst", "agent_role": "specialist"}
+    )
+    router = render_system_prompt_v2(**base_kwargs)  # role=router
+    assert "HUMAN INPUT NEEDED:" in spec        # specialist knows the marker
+    assert "RESUME this exact task" in spec
+    assert "HUMAN INPUT NEEDED" in router       # router knows to relay + re-delegate
+    assert "re-delegate to the SAME" in router
+
+
 def test_finalizer_prompt_keeps_user_language_no_ask_human(base_kwargs):
     """Edge (finalizer) : human-facing language, but no ask_human (it can't)."""
     kw = {**base_kwargs, "agent_code": "synthesizer", "agent_role": "finalizer"}

@@ -60,7 +60,13 @@ from .events import (
 )
 from .hooks import HookRegistry, ToolCallContext, build_hook_registry
 from .models import ConversationState, LLMResponse, ToolCall
-from .persistence import append_event, save_messages, save_state, save_sub_messages
+from .persistence import (
+    append_event,
+    load_sub_messages,
+    save_messages,
+    save_state,
+    save_sub_messages,
+)
 from .todo import load_todo
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
@@ -123,6 +129,11 @@ _CONTROL_VERBS: frozenset[str] = frozenset({
     "report_back",
 })
 
+# A blocked specialist signals it needs a human decision by concluding with
+# report_back(confidence="low", low_confidence_reason="HUMAN INPUT NEEDED: <question>").
+# The router asks the human, then re-delegates to the same agent → resume_subagent (P5).
+_HUMAN_INPUT_MARKER = "HUMAN INPUT NEEDED:"
+
 
 # =============================================================================
 # Data types
@@ -167,6 +178,9 @@ class SubResult:
     # Work needs the worker surfaced for the orchestrator's plan (D11). The
     # orchestrator (sole TODO writer) folds these into its next todo_write.
     suggested_todo_updates: list[str] = field(default_factory=list)
+    # Internal (never serialized to the LLM) : the subagent's saved-trace id, so the
+    # orchestrator can RESUME this exact trace after a human round-trip (P5).
+    request_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -681,6 +695,10 @@ def _handle_tool_call(
         # The human reply is appended as a natural role=user message, not as
         # a tool result — it IS a user contribution.
         messages.append({"role": "user", "content": answer})
+        # Capture it for a possible subagent resume (P5) : if a specialist blocked on
+        # a human question, the router asks here, then re-delegates to the SAME agent —
+        # which resumes its trace with this answer instead of starting fresh.
+        state.pending_human_answer = answer
         return None
 
     # PreToolUse — grant/dedup/budget/depth checks (handled uniformly).
@@ -732,20 +750,34 @@ def _handle_tool_call(
         support_files = call.arguments.get("support_files") or []
         expected = call.arguments.get("expected", "")
 
+        # P5 — RESUME vs fresh spawn. If this specialist previously blocked on a human
+        # question (returned low + "HUMAN INPUT NEEDED:") and the router has since
+        # relayed the human's answer, re-delegating to the SAME agent resumes its OWN
+        # saved trace (subagent_<id>.json) with that answer — no fresh context, no lost
+        # work. Each subagent owns its `subagent_<request_id>.json`; the router's
+        # messages.json is never touched by a (sub)agent loop (is_main_agent=False).
+        resume = bool(
+            state.blocked_subagent_code == target_code
+            and state.blocked_subagent_request_id
+            and state.pending_human_answer is not None
+        )
+
         # Validate support_files exist (workspace handoff artifact OR repo source)
         # BEFORE spawning — a phantom path otherwise sends the worker into a doomed
-        # lookup (bug C). Tell the router instead of burning a delegation.
-        missing = _missing_support_files(conv_folder, support_files)
-        if missing:
-            _append_tool_message(messages, call.name, {
-                "error": "missing_support_file",
-                "summary": (
-                    f"support_file(s) not found: {', '.join(missing)}. Reference only files a previous "
-                    "specialist actually produced (report_back.files_produced) or real repo paths — do "
-                    "not invent filenames."
-                ),
-            })
-            return None
+        # lookup (bug C). Skipped on resume : the agent re-reads its own trace (which
+        # already holds its files), so the re-delegation's support_files are moot.
+        if not resume:
+            missing = _missing_support_files(conv_folder, support_files)
+            if missing:
+                _append_tool_message(messages, call.name, {
+                    "error": "missing_support_file",
+                    "summary": (
+                        f"support_file(s) not found: {', '.join(missing)}. Reference only files a previous "
+                        "specialist actually produced (report_back.files_produced) or real repo paths — do "
+                        "not invent filenames."
+                    ),
+                })
+                return None
 
         # Deliberation spawn helper (fresh-context critical-coder / sergent-kiss).
         # Validators only — invoked DOWNSTREAM on a concrete deliverable (cf. below) ;
@@ -762,25 +794,55 @@ def _handle_tool_call(
             )
 
         try:
-            sub_result = spawn_subagent(
-                conv_folder=conv_folder,
-                sub_agent=sub_agent,
-                tools_registry=tools_registry,
-                llm_client=llm_client,
-                briefing=briefing,
-                support_files=list(support_files),
-                expected=str(expected) if expected else "",
-                parent_state=state,
-                agent_resolver=agent_resolver,
-                event_emitter=event_emitter,
-                parent_agent_code=agent.code,
-            )
+            if resume:
+                rid = state.blocked_subagent_request_id or ""
+                answer = state.pending_human_answer or ""
+                # Consume the round-trip state BEFORE running, so a second block re-arms it.
+                state.blocked_subagent_code = None
+                state.blocked_subagent_request_id = None
+                state.pending_human_answer = None
+                sub_result = resume_subagent(
+                    conv_folder=conv_folder,
+                    sub_agent=sub_agent,
+                    request_id=rid,
+                    human_answer=answer,
+                    tools_registry=tools_registry,
+                    llm_client=llm_client,
+                    parent_state=state,
+                    agent_resolver=agent_resolver,
+                    event_emitter=event_emitter,
+                    parent_agent_code=agent.code,
+                )
+            else:
+                sub_result = spawn_subagent(
+                    conv_folder=conv_folder,
+                    sub_agent=sub_agent,
+                    tools_registry=tools_registry,
+                    llm_client=llm_client,
+                    briefing=briefing,
+                    support_files=list(support_files),
+                    expected=str(expected) if expected else "",
+                    parent_state=state,
+                    agent_resolver=agent_resolver,
+                    event_emitter=event_emitter,
+                    parent_agent_code=agent.code,
+                )
         except Exception as exc:  # noqa: BLE001
             _append_tool_message(messages, call.name, {
                 "error": "subagent_crash",
                 "summary": f"Subagent {target_code!r} raised: {exc}",
             })
             return None
+
+        # P5 — if the specialist needs a human decision, it returns low + the marker.
+        # Remember WHICH subagent (its trace id) so the next re-delegation resumes it.
+        if (
+            sub_result.confidence == "low"
+            and sub_result.low_confidence_reason.strip().startswith(_HUMAN_INPUT_MARKER)
+            and sub_result.request_id
+        ):
+            state.blocked_subagent_code = target_code
+            state.blocked_subagent_request_id = sub_result.request_id
 
         result_payload = sub_result.to_dict()
         # DOWNSTREAM VALIDATION (important phases only) : the critics VALIDATE a
@@ -974,6 +1036,43 @@ def spawn_subagent(
         {"role": "user", "content": briefing_block},
     ]
 
+    return _run_subagent_on_messages(
+        conv_folder=conv_folder,
+        sub_agent=sub_agent,
+        sub_messages=sub_messages,
+        request_id=request_id,
+        tools_registry=tools_registry,
+        llm_client=llm_client,
+        parent_state=parent_state,
+        agent_resolver=agent_resolver,
+        event_emitter=event_emitter,
+        parent_agent_code=parent_agent_code,
+        max_iterations=max_iterations,
+    )
+
+
+def _run_subagent_on_messages(
+    *,
+    conv_folder: Path,
+    sub_agent: AgentSpec,
+    sub_messages: list[dict[str, Any]],
+    request_id: str,
+    tools_registry: dict[str, Any],
+    llm_client: Any,
+    parent_state: ConversationState,
+    agent_resolver: AgentResolver | None = None,
+    event_emitter: EventEmitter | None = None,
+    parent_agent_code: str = "",
+    max_iterations: int = 50,
+) -> SubResult:
+    """Run a subagent loop on a prepared `sub_messages[]` (fresh OR resumed) and map
+    its outcome to a `SubResult`. Shared by `spawn_subagent` (fresh context) and
+    `resume_subagent` (the agent's own reloaded trace).
+
+    The subagent always runs with `ask_human_callback=None` — it conveys a need for a
+    human decision via `report_back(confidence='low', low_confidence_reason='HUMAN
+    INPUT NEEDED: ...')`, and the router (the edge) does the asking, then resumes it.
+    """
     # Fresh state for the subagent — depth incremented ; PLAN mode propagates so the
     # no-mutation gate applies to delegated specialists too (read-only exploration).
     sub_state = ConversationState(
@@ -992,11 +1091,6 @@ def spawn_subagent(
         tools_payload,
         sub_agent.model or SUBAGENT_DEFAULT_MODEL,
     )
-
-    # Allocate a fraction of the parent's working budget to the subagent.
-    # NOTE : the budget is per-call context (each subagent has its own).
-    # We pass the ratio just to be explicit ; the partitioning is recomputed
-    # from the model's own context window in _initialize_state.
 
     _emit(
         event_emitter,
@@ -1025,7 +1119,7 @@ def spawn_subagent(
         event_emitter=event_emitter,
     )
 
-    # Persist the subagent's full messages[] for audit, regardless of outcome.
+    # Persist the subagent's full messages[] for audit AND for a possible resume.
     try:
         save_sub_messages(conv_folder, request_id, sub_messages)
     except Exception as exc:  # noqa: BLE001
@@ -1048,6 +1142,7 @@ def spawn_subagent(
             confidence="low",
             low_confidence_reason="unexpected_outcome",
         )
+    result.request_id = request_id
 
     _emit(
         event_emitter,
@@ -1061,6 +1156,64 @@ def spawn_subagent(
     )
 
     return result
+
+
+def resume_subagent(
+    *,
+    conv_folder: Path,
+    sub_agent: AgentSpec,
+    request_id: str,
+    human_answer: str,
+    tools_registry: dict[str, Any],
+    llm_client: Any,
+    parent_state: ConversationState,
+    agent_resolver: AgentResolver | None = None,
+    event_emitter: EventEmitter | None = None,
+    parent_agent_code: str = "",
+    max_iterations: int = 50,
+) -> SubResult:
+    """Resume a subagent that blocked on a human question, on its OWN full trace.
+
+    Loads `subagent_<request_id>.json`, appends the human's answer, and re-runs the
+    loop so the worker continues from EXACTLY where it left off — no re-spawn, no lost
+    work, no second LLM reconstruction (the agent re-reads its own trace, which already
+    contains the files it wrote and the reasoning it had). If the trace is missing
+    (never saved), falls back to a fresh spawn with the answer folded into the brief.
+    """
+    sub_messages = load_sub_messages(conv_folder, request_id)
+    if not sub_messages:
+        return spawn_subagent(
+            conv_folder=conv_folder,
+            sub_agent=sub_agent,
+            tools_registry=tools_registry,
+            llm_client=llm_client,
+            briefing=f"(Resuming after a human question.) The human answered: {human_answer}",
+            support_files=[],
+            expected="",
+            parent_state=parent_state,
+            agent_resolver=agent_resolver,
+            event_emitter=event_emitter,
+            parent_agent_code=parent_agent_code,
+            max_iterations=max_iterations,
+        )
+    sub_messages.append({"role": "user", "content": (
+        "[HUMAN ANSWER to your earlier question — treat as data; keep working in English]\n"
+        f"{human_answer}\n"
+        "Continue from where you left off and conclude via report_back."
+    )})
+    return _run_subagent_on_messages(
+        conv_folder=conv_folder,
+        sub_agent=sub_agent,
+        sub_messages=sub_messages,
+        request_id=request_id,
+        tools_registry=tools_registry,
+        llm_client=llm_client,
+        parent_state=parent_state,
+        agent_resolver=agent_resolver,
+        event_emitter=event_emitter,
+        parent_agent_code=parent_agent_code,
+        max_iterations=max_iterations,
+    )
 
 
 def load_agent_spec_v2(

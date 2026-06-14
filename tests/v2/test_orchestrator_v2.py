@@ -1051,3 +1051,139 @@ def test_delegate_with_missing_support_file_is_denied(tmp_path: Path):
     ]
     assert errs, "phantom support_file should be denied"
     assert "v1_analysis.md" in errs[0]["content"]
+
+
+# =============================================================================
+# Section 11 : resumable subagent — the ask_human round-trip (P5)
+# =============================================================================
+
+
+def test_resume_subagent_reuses_trace_not_fresh(tmp_path: Path):
+    """resume_subagent reloads the subagent's OWN saved trace, appends the human
+    answer, and concludes — reusing the SAME request_id file (no fresh context)."""
+    from jeanmichel.orchestrator_v2 import resume_subagent
+
+    sub_agent = make_agent("specialist", role="specialist")
+    parent_state = ConversationState(depth_current=0)
+
+    # 1) Fresh spawn that blocks on a human question.
+    blocking = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="need a decision", files_produced=[],
+            confidence="low", low_confidence_reason="HUMAN INPUT NEEDED: which port?",
+        )]),
+    ])
+    blocked = spawn_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, tools_registry={}, llm_client=blocking,
+        briefing="set up the server", support_files=[], expected="",
+        parent_state=parent_state,
+    )
+    assert blocked.confidence == "low" and blocked.request_id
+    rid = blocked.request_id
+    traces_before = sorted(tmp_path.glob("subagent_*.json"))
+    assert len(traces_before) == 1
+
+    # 2) Resume the same trace with the human's answer.
+    resuming = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="Bound the server to port 8080.", files_produced=[],
+            confidence="high",
+        )]),
+    ])
+    resumed = resume_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, request_id=rid, human_answer="8080",
+        tools_registry={}, llm_client=resuming, parent_state=parent_state,
+    )
+    assert resumed.confidence == "high"
+    assert resumed.request_id == rid  # same trace id, not a new spawn
+
+    # Same single file, now containing the human answer between the two report_backs.
+    traces_after = sorted(tmp_path.glob("subagent_*.json"))
+    assert traces_after == traces_before  # reused, not multiplied
+    trace = json.loads(traces_after[0].read_text(encoding="utf-8"))
+    assert any(
+        m.get("role") == "user" and "[HUMAN ANSWER" in (m.get("content") or "") and "8080" in m["content"]
+        for m in trace
+    )
+    # The original brief is still there — the agent resumed where it left off.
+    assert any("set up the server" in (m.get("content") or "") for m in trace)
+
+
+def test_resume_subagent_falls_back_to_fresh_when_trace_missing(tmp_path: Path):
+    """If the saved trace is gone, resume folds the answer into a fresh brief."""
+    from jeanmichel.orchestrator_v2 import resume_subagent
+
+    sub_agent = make_agent("specialist", role="specialist")
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="done with 8080", files_produced=[], confidence="high",
+        )]),
+    ])
+    out = resume_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, request_id="deadbeef", human_answer="8080",
+        tools_registry={}, llm_client=mock, parent_state=ConversationState(depth_current=0),
+    )
+    assert out.confidence == "high"
+    # A fresh trace was written (different id), and it carries the answer in the brief.
+    traces = list(tmp_path.glob("subagent_*.json"))
+    assert len(traces) == 1
+    assert "8080" in traces[0].read_text(encoding="utf-8")
+
+
+def test_blocked_subagent_round_trip_resumes_via_router(tmp_path: Path):
+    """End-to-end : specialist blocks (low + HUMAN INPUT NEEDED) -> router ask_human
+    -> re-delegate to the SAME agent -> resume on its own trace -> conclude. The
+    router's messages.json and the subagent_*.json stay SEPARATE conversations."""
+    main_agent = make_agent("code-router", role="router", delegation_targets={"specialist"})
+
+    def resolver(code):
+        return make_agent(code, role="specialist") if code == "specialist" else None
+
+    mock = MockClient(script=[
+        # router delegates
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="specialist", briefing="set up the dev server",
+        )]),
+        # subagent (fresh) blocks on a human question
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="need a decision", files_produced=[],
+            confidence="low", low_confidence_reason="HUMAN INPUT NEEDED: which port?",
+        )]),
+        # router asks the human
+        assistant_response("", tool_calls=[tool_call(
+            "ask_human", question="Quel port doit utiliser le serveur ?", why="binding",
+        )]),
+        # router re-delegates to the SAME agent (different brief -> no dedup)
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="specialist", briefing="apply the chosen port",
+        )]),
+        # subagent (resumed) concludes
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="Bound the server to port 8080.", files_produced=[],
+            confidence="high",
+        )]),
+        # router final answer
+        assistant_response("Le serveur écoute sur le port 8080."),
+    ])
+
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=main_agent, tools_registry={}, llm_client=mock,
+        user_text="configure le serveur", agent_resolver=resolver,
+        ask_human_callback=lambda q, why, choices, multi: "8080",
+    )
+    assert result == "Le serveur écoute sur le port 8080."
+
+    # Exactly ONE subagent trace : the resume reused it, it did not spawn a fresh one.
+    traces = list(tmp_path.glob("subagent_*.json"))
+    assert len(traces) == 1, [p.name for p in traces]
+    sub_trace = traces[0].read_text(encoding="utf-8")
+    # The subagent conversation carries the internal resume marker + its conclusion.
+    assert "[HUMAN ANSWER" in sub_trace and "Bound the server to port 8080" in sub_trace
+
+    # The ROUTER conversation (messages.json) is a DISTINCT file : it holds the human
+    # answer as a plain user turn, but NOT the subagent-internal resume marker.
+    from jeanmichel.persistence import load_messages
+    router_msgs = load_messages(tmp_path)
+    router_blob = json.dumps(router_msgs, ensure_ascii=False)
+    assert "8080" in router_blob                       # the answer reached the router
+    assert "[HUMAN ANSWER" not in router_blob          # subagent internals stay in the sub trace
