@@ -22,6 +22,24 @@ from typing import Any
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 
+# WebSocket keepalive. A turn runs in a worker thread, but between LLM calls the
+# worker does GIL-holding CPU work (CRP assembly, token estimation, persisting a
+# large messages.json) that can briefly starve the event-loop thread — and with
+# stream=False a single Ollama call can hold for the full LLM timeout (120s) with
+# no app traffic. uvicorn's default ws_ping_timeout (20s) then kills the live
+# stream mid-turn (1011 "keepalive ping timeout"). We make the keepalive tolerate
+# a full slow-call window. Tunable via env. (ping_interval=None disables pings.)
+DEFAULT_WS_PING_INTERVAL = 20.0
+DEFAULT_WS_PING_TIMEOUT = 130.0  # > LLM_CALL_TIMEOUT_SECONDS so a slow turn survives
+
+
+def ws_ping_setting(raw: str | None, default: float) -> float | None:
+    """Parse a WS keepalive env value : unset → default ; ''/'none'/'0'/'off' → None
+    (disables that ping) ; otherwise the float seconds."""
+    if raw is None:
+        return default
+    return None if raw.strip().lower() in ("", "none", "0", "off") else float(raw)
+
 
 def _valid_commit(commit: str) -> bool:
     """Accept only a git SHA-ish hex string (7-40 chars) before passing to git."""
@@ -725,7 +743,17 @@ def run() -> None:
 
     host = os.environ.get("JEANMICHEL_API_HOST", DEFAULT_HOST)
     port = int(os.environ.get("JEANMICHEL_API_PORT", DEFAULT_PORT))
-    uvicorn.run(create_app(), host=host, port=port)
+    uvicorn.run(
+        create_app(),
+        host=host,
+        port=port,
+        ws_ping_interval=ws_ping_setting(
+            os.environ.get("JEANMICHEL_WS_PING_INTERVAL"), DEFAULT_WS_PING_INTERVAL
+        ),
+        ws_ping_timeout=ws_ping_setting(
+            os.environ.get("JEANMICHEL_WS_PING_TIMEOUT"), DEFAULT_WS_PING_TIMEOUT
+        ),
+    )
 
 
 if __name__ == "__main__":
