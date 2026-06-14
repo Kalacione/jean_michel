@@ -16,7 +16,7 @@
 # Which Ollama model plays each role in the deterministic orchestration chain.
 [roles]
 dispatch  = "granite4.1:8b"   # tier-0 classifier — small & fast
-main      = "gemma4:26b"      # jean-michel router (analyse / chat / vocal) — 26b, latest is too dumb
+main      = "cogito:32b"      # jean-michel router/orchestrator — won the tool-calling eval (5/5)
 code      = "qwen3:14b"       # code-router (code mode) — methodical decomposition
 compactor = "gemma4:26b"      # context summarizer
 subagent  = "gemma4:26b"      # default for specialists without a model_override
@@ -31,10 +31,10 @@ default = 32768    # fallback for any model not listed below
 
 [context_window]
 "qwen3-coder:latest" = 128000   # code-runner — code needs the large context
+"cogito:32b"         = 40960    # main router / orchestrator
 "qwen3:14b"          = 40960    # code-router / analyst (native)
 "granite4.1:8b"      = 8192     # dispatcher (tier-0) — tiny prompts
-"gemma4:latest"      = 32768    # main router
-"gemma4:26b"         = 32768    # reasoners / strategist
+"gemma4:26b"         = 32768    # reasoners / strategist + compactor / subagent
 # Example for a personal orchestrator model pulled locally:
 # "hf.co/MaziyarPanahi/Nemotron-Orchestrator-8B-GGUF:Q5_K_M" = 40960
 

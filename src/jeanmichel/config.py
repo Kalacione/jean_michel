@@ -290,7 +290,7 @@ def _role_model(env_name: str, toml_key: str, default: str) -> str:
 
 # Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : env > models.toml > default.
 DISPATCH_MODEL = _role_model("JEANMICHEL_DISPATCH_MODEL", "dispatch", "granite4.1:8b")
-MAIN_MODEL = _role_model("JEANMICHEL_MAIN_MODEL", "main", "gemma4:26b")
+MAIN_MODEL = _role_model("JEANMICHEL_MAIN_MODEL", "main", "cogito:32b")
 COMPACTOR_MODEL = _role_model("JEANMICHEL_COMPACTOR_MODEL", "compactor", "gemma4:26b")
 SUBAGENT_DEFAULT_MODEL = _role_model("JEANMICHEL_SUBAGENT_MODEL", "subagent", "gemma4:26b")
 # Router (jean-michel) model used in the `code` interaction mode — a stronger
