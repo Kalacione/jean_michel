@@ -340,6 +340,34 @@ def test_router_stocktake_nudge(conv_folder):
     assert "take stock" not in nudges(msgs)[0]["content"]
 
 
+def test_edit_banner_branches_on_todo(conv_folder):
+    """EDIT-mode banner must NOT claim 'no plan' when a todo exists (a just-approved
+    plan) — that contradiction froze the model into empty output. With a todo →
+    'EXECUTE the approved plan' ; without → the anti-hallucination wording."""
+    from jeanmichel import todo as todo_mod
+    from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
+    from jeanmichel.models import ConversationState
+
+    state = ConversationState()  # plan_mode False = EDIT
+
+    def banner(ms):
+        return next(m["content"] for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER))
+
+    # No todo → anti-hallucination wording.
+    msgs = [{"role": "user", "content": "hi"}]
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    assert "NO plan to execute" in banner(msgs)
+
+    # Todo exists (approved plan) → execute-the-plan wording, no contradiction.
+    items, _ = todo_mod.normalize_items([{"text": "step 1", "status": "in_progress"}])
+    todo_mod.save_todo(conv_folder, "do the thing", items)
+    msgs = [{"role": "user", "content": "Approved — execute the plan above."}]
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    b = banner(msgs)
+    assert "EXECUTE the approved plan" in b
+    assert "NO plan to execute" not in b
+
+
 def test_plan_mode_nudge(conv_folder):
     """plan_mode → a PLAN MODE nudge fires (any mode), takes priority, idempotent."""
     from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge

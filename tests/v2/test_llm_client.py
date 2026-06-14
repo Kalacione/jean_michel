@@ -7,6 +7,16 @@ import pytest
 from jeanmichel.llm import MockClient
 from jeanmichel.models import LLMResponse
 
+
+@pytest.fixture(autouse=True)
+def _clear_no_thinking_cache():
+    """`_NO_THINKING_MODELS` is module-global; clear it around each test to avoid leakage."""
+    from jeanmichel import llm
+    llm._NO_THINKING_MODELS.clear()
+    yield
+    llm._NO_THINKING_MODELS.clear()
+
+
 # ---- chat_messages basic behavior ----------------------------------------
 
 
@@ -240,6 +250,19 @@ def test_chat_messages_retries_without_thinking_on_400():
     assert len(fake.chats) == 2          # first (with think) failed → retried
     assert "think" in fake.chats[0]      # first attempt requested thinking
     assert "think" not in fake.chats[1]  # retry dropped it
+
+
+def test_chat_messages_caches_no_thinking_model():
+    """After a 400, the model is remembered so we don't think+400+retry every call."""
+    fake = _StreamFake(raise_on_think=True)
+    client = _bare_ollama_client(fake)
+    # 1st call : think → 400 → retry (2 chat() calls), model cached.
+    client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
+    assert len(fake.chats) == 2
+    # 2nd call : think requested again, but cache skips it → single clean call, no 400.
+    client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
+    assert len(fake.chats) == 3          # only ONE extra call, not two
+    assert "think" not in fake.chats[2]  # thinking skipped from the start
 
 
 def test_chat_messages_other_errors_propagate():

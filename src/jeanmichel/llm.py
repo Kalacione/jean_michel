@@ -74,6 +74,11 @@ def _looks_corrupted(text: str) -> bool:
 
 _STREAM_DONE = object()  # sentinel : producer finished the stream cleanly
 
+# Models that rejected Ollama's `think` with HTTP 400 ("does not support thinking").
+# Learned at runtime so we stop re-requesting (and 400+retrying) on every call — e.g.
+# cogito:32b (the orchestrator) has no Ollama thinking channel.
+_NO_THINKING_MODELS: set[str] = set()
+
 
 def _chunk_field(chunk: Any, *path: str, default: Any = None) -> Any:
     """Dig `path` out of a streamed chunk that may be a dict OR a pydantic object."""
@@ -256,7 +261,7 @@ class OllamaClient:
             base["format"] = format
 
         sink_dir = _resolve_stream_dir(stream_log_dir)
-        think_enabled = thinking
+        think_enabled = thinking and eff_model not in _NO_THINKING_MODELS
         last_resp: LLMResponse | None = None
         for attempt in (1, 2):
             kwargs = dict(base)
@@ -272,6 +277,7 @@ class OllamaClient:
                 if think_enabled and "does not support thinking" in str(exc).lower():
                     _log.warning("model %r does not support thinking; retrying without it", eff_model)
                     think_enabled = False
+                    _NO_THINKING_MODELS.add(eff_model)  # don't re-request it next call
                     last_resp = self._consume_stream(dict(base), eff_model, sink_dir, stream_log_label, on_token)
                 else:
                     raise

@@ -483,15 +483,26 @@ def _refresh_plan_nudge(
             "separate Edit turn once the human approves."
         )})
         return
-    # EDIT mode : execute and ANSWER directly. The banner is injected EVERY turn (not only
-    # after a specialist returns) so the router never hallucinates a plan-to-execute or an
-    # approval flow (convs 15-43 / 15-51 : it asked to approve a non-existent plan).
-    parts = [
-        f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: execute and "
-        "ANSWER the user directly. A targeted question → delegate to the right specialist, then "
-        "synthesize the answer. You have NO plan to execute or to get approved — planning-for-approval "
-        "is PLAN mode only ; never ask the user to approve a plan here."
-    ]
+    # EDIT mode : execute directly. The opening banner branches on whether a plan
+    # (todo) already exists — otherwise it contradicts reality and the model freezes
+    # (a just-approved plan + a banner saying "you have NO plan to execute" = empty
+    # output). With a todo → execute it ; without → answer/delegate directly and never
+    # invent an approval flow (convs 15-43 / 15-51).
+    has_todo = load_todo(conv_folder) is not None
+    if has_todo:
+        parts = [
+            f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: EXECUTE the "
+            "approved plan now. Work the TODO — delegate the in_progress step to the right specialist, then "
+            "mark it done with todo_update and start the next. Synthesize the final answer once every step "
+            "is done. The plan is already approved — do NOT ask the user to approve anything."
+        ]
+    else:
+        parts = [
+            f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: execute and "
+            "ANSWER the user directly. A targeted question → delegate to the right specialist, then "
+            "synthesize the answer. You have NO plan to execute or to get approved — planning-for-approval "
+            "is PLAN mode only ; never ask the user to approve a plan here."
+        ]
     if state.reeval_pending:
         parts.append(
             "A specialist just returned : take stock first — open their files_produced with "
@@ -502,7 +513,7 @@ def _refresh_plan_nudge(
         # Keep the plan current in EVERY mode (not just code). This is the discipline
         # pdca used to carry on the router ; without it, analyse-mode todos never
         # progress (a step finishes but stays pending, the next never starts).
-        if load_todo(conv_folder) is not None:
+        if has_todo:
             parts.append(
                 "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
                 "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
