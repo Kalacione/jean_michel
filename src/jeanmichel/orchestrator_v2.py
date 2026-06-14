@@ -47,6 +47,7 @@ from .config import (
 )
 from .events import (
     AgentThinking,
+    AgentTokenStreamed,
     DelegationCompleted,
     DelegationStarted,
     HookFired,
@@ -460,6 +461,13 @@ def _run_agent_loop(
             ),
         )
 
+        # Live token stream → UI (best-effort). Emitted with conv_folder=None so it is
+        # forwarded to the WebSocket but NEVER persisted to events.jsonl (cf. event doc).
+        on_token = None
+        if event_emitter is not None:
+            def on_token(delta: str, _agent: str = agent.code) -> None:
+                _emit(event_emitter, None, AgentTokenStreamed(agent=_agent, delta=delta))
+
         try:
             resp = llm_client.chat_messages(
                 messages=messages,
@@ -469,6 +477,7 @@ def _run_agent_loop(
                 model=model,
                 stream_log_dir=conv_folder,        # per-conversation slop trace
                 stream_log_label=agent.code,
+                on_token=on_token,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("LLM call failed in %s: %s", agent.code, exc)

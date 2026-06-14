@@ -195,6 +195,20 @@ class AgentThinking:
         return _event_to_dict(self)
 
 
+@dataclass(frozen=True)
+class AgentTokenStreamed:
+    """A streamed token delta (content + thinking) from the model, forwarded LIVE to the
+    UI as it is generated. Emitted with conv_folder=None so it is NEVER persisted to
+    events.jsonl (it would bloat it by thousands of lines) — the full text still lands
+    via AgentThinking / the final answer at end of turn."""
+    agent: str
+    delta: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
 # ---- Registry for deserialization ----------------------------------------
 
 EVENT_CLASSES: dict[str, type] = {
@@ -210,6 +224,7 @@ EVENT_CLASSES: dict[str, type] = {
     "MemoryNearCapacity": MemoryNearCapacity,
     "RequestCompleted": RequestCompleted,
     "AgentThinking": AgentThinking,
+    "AgentTokenStreamed": AgentTokenStreamed,
     "MemoryConsolidationProposed": MemoryConsolidationProposed,
 }
 

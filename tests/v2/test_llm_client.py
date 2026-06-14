@@ -212,6 +212,21 @@ def test_chat_messages_accumulates_streamed_chunks():
     assert resp.eval_count == 5 and resp.prompt_eval_count == 12
 
 
+def test_chat_messages_streams_tokens_to_on_token():
+    """on_token receives each delta live (content + thinking) → powers the WS stream."""
+    fake = _StreamFake(chunks=[
+        _text_chunk("", thinking="hmm "),
+        _text_chunk("Hel"),
+        _text_chunk("lo", done=True),
+    ])
+    client = _bare_ollama_client(fake)
+    seen: list[str] = []
+    resp = client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True,
+                                on_token=seen.append)
+    assert "".join(seen) == "hmm Hello"   # deltas streamed in order
+    assert resp.content == "Hello" and resp.thinking == "hmm "
+
+
 def test_chat_messages_retries_without_thinking_on_400():
     fake = _StreamFake(raise_on_think=True)
     client = _bare_ollama_client(fake)

@@ -166,6 +166,7 @@ class LLMClientV2(Protocol):
         format: str | None = None,
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
+        on_token: Any = None,
     ) -> LLMResponse: ...
 
     def unload(self, model: str) -> None:
@@ -222,6 +223,7 @@ class OllamaClient:
         format: str | None = None,
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
+        on_token: Any = None,
     ) -> LLMResponse:
         """v2 native multi-turn path — STREAMED.
 
@@ -259,7 +261,7 @@ class OllamaClient:
             if think_enabled:
                 kwargs["think"] = True
             try:
-                last_resp = self._consume_stream(kwargs, eff_model, sink_dir, stream_log_label)
+                last_resp = self._consume_stream(kwargs, eff_model, sink_dir, stream_log_label, on_token)
             except LLMTimeoutError:
                 raise
             except Exception as exc:
@@ -268,7 +270,7 @@ class OllamaClient:
                 if think_enabled and "does not support thinking" in str(exc).lower():
                     _log.warning("model %r does not support thinking; retrying without it", eff_model)
                     think_enabled = False
-                    last_resp = self._consume_stream(dict(base), eff_model, sink_dir, stream_log_label)
+                    last_resp = self._consume_stream(dict(base), eff_model, sink_dir, stream_log_label, on_token)
                 else:
                     raise
             if not (_looks_corrupted(last_resp.content) or _looks_corrupted(last_resp.thinking or "")):
@@ -280,7 +282,8 @@ class OllamaClient:
         return last_resp
 
     def _consume_stream(
-        self, kwargs: dict[str, Any], eff_model: str, sink_dir: Path | None, label: str | None
+        self, kwargs: dict[str, Any], eff_model: str, sink_dir: Path | None,
+        label: str | None, on_token: Any = None,
     ) -> LLMResponse:
         """Drive one streamed chat. A producer thread iterates the stream onto a queue ;
         this thread pulls chunks with a STALL timeout (queue.Empty = no token for too
@@ -318,6 +321,9 @@ class OllamaClient:
                 if kind is _STREAM_DONE:
                     break
                 delta = _accumulate_chunk(acc, payload)
+                if delta and on_token is not None:
+                    with contextlib.suppress(Exception):
+                        on_token(delta)  # live → UI (best-effort, never breaks the call)
                 if sink is not None and delta:
                     with contextlib.suppress(Exception):
                         sink.write(delta)
@@ -397,6 +403,7 @@ class MockClient:
         format: str | None = None,
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
+        on_token: Any = None,
     ) -> LLMResponse:
         """v2 native multi-turn path."""
         _maybe_evict_on_switch(self, model or self.model)
