@@ -1,0 +1,3 @@
+- let me get you real data instead of more theory
+- always give the honest truth
+- be brutally honest
