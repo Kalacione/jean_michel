@@ -38,6 +38,7 @@ export const useConvStore = defineStore('conversations', () => {
   const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
 
   let turnWs = null
+  let streamingMsg = null // the assistant bubble currently being built live (token stream)
 
   // ---- audio queue (vocal mode) : play TTS clips one at a time -----------
   const audioQueue = []
@@ -116,6 +117,7 @@ export const useConvStore = defineStore('conversations', () => {
     planPending.value = false
     const loaded = (await api.messages(id)).messages
     messages.value = chatBubbles(loaded)
+    streamingMsg = null
     trace.value = []
     dispatch.value = null
     busy.value = false
@@ -129,6 +131,16 @@ export const useConvStore = defineStore('conversations', () => {
     turnWs = connectTurn(id, {
       dispatch: m => { dispatch.value = m },
       event: m => {
+        // Live answer stream : accumulate content deltas into a building assistant
+        // bubble instead of flooding the event trace with useless token events.
+        if (m.event?.type === 'AgentTokenStreamed') {
+          if (!streamingMsg) {
+            messages.value.push({ role: 'assistant', content: '', streaming: true })
+            streamingMsg = messages.value[messages.value.length - 1]
+          }
+          streamingMsg.content += m.event.delta || ''
+          return
+        }
         trace.value.push(m)
         if (vocal.value && m.speak) speak(m.speak)
         // Shadow consolidation result : surface candidates for human review.
@@ -142,16 +154,28 @@ export const useConvStore = defineStore('conversations', () => {
         queued.value = false
         busy.value = false
         askHuman.value = null
-        messages.value.push({ role: 'assistant', content: m.answer })
+        // Finalize the streamed bubble with the authoritative answer (or push fresh).
+        if (streamingMsg) {
+          streamingMsg.content = m.answer
+          delete streamingMsg.streaming
+          streamingMsg = null
+        } else {
+          messages.value.push({ role: 'assistant', content: m.answer })
+        }
         // A plan turn just finished → surface the Approve/Refine choice bar.
         planPending.value = lastTurnWasPlan
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
       },
-      error: m => { busy.value = false; queued.value = false; error.value = m.detail || 'Erreur orchestrateur.' },
-      close: () => { busy.value = false },
+      error: m => { busy.value = false; queued.value = false; stopStreaming(); error.value = m.detail || 'Erreur orchestrateur.' },
+      close: () => { busy.value = false; stopStreaming() },
     })
+  }
+
+  // Stop the live "building" indicator, keeping whatever partial text was streamed.
+  function stopStreaming () {
+    if (streamingMsg) { delete streamingMsg.streaming; streamingMsg = null }
   }
 
   function closeWs () {
@@ -165,6 +189,7 @@ export const useConvStore = defineStore('conversations', () => {
     const clean = (text || '').trim()
     if ((!clean && !files.length) || !turnWs || busy.value) return
     const isPlan = plan === undefined ? (planAvailable.value && planMode.value) : plan
+    streamingMsg = null // fresh turn → new building bubble
     messages.value.push({ role: 'user', content: clean, files: [...files] })
     trace.value = []
     dispatch.value = null

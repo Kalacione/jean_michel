@@ -85,9 +85,11 @@ def _chunk_field(chunk: Any, *path: str, default: Any = None) -> Any:
     return cur if cur is not None else default
 
 
-def _accumulate_chunk(acc: dict[str, Any], chunk: Any) -> str:
-    """Fold one streamed ChatResponse chunk into `acc`. Returns the visible text delta
-    (content + thinking) so the caller can tee it to the debug sink and gauge progress."""
+def _accumulate_chunk(acc: dict[str, Any], chunk: Any) -> tuple[str, str]:
+    """Fold one streamed ChatResponse chunk into `acc`. Returns (content_delta,
+    thinking_delta) separately : the caller streams CONTENT live to the UI (the answer
+    building) but treats thinking as a mere activity indicator, and tees both to the
+    debug sink (progress + loops)."""
     content = _chunk_field(chunk, "message", "content", default="") or ""
     thinking = _chunk_field(chunk, "message", "thinking", default="") or ""
     acc["content"] += content
@@ -106,7 +108,7 @@ def _accumulate_chunk(acc: dict[str, Any], chunk: Any) -> str:
         acc["prompt_eval"] = pe
     if ev:
         acc["eval"] = ev
-    return thinking + content
+    return content, thinking
 
 
 def _resolve_stream_dir(conv_folder: Any) -> Path | None:
@@ -320,13 +322,15 @@ class OllamaClient:
                     raise payload
                 if kind is _STREAM_DONE:
                     break
-                delta = _accumulate_chunk(acc, payload)
-                if delta and on_token is not None:
+                content_delta, thinking_delta = _accumulate_chunk(acc, payload)
+                # Stream ONLY content to the UI (the answer building live). Thinking is a
+                # mere "is working" indicator, not shown token-by-token (it floods).
+                if content_delta and on_token is not None:
                     with contextlib.suppress(Exception):
-                        on_token(delta)  # live → UI (best-effort, never breaks the call)
-                if sink is not None and delta:
+                        on_token(content_delta)  # best-effort, never breaks the call
+                if sink is not None and (content_delta or thinking_delta):
                     with contextlib.suppress(Exception):
-                        sink.write(delta)
+                        sink.write(thinking_delta + content_delta)
                         sink.flush()
                 if time.monotonic() - start > LLM_CALL_TIMEOUT_SECONDS:
                     self.unload(eff_model)

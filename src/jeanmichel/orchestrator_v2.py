@@ -461,10 +461,13 @@ def _run_agent_loop(
             ),
         )
 
-        # Live token stream → UI (best-effort). Emitted with conv_folder=None so it is
-        # forwarded to the WebSocket but NEVER persisted to events.jsonl (cf. event doc).
+        # Live answer stream → UI (best-effort). ONLY the main agent (the router that
+        # writes the user-facing answer) and ONLY its CONTENT channel — not every
+        # subagent/critic, not the thinking channel (that would flood the GUI; thinking
+        # shows as a plain "working" indicator via LLMCallStarted/Completed). Emitted
+        # with conv_folder=None → forwarded to the WS but NEVER persisted (cf. event doc).
         on_token = None
-        if event_emitter is not None:
+        if event_emitter is not None and is_main_agent:
             def on_token(delta: str, _agent: str = agent.code) -> None:
                 _emit(event_emitter, None, AgentTokenStreamed(agent=_agent, delta=delta))
 
