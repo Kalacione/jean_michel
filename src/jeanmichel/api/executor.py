@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import queue
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ from ..events import MemoryConsolidationProposed
 from ..llm import OllamaClient
 from ..service import consolidation as consolidation_svc
 from ..service import turn_runner
+
+_log = logging.getLogger(__name__)
 
 # One turn at a time across the whole daemon. asyncio.Lock binds to the running
 # loop lazily on first use, so a module-level instance is safe.
@@ -118,6 +121,7 @@ async def run_turn_streaming(
     initial_messages = persistence.load_messages(folder)
 
     def worker() -> None:
+        _log.info("turn worker START conv=%s mode=%s plan_mode=%s", conv_id, mode, plan_mode)
         try:
             answer = turn_runner.run_turn(
                 user_text=user_text,
@@ -135,14 +139,18 @@ async def run_turn_streaming(
                 attachments=attachments,
                 plan_mode=plan_mode,
             )
+            _log.info("turn worker run_turn RETURNED conv=%s answer_len=%d → queue final",
+                      conv_id, len(answer or ""))
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
             # Shadow consolidation : the answer is already on its way to the
             # client ; introspect (DEEP turns only) and surface grounded memory
             # candidates as a typed event. Best-effort — run_shadow never raises.
             if was_deep["v"]:
+                _log.info("shadow consolidation START conv=%s", conv_id)
                 cands = consolidation_svc.run_shadow(
                     folder, conv_id, llm=main_llm, user_id=memory_user_id
                 )
+                _log.info("shadow consolidation DONE conv=%s candidates=%d", conv_id, len(cands or []))
                 if cands:
                     ev = MemoryConsolidationProposed(count=len(cands), candidates=cands)
                     persistence.append_event(folder, ev)
@@ -150,8 +158,10 @@ async def run_turn_streaming(
                         event_queue.put_nowait, {"type": "event", "event": ev.to_dict()}
                     )
         except Exception as exc:  # noqa: BLE001
+            _log.exception("turn worker EXCEPTION conv=%s : %s", conv_id, exc)
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "detail": str(exc)})
         finally:
+            _log.info("turn worker END conv=%s → queue sentinel", conv_id)
             loop.call_soon_threadsafe(event_queue.put_nowait, _SENTINEL)
 
     async def recv_answers() -> None:
@@ -160,21 +170,36 @@ async def run_turn_streaming(
         try:
             while True:
                 data = await websocket.receive_json()
-                if data.get("type") == "answer":
+                kind = data.get("type")
+                if kind == "answer":
                     answer_box.put(data.get("text", ""))
-                # other messages are ignored mid-turn
-        except Exception:  # noqa: BLE001 — disconnect / bad frame ends receiving
+                else:
+                    # NB : non-answer frames (e.g. a {turn} sent mid-turn) are dropped here.
+                    _log.warning("recv_answers DROPPED frame type=%r mid-turn conv=%s", kind, conv_id)
+        except Exception as exc:  # noqa: BLE001 — disconnect / bad frame ends receiving
+            _log.info("recv_answers ended conv=%s : %s", conv_id, type(exc).__name__)
             answer_box.put("")  # unblock a pending ask_human so the turn finishes
 
     turn_future = loop.run_in_executor(None, worker)
     recv_task = asyncio.create_task(recv_answers())
+    exit_reason = "sentinel"
     try:
         while True:
             msg = await event_queue.get()
             if msg is _SENTINEL:
                 break
-            await websocket.send_json(msg)
+            mtype = msg.get("type")
+            if mtype != "event":
+                _log.info("drain SEND type=%s conv=%s", mtype, conv_id)
+            try:
+                await websocket.send_json(msg)
+            except Exception as exc:  # noqa: BLE001
+                exit_reason = f"send_failed({type(exc).__name__})"
+                _log.warning("drain send_json FAILED type=%s conv=%s : %s — final may be lost",
+                             mtype, conv_id, exc)
+                raise
     finally:
+        _log.info("drain EXIT reason=%s conv=%s", exit_reason, conv_id)
         recv_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await recv_task

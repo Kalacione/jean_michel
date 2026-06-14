@@ -14,8 +14,11 @@ optional for the rest of the codebase.
 
 import asyncio
 import contextlib
+import logging
 import os
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Daemon binds the LAN by default (auth is the gate — cf. audit). Override via
 # JEANMICHEL_API_HOST / JEANMICHEL_API_PORT.
@@ -680,6 +683,7 @@ def create_app() -> Any:
             return
 
         await websocket.accept()
+        _log.info("ws_turn ACCEPT conv=%s user=%s mode=%s", conversation_id, user["id"], row["mode"])
         folder = Path(row["folder_path"])
         mode = row["mode"]
         # Per-user : the turn runs as the conversation's owner — its profile
@@ -700,6 +704,8 @@ def create_app() -> Any:
                 # PLAN mode is only meaningful where execution happens (code) or
                 # multi-step delegation (analyse) ; ignored in chat/vocal.
                 plan_mode = bool(data.get("plan_mode")) and mode in ("code", "analyse")
+                _log.info("ws_turn TURN received conv=%s plan_mode=%s text=%r",
+                          conversation_id, plan_mode, (data.get("text", "") or "")[:80])
                 async with executor.turn_lock:
                     await executor.run_turn_streaming(
                         websocket,
@@ -714,7 +720,9 @@ def create_app() -> Any:
                         attachments=workspace_svc.filter_existing(folder, data.get("files") or []),
                         plan_mode=plan_mode,
                     )
+                _log.info("ws_turn TURN complete conv=%s — awaiting next", conversation_id)
         except WebSocketDisconnect:
+            _log.info("ws_turn DISCONNECT conv=%s", conversation_id)
             return
 
     # ---- notifications WebSocket (per-user push : build results, …) -------
@@ -737,16 +745,45 @@ def create_app() -> Any:
     return app
 
 
+def _setup_logging() -> None:
+    """Daemon logging → rotating file (logs/jean-michel.log) + stderr. Without this
+    the daemon logged nowhere persistent, so silent WS/turn hangs were invisible.
+    ``log_config=None`` on uvicorn lets uvicorn/websockets loggers propagate here."""
+    import logging
+    from logging.handlers import RotatingFileHandler
+
+    from .. import config
+
+    config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    file_h = RotatingFileHandler(
+        config.LOG_DIR / "jean-michel.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+    )
+    file_h.setFormatter(fmt)
+    stream_h = logging.StreamHandler()
+    stream_h.setFormatter(fmt)
+    logging.basicConfig(
+        level=getattr(logging, config.LOG_LEVEL, logging.INFO),
+        handlers=[file_h, stream_h],
+        force=True,  # replace any pre-existing handlers
+    )
+    logging.getLogger(__name__).info(
+        "daemon logging up : %s (level %s)", config.LOG_DIR / "jean-michel.log", config.LOG_LEVEL
+    )
+
+
 def run() -> None:
     """Entrypoint for ``jean-michel-serve`` / ``./jm.sh --serve``."""
     import uvicorn
 
+    _setup_logging()
     host = os.environ.get("JEANMICHEL_API_HOST", DEFAULT_HOST)
     port = int(os.environ.get("JEANMICHEL_API_PORT", DEFAULT_PORT))
     uvicorn.run(
         create_app(),
         host=host,
         port=port,
+        log_config=None,  # use our root logging (capture uvicorn.error / websockets)
         ws_ping_interval=ws_ping_setting(
             os.environ.get("JEANMICHEL_WS_PING_INTERVAL"), DEFAULT_WS_PING_INTERVAL
         ),

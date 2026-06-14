@@ -371,6 +371,11 @@ OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
 # and post-mortem analysis of slow/looping generations. Empty/"none" disables it.
 LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "llm_streams"))
 
+# Daemon logging : rotating file (+ stderr) configured at `run()`. The daemon used
+# to log nowhere persistent (terminal only) → silent hangs were undiagnosable.
+LOG_DIR = Path(os.environ.get("JEANMICHEL_LOG_DIR", str(REPO_ROOT / "logs")))
+LOG_LEVEL = os.environ.get("JEANMICHEL_LOG_LEVEL", "INFO").upper()
+
 
 def _ctx_ceiling() -> int:
     raw = _MODELS_CONFIG.get("ceiling")
