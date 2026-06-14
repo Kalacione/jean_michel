@@ -1,5 +1,10 @@
 # To Do
 
+## Tool set
+
+- jean-michel ne doit pas avoit les trucs de github, reserves aux agents codeurs
+```{"type": "HookFired", "hook_name": "PreToolUse", "action": "deny", "reason": "Tool 'web-search-specialist' not granted to agent 'jean-michel'. Available: ['analyze_image', 'ask_human', 'clock', 'delegate_to', 'image_fetch', 'image_search', 'manage_memory', 'mcp__github__add_comment_to_pending_review', 'mcp__github__add_issue_comment', 'mcp__github__add_reply_to_pull_request_comment', 'mcp__github__assign_copilot_to_issue', 'mcp__github__create_branch', 'mcp__github__create_or_update_file', 'mcp__github__create_pull_request', 'mcp__github__create_pull_request_with_copilot', 'mcp__github__create_repository', 'mcp__github__delete_file', 'mcp__github__fork_repository', 'mcp__github__get_commit', 'mcp__github__get_copilot_job_status', 'mcp__github__get_file_contents', 'mcp__github__get_label', 'mcp__github__get_latest_release', 'mcp__github__get_me', 'mcp__github__get_release_by_tag', 'mcp__github__get_tag', 'mcp__github__get_team_members', 'mcp__github__get_teams', 'mcp__github__issue_read', 'mcp__github__issue_write', 'mcp__github__list_branches', 'mcp__github__list_commits', 'mcp__github__list_issue_fields', 'mcp__github__list_issue_types', 'mcp__github__list_issues', 'mcp__github__list_pull_requests', 'mcp__github__list_releases', 'mcp__vuetify__create_bug_report', 'mcp__vuetify__create_vuetify_bin', 'mcp__vuetify__create_vuetify_link', 'mcp__vuetify__create_vuetify_playground', 'mcp__vuetify__get_all_bins', 'mcp__vuetify__get_all_links', 'mcp__vuetify__get_all_playgrounds', 'mcp__vuetify__get_bin', 'mcp__vuetify__get_component_api_by_version', 'mcp__vuetify__get_directive_api_by_version', 'mcp__vuetify__get_exposed_exports', 'mcp__vuetify__get_feature_guide', 'mcp__vuetify__get_feature_guides', 'mcp__vuetify__get_frequently_asked_questions', 'mcp__vuetify__get_installation_guide', 'mcp__vuetify__get_release_notes_by_version', 'mcp__vuetify__get_upgrade_guide', 'mcp__vuetify__get_v4_breaking_changes', 'mcp__vuetify__get_vuetify0_component_guide', 'mcp__vuetify__get_vuetify0_component_list', 'mcp__vuetify__get_vuetify0_composable_guide', 'mcp__vuetify__get_vuetify0_composable_list', 'mcp__vuetify__get_vuetify0_exports_list', 'mcp__vuetify__get_vuetify0_installation_guide', 'mcp__vuetify__get_vuetify0_package_guide', 'mcp__vuetify__get_vuetify0_skill', 'mcp__vuetify__get_vuetify_api_by_version', 'mcp__vuetify__get_vuetify_one_installation_guide', 'mcp__vuetify__update_vuetify_bin', 'mcp__vuetify__update_vuetify_playground', 'report_back', 'todo_update', 'todo_write', 'web_search', 'workspace_view']", "utc": "2026-06-14T03:59:39.217175Z"}``` pareil pour le mcp vuetify, ils ne sont meme pas lances en plus (ca pose la question de quel mcp pour quel agent); et je pense egalement qu'il a confondu outil et delegation
+
 
 ## NULACHIER: `conversations/2026-06-14_03-58_56e288f0599f4915bf6346171ad9f84a`
 
@@ -7,6 +12,8 @@
 - ca fait des plans en mode analyse maos ca repond pas grand chose; il a fallur une reponse pour que le trigger d'acceptaion de pla apparaisse sur la GUI.
 - les appels d'outils sont bloques
 - le plan est vide, mais on peut le modifier
+
+- et les memories, on les voit plus alors ??
 
 ## c'est nuuuuul
 
