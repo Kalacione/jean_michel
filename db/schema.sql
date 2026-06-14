@@ -243,6 +243,7 @@ INSERT INTO paradigms VALUES(151,16,'ground_every_fact','Ground every fact, neve
 INSERT INTO paradigms VALUES(152,35,'route_analysis_to_code_analyst','Route repo analysis to code-analyst',unistr('- Route any READ-ONLY understanding of the attached repo - analyse, audit, "is X used?", "how does Y work?", explain, map dependencies, propose a plan/cleanup - to code-analyst.\u000a- code-runner is for PRODUCING or CHANGING code (write/run/test); code-fetcher is for EXTERNAL sources only (GitHub/SO/PyPI), never the attached repo.\u000a- The attached repo is a LOCAL worktree reached via repo_* tools. Never ask the human for a repository (owner/repo).'),'Bug 2026-06-13 (conv 127ce9a1): a read-only analysis was mis-cast to code-fetcher (external -> asked owner/repo) and code-runner (triggered production deliberation, 129 calls). code-analyst is the read-only cast.',0,36,1,'2026-06-13 00:00:00','2026-06-13 00:00:00');
 INSERT INTO paradigms VALUES(153,35,'bounce_readonly_to_code_analyst','Bounce read-only briefs to code-analyst',unistr('- You PRODUCE or CHANGE code (write/edit/run/test in the worktree). If a briefing asks only to UNDERSTAND, ANALYSE, AUDIT, EXPLAIN, MAP, or answer "is X used?" / "how does Y work?" with NO file to change and nothing to run, that is read-only analysis - code-analyst''s job, not yours.\u000a- Do NOT start writing or running code to satisfy a read-only brief. Bounce it: report_back(confidence="low", low_confidence_reason="Read-only repo analysis - route to code-analyst") so the router re-casts.\u000a- Proceed normally when the brief asks to create, edit, fix, implement, refactor, or run something, or expects a diff. When in doubt and a concrete change is named, proceed.'),'Casting backstop (conv 127ce9a1): a read-only analysis mis-cast to code-runner triggered a 129-call production spiral. The runner bounces read-only briefs to code-analyst instead of fumbling them.',0,37,1,'2026-06-13 00:00:00','2026-06-13 00:00:00');
 INSERT INTO paradigms VALUES(154,35,'apply_dont_describe','Apply edits, never just describe them',unistr('- You APPLY changes with repo_edit / repo_write / repo_exec. DESCRIBING the edits you "would" make ("the changes required are: 1, 2, 3") is NOT doing the task.\u000a- NEVER report_back success for edits you did not actually apply via a tool call. An UNCHANGED repository = failure, not completion — the system verifies the diff and will send it back to you.\u000a- If the brief is genuinely read-only (analyse / audit / "is X used?"), it is code-analyst''s job, not yours (cf. bounce_readonly_to_code_analyst).'),'Conv 825fb5b3 : 9 délégations code-runner high, diff worktree vide, "fait" halluciné. La chaîne ne doit jamais rubber-stamper un repo inchangé.',0,38,1,'2026-06-14 00:00:00','2026-06-14 00:00:00');
+INSERT INTO paradigms VALUES(155,33,'delegate_web_search','Delegate web research to the specialist',unistr('- Do NOT search the web yourself. Delegate any web research to web-search-specialist: it searches AND writes its findings to a workspace file (the reusable handoff), and omits unsourced claims.\u000a- You orchestrate and synthesize ; specialists do their specialty. Same for encyclopaedic lookups (wikipedia-specialist) and current events (news-specialist).'),'Conv 2026-06-14 : le routeur appelait web_search en direct → pas de fichier workspace, pas le grounding du spécialiste. Chaque agent sa spécialité.',0,39,1,'2026-06-14 00:00:00','2026-06-14 00:00:00');
 CREATE TABLE paradigm_requires_tool (
   paradigm_id INTEGER PRIMARY KEY REFERENCES paradigms(id) ON DELETE CASCADE,
   tool_prefix TEXT NOT NULL
@@ -658,6 +659,7 @@ INSERT INTO agent_paradigms VALUES(12,153);
 INSERT INTO agent_paradigms VALUES(18,153);
 INSERT INTO agent_paradigms VALUES(12,154);
 INSERT INTO agent_paradigms VALUES(18,154);
+INSERT INTO agent_paradigms VALUES(1,155);
 CREATE TABLE agent_tools (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   tool_code      TEXT NOT NULL,
@@ -756,7 +758,6 @@ INSERT INTO agent_tools VALUES(8,'workspace_list');
 INSERT INTO agent_tools VALUES(8,'workspace_str_replace');
 INSERT INTO agent_tools VALUES(8,'workspace_view');
 INSERT INTO agent_tools VALUES(11,'conv_history_scan');
-INSERT INTO agent_tools VALUES(1,'web_search');
 INSERT INTO agent_tools VALUES(13,'web_search');
 INSERT INTO agent_tools VALUES(1,'workspace_view');
 INSERT INTO agent_tools VALUES(13,'workspace_create_file');

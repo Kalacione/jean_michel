@@ -83,6 +83,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_144_critics_are_validators.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_145_runner_bounces_readonly.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_146_apply_dont_describe.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_147_router_delegates_web_search.sql")
     yield conn
     conn.close()
 
@@ -231,12 +232,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     + 1 from migrate_141_ground_facts (ground_every_fact)
     + 1 from migrate_142_code_analyst (route_analysis_to_code_analyst)
     + 1 from migrate_145_runner_bounces_readonly (bounce_readonly_to_code_analyst)
-    + 1 from migrate_146_apply_dont_describe (apply_dont_describe).
+    + 1 from migrate_146_apply_dont_describe (apply_dont_describe)
+    + 1 from migrate_147_router_delegates_web_search (delegate_web_search).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 129
+    assert row["c"] == 130
 
 
 def test_runner_bounces_readonly_paradigm(v2_migrated_db, v2_consolidated_db):
@@ -273,6 +275,23 @@ def test_apply_dont_describe_paradigm(v2_migrated_db, v2_consolidated_db):
             )
         }
         assert bound == {"code-runner", "code-runner-node"}
+
+
+def test_router_delegates_web_search(v2_migrated_db, v2_consolidated_db):
+    """migrate_147: jean-michel no longer holds web_search directly (it delegates to
+    web-search-specialist, which writes findings to a workspace file), and carries the
+    delegate_web_search doctrine. Identical in chain AND schema.sql."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        jm = db.execute("SELECT id FROM agents WHERE code='jean-michel'").fetchone()["id"]
+        has = db.execute(
+            "SELECT 1 FROM agent_tools WHERE agent_id=? AND tool_code='web_search'", (jm,)
+        ).fetchone()
+        assert has is None  # no direct web_search
+        p = db.execute("SELECT id, active FROM paradigms WHERE code='delegate_web_search'").fetchone()
+        assert p is not None and int(p["active"]) == 1
+        bound = [r["agent_id"] for r in db.execute(
+            "SELECT agent_id FROM agent_paradigms WHERE paradigm_id=?", (p["id"],))]
+        assert bound == [jm]
 
 
 def test_ground_every_fact_paradigm(v2_migrated_db, v2_consolidated_db):
@@ -410,7 +429,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 129
+    assert n == 130
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):
