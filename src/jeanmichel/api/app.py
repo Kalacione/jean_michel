@@ -25,18 +25,22 @@ _log = logging.getLogger(__name__)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 
-# WebSocket keepalive. A turn runs in a worker thread, but between LLM calls the
-# worker does GIL-holding CPU work (CRP assembly, token estimation, persisting a
-# large messages.json) that can briefly starve the event-loop thread — and with
-# stream=False a single Ollama call can hold for the full LLM timeout (120s) with
-# no app traffic. uvicorn's default ws_ping_timeout (20s) then kills the live
-# stream mid-turn (1011 "keepalive ping timeout"). We make the keepalive tolerate
-# a full slow-call window. Tunable via env. (ping_interval=None disables pings.)
-DEFAULT_WS_PING_INTERVAL = 20.0
-DEFAULT_WS_PING_TIMEOUT = 130.0  # > LLM_CALL_TIMEOUT_SECONDS so a slow turn survives
+# WebSocket keepalive — DISABLED by default. A turn runs in a worker THREAD that
+# holds the GIL for long CPU stretches (CRP assembly, token accumulation, persisting
+# a large messages.json) while a big local model (cogito:32b) streams for minutes.
+# That starves the asyncio loop, so uvicorn can't service the keepalive ping → it
+# closes the live (or any concurrent/idle) WS with 1011 "keepalive ping timeout",
+# and the client never receives the terminal {final} → frozen spinner (the logs showed
+# it : a 74s turn killed a neighbour WS). Bumping the timeout (was 130s) only
+# moves the cliff. The architecture (long GIL-holding sync turns) is incompatible
+# with a server keepalive, so we turn it OFF : the turn has its own wall-clock cap
+# (TURN_WALL_CLOCK_SECONDS) and dead clients surface when send_json fails (logged in
+# the drain loop). Re-enable via env if ever needed (e.g. JEANMICHEL_WS_PING_INTERVAL=20).
+DEFAULT_WS_PING_INTERVAL: float | None = None  # None = no server pings
+DEFAULT_WS_PING_TIMEOUT: float | None = None
 
 
-def ws_ping_setting(raw: str | None, default: float) -> float | None:
+def ws_ping_setting(raw: str | None, default: float | None) -> float | None:
     """Parse a WS keepalive env value : unset → default ; ''/'none'/'0'/'off' → None
     (disables that ping) ; otherwise the float seconds."""
     if raw is None:

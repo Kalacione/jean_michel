@@ -1,10 +1,12 @@
-"""WS keepalive config (VRAM/résilience firefight, Fix C).
+"""WS keepalive config.
 
-The turn runs in a worker thread (off the event loop), so the keepalive only has to
-tolerate brief loop stalls (GIL-bound bursts : persistence, token estimation) and
-throttled background tabs — NOT the full LLM call. uvicorn's default ws_ping_timeout
-(20s) is too aggressive and dropped the live stream mid-turn with 1011 ; we raise it
-generously and make it env-tunable.
+The turn runs in a worker THREAD that holds the GIL for long CPU stretches while a
+big local model streams for minutes — that starves the asyncio loop, so uvicorn
+can't service the keepalive ping and closes the WS with 1011 "keepalive ping
+timeout", losing the terminal {final} (frozen spinner). Bumping the timeout only
+moved the cliff (a 74s turn still killed a neighbour WS in the logs). So the server
+keepalive ping is DISABLED by default ; the turn has its own wall-clock cap and dead
+clients surface when send_json fails. Still env-tunable to re-enable.
 """
 
 from __future__ import annotations
@@ -15,19 +17,24 @@ pytest.importorskip("fastapi")
 pytest.importorskip("argon2")
 pytest.importorskip("itsdangerous")
 
-from jeanmichel.api.app import DEFAULT_WS_PING_TIMEOUT, ws_ping_setting  # noqa: E402
+from jeanmichel.api.app import (  # noqa: E402
+    DEFAULT_WS_PING_INTERVAL,
+    DEFAULT_WS_PING_TIMEOUT,
+    ws_ping_setting,
+)
 
 
-def test_ws_ping_timeout_is_generous():
-    # Well above uvicorn's aggressive 20s default so a GIL burst / throttled tab does
-    # not drop the live stream. The LLM call itself runs off-loop, so the ping need NOT
-    # exceed LLM_CALL_TIMEOUT_SECONDS.
-    assert DEFAULT_WS_PING_TIMEOUT >= 120
+def test_ws_keepalive_disabled_by_default():
+    # None = no server-initiated pings → a GIL-starved long turn can't be killed by
+    # a keepalive timeout (the 1011 hang).
+    assert DEFAULT_WS_PING_INTERVAL is None
+    assert DEFAULT_WS_PING_TIMEOUT is None
 
 
 def test_ws_ping_setting_parsing():
     assert ws_ping_setting(None, 130.0) == 130.0   # unset → default
-    assert ws_ping_setting("45", 130.0) == 45.0    # explicit float
+    assert ws_ping_setting(None, None) is None      # unset → default (disabled)
+    assert ws_ping_setting("45", None) == 45.0      # explicit float re-enables
     assert ws_ping_setting("none", 130.0) is None  # disabled
     assert ws_ping_setting("0", 130.0) is None
     assert ws_ping_setting("", 130.0) is None
