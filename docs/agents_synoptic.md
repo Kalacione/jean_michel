@@ -1,6 +1,6 @@
 # Agent synoptic — chaînes logiques
 
-> Généré depuis `jeanmichel.db` le 2026-06-14 01:38 UTC (commit `b019a1b`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
+> Généré depuis `jeanmichel.db` le 2026-06-14 01:41 UTC (commit `1a2d39f`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
 
 Rectangles = maillons LLM · losange = dispatch · sous-graphe = délibération (invoquée par le moteur, mode code). Les arêtes pleines = `delegate_to` (table `agent_delegation_targets`).
 
