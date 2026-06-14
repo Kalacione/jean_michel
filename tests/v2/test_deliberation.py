@@ -161,3 +161,64 @@ def test_run_main_loop_validates_analysis_report_no_upstream(wt):
     ]
     assert any("ANGLE: GROUNDING" in b and "analysis report" in b for b in briefings)
     assert not any("Vetted approach" in b or "ANGLE: THESIS" in b for b in briefings)
+
+
+# ---- A1 : code-runner must actually change the repo (anti hallucinated success) ----
+
+
+def _delegate_results(mock) -> list[dict]:
+    """The delegate_to tool results the router saw (parsed payloads)."""
+    msgs = mock.calls_v2[-1]["messages"]
+    return [
+        json.loads(m["content"]) for m in msgs
+        if m.get("role") == "tool" and m.get("tool_name") == "delegate_to"
+    ]
+
+
+@requires_git
+def test_code_runner_unchanged_repo_downgraded_to_low(wt):
+    """code-runner reports HIGH but the worktree is UNCHANGED (it described the edits
+    instead of applying them) → the router sees a LOW result + corrective, never a
+    false success (conv 825fb5b3)."""
+    conv, _ = wt
+    main_agent = make_agent("code-router", role="router", delegation_targets={"code-runner"})
+
+    def resolver(code):
+        return make_agent(code, role="specialist") if code == "code-runner" else None
+
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="code-runner", briefing="edit sample.py to add Y")]),
+        assistant_response("", tool_calls=[tool_call(   # CLAIMS success, writes nothing
+            "report_back", summary="I've added Y to sample.py", files_produced=[], confidence="high")]),
+        assistant_response("Done."),
+    ])
+    run_main_loop(conv_folder=conv, agent=main_agent, tools_registry={}, llm_client=mock,
+                  user_text="add Y", agent_resolver=resolver)
+    res = _delegate_results(mock)
+    assert res and res[-1]["confidence"] == "low"
+    assert "UNCHANGED" in res[-1].get("low_confidence_reason", "")
+
+
+@requires_git
+def test_code_runner_with_real_diff_stays_high(wt):
+    """When the worktree HAS changes, a high-confidence code-runner result is trusted
+    (no spurious downgrade)."""
+    conv, root = wt
+    (root / "sample.py").write_text("X = 2  # changed\n", encoding="utf-8")  # real diff present
+    main_agent = make_agent("code-router", role="router", delegation_targets={"code-runner"})
+
+    def resolver(code):
+        return make_agent(code, role="specialist") if code == "code-runner" else None
+
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="code-runner", briefing="change X")]),
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="changed X to 2", files_produced=[], confidence="high")]),
+        assistant_response("Done."),
+    ])
+    run_main_loop(conv_folder=conv, agent=main_agent, tools_registry={}, llm_client=mock,
+                  user_text="change X", agent_resolver=resolver)
+    res = _delegate_results(mock)
+    assert res and res[-1]["confidence"] == "high"

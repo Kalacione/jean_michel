@@ -467,6 +467,8 @@ def _run_agent_loop(
                 temperature=agent.temperature,
                 thinking=agent.thinking,
                 model=model,
+                stream_log_dir=conv_folder,        # per-conversation slop trace
+                stream_log_label=agent.code,
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("LLM call failed in %s: %s", agent.code, exc)
@@ -855,6 +857,23 @@ def _handle_tool_call(
             state.blocked_subagent_code = target_code
             state.blocked_subagent_request_id = sub_result.request_id
 
+        # A1 — grounding : a code WORKER must actually CHANGE the repo. If it reports
+        # success but the worktree is UNCHANGED, it described the edits instead of
+        # applying them (conv 825fb5b3 : 9 "high" reports, empty diff, "✅ fait" mensonger)
+        # → downgrade to low so the router re-delegates and demands real tool calls.
+        # (Worktree diff is cumulative : only fires while NOTHING has been written yet —
+        # exactly the "the whole turn produced nothing" failure we must never rubber-stamp.)
+        code_diff: str | None = None
+        if target_code in deliberation.CODE_WORKERS and _repo.worktree_root(conv_folder) is not None:
+            code_diff = deliberation.current_diff(conv_folder)
+            if sub_result.confidence in ("high", "medium") and not code_diff.strip():
+                sub_result.confidence = "low"
+                sub_result.low_confidence_reason = (
+                    "You reported success but the repository is UNCHANGED — you described the "
+                    "changes instead of applying them. Redo it and ACTUALLY modify the files via "
+                    "repo_edit / repo_write / repo_exec."
+                )
+
         result_payload = sub_result.to_dict()
         # DOWNSTREAM VALIDATION (important phases only) : the critics VALIDATE a
         # CONCRETE deliverable against the real repo (grounding/correctness/simplicity
@@ -864,7 +883,7 @@ def _handle_tool_call(
         if deliberation.complexity_probe(briefing, support_files):
             kind, content = "", ""
             if target_code in deliberation.CODE_WORKERS:
-                kind, content = "diff", deliberation.current_diff(conv_folder)
+                kind, content = "diff", (code_diff if code_diff is not None else deliberation.current_diff(conv_folder))
             elif target_code == "code-analyst":
                 kind, content = "analysis report", (sub_result.summary or "")
             if kind and content.strip():

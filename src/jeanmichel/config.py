@@ -166,10 +166,16 @@ MAX_SEARCH_CALLS_PER_REQUEST = _int_env("JEANMICHEL_MAX_SEARCH_CALLS", 10)
 #
 # Three nested scopes, checked at every iteration of the orchestrator loop:
 #
-# - LLM_CALL_TIMEOUT_SECONDS  → one individual `llm.chat()` call. Raised as
-#   LLMTimeoutError; the orchestrator yields WallClockExceeded(scope="llm_call")
-#   and retries once with a "conclude with what you have" hint (soft recovery)
-#   if the turn budget still allows it.
+# - LLM_STALL_TIMEOUT_SECONDS → max seconds WITHOUT a new streamed token before we
+#   declare the model hung ("aux fraises"). This is the PRIMARY guard : a model that
+#   genuinely works keeps emitting tokens (resets the stall), so a slow-but-productive
+#   call on old hardware runs as long as it needs. Only a true stall trips it.
+# - LLM_CALL_TIMEOUT_SECONDS  → hard-cap backstop on one streamed `llm.chat()` call.
+#   Set LARGE : qwen-coder on this old GPU is legitimately slow ; we never want to cut
+#   a productive generation. Only bounds a degenerate that trickles just enough to
+#   dodge the stall guard. Raised as LLMTimeoutError; the orchestrator yields
+#   WallClockExceeded(scope="llm_call") and retries once with a "conclude with what you
+#   have" hint (soft recovery) if the turn budget still allows it.
 # - REQUEST_WALL_CLOCK_SECONDS → total time spent inside ONE agent request
 #   (one agent's step loop, from its first LLM call to return/report_findings).
 #   Each delegated child gets its own fresh request budget.
@@ -183,9 +189,10 @@ MAX_SEARCH_CALLS_PER_REQUEST = _int_env("JEANMICHEL_MAX_SEARCH_CALLS", 10)
 # To avoid that brutal cut, SOFT_DEADLINE_RATIO (below) fires earlier and
 # forces a graceful wrap-up by restricting the tool payload to the agent's
 # conclusion tool only.
-LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 120)
-REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 900)
-TURN_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_TURN_TIMEOUT", 1800)
+LLM_STALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_STALL_TIMEOUT", 60)
+LLM_CALL_TIMEOUT_SECONDS = _int_env("JEANMICHEL_LLM_TIMEOUT", 600)
+REQUEST_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_REQUEST_TIMEOUT", 1800)
+TURN_WALL_CLOCK_SECONDS = _int_env("JEANMICHEL_TURN_TIMEOUT", 3600)
 # Soft deadline ratio: once elapsed/budget crosses this fraction, the
 # orchestrator forces a graceful wrap-up (restrict tools to the agent's
 # conclusion tool and inject a "conclude now with partial results" message).
@@ -294,6 +301,10 @@ DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 128_000
 # model the moment it switches to a different one (cf. llm._maybe_evict_on_switch).
 # Override via env ("0" = unload right after every call, "30m" = keep hot).
 OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
+
+# Where the streamed LLM output ("slop") is dumped, one .jsonl per call, for debug
+# and post-mortem analysis of slow/looping generations. Empty/"none" disables it.
+LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "llm_streams"))
 
 
 def model_context_window(model: str) -> int:

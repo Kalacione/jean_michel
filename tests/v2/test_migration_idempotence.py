@@ -82,6 +82,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_143_todo_update.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_144_critics_are_validators.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_145_runner_bounces_readonly.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_146_apply_dont_describe.sql")
     yield conn
     conn.close()
 
@@ -229,12 +230,13 @@ def test_total_active_paradigms_count(v2_migrated_db):
     - 1 from migrate_139_remove_graphify (graphify_codebase_navigation removed)
     + 1 from migrate_141_ground_facts (ground_every_fact)
     + 1 from migrate_142_code_analyst (route_analysis_to_code_analyst)
-    + 1 from migrate_145_runner_bounces_readonly (bounce_readonly_to_code_analyst).
+    + 1 from migrate_145_runner_bounces_readonly (bounce_readonly_to_code_analyst)
+    + 1 from migrate_146_apply_dont_describe (apply_dont_describe).
     """
     row = v2_migrated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 128
+    assert row["c"] == 129
 
 
 def test_runner_bounces_readonly_paradigm(v2_migrated_db, v2_consolidated_db):
@@ -244,6 +246,24 @@ def test_runner_bounces_readonly_paradigm(v2_migrated_db, v2_consolidated_db):
     for db in (v2_migrated_db, v2_consolidated_db):
         p = db.execute(
             "SELECT id, active FROM paradigms WHERE code='bounce_readonly_to_code_analyst'"
+        ).fetchone()
+        assert p is not None and int(p["active"]) == 1
+        bound = {
+            r["code"] for r in db.execute(
+                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+                "WHERE ap.paradigm_id=?", (p["id"],),
+            )
+        }
+        assert bound == {"code-runner", "code-runner-node"}
+
+
+def test_apply_dont_describe_paradigm(v2_migrated_db, v2_consolidated_db):
+    """migrate_146: code-runner + code-runner-node must APPLY edits (repo_edit/write),
+    not describe them — anti hallucinated-completion (conv 825fb5b3). Present + active +
+    bound identically in chain AND schema.sql."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        p = db.execute(
+            "SELECT id, active FROM paradigms WHERE code='apply_dont_describe'"
         ).fetchone()
         assert p is not None and int(p["active"]) == 1
         bound = {
@@ -390,7 +410,7 @@ def test_schema_alone_is_v2_final(v2_consolidated_db):
     n = v2_consolidated_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()["c"]
-    assert n == 128
+    assert n == 129
 
 
 def test_consolidated_and_migrated_schemas_agree(v2_migrated_db, v2_consolidated_db):

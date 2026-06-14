@@ -142,107 +142,173 @@ def test_llm_response_accepts_token_usage_fields():
     assert resp.eval_count == 42
 
 
-# ---- Thinking-unsupported fallback (R5) ----------------------------------
+# ---- streamed OllamaClient : accumulation, num_ctx/keep_alive, eviction, watchdog --
 
 
-class _FakeOllamaChat:
-    """Fake ollama Client: raises 'does not support thinking' when `think` is
-    passed, succeeds otherwise. Records each call's kwargs."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] = []
-
-    def chat(self, **kwargs):
-        self.calls.append(kwargs)
-        if "think" in kwargs:
-            raise RuntimeError(
-                '"qwen3-coder:latest" does not support thinking (status code: 400)'
-            )
-        return {"message": {"role": "assistant", "content": "ok"}}
-
-
-def _bare_ollama_client(fake):
-    """Build an OllamaClient without touching ollama (bypass __init__)."""
-    from concurrent.futures import ThreadPoolExecutor
-
-    from jeanmichel.llm import OllamaClient
-    c = OllamaClient.__new__(OllamaClient)
-    c.model = "qwen3-coder:latest"
-    c._client = fake
-    c._last_model = None
-    c._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-ollama")
-    return c
+def _text_chunk(content="", thinking="", tool_calls=None, done=False, pe=0, ev=0):
+    """Build one streamed ChatResponse-shaped chunk (dict form)."""
+    msg = {"role": "assistant", "content": content}
+    if thinking:
+        msg["thinking"] = thinking
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    chunk = {"message": msg, "done": done}
+    if pe:
+        chunk["prompt_eval_count"] = pe
+    if ev:
+        chunk["eval_count"] = ev
+    return chunk
 
 
-def test_chat_messages_retries_without_thinking_on_400():
-    fake = _FakeOllamaChat()
-    client = _bare_ollama_client(fake)
-    resp = client.chat_messages(
-        messages=[{"role": "user", "content": "hi"}],
-        tools=[], temperature=0.1, thinking=True,
-    )
-    assert resp.content == "ok"
-    assert len(fake.calls) == 2          # first (with think) failed → retried
-    assert "think" in fake.calls[0]      # first attempt requested thinking
-    assert "think" not in fake.calls[1]  # retry dropped it
+class _StreamFake:
+    """Fake ollama Client whose chat() returns an ITERATOR of chunks (the client now
+    streams). Records chat() kwargs and generate() (= unload) models. `raise_on_think`
+    simulates a coder model rejecting `think`; `make_gen` overrides the chunk stream."""
 
-
-def test_chat_messages_other_errors_propagate():
-    import pytest
-
-    class _Boom:
-        def chat(self, **kwargs):
-            raise RuntimeError("connection refused")
-
-    client = _bare_ollama_client(_Boom())
-    with pytest.raises(RuntimeError, match="connection refused"):
-        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
-
-
-# ---- num_ctx + keep_alive + single-model eviction (VRAM firefight) --------
-
-
-class _RecordingOllama:
-    """Fake ollama Client recording chat() kwargs and generate() (= unload) models."""
-
-    def __init__(self) -> None:
+    def __init__(self, chunks=None, raise_on_think=False, make_gen=None):
+        self.chunks = chunks if chunks is not None else [_text_chunk("ok", done=True, ev=1)]
+        self.raise_on_think = raise_on_think
+        self.make_gen = make_gen
         self.chats: list[dict] = []
         self.unloads: list[str] = []
 
     def chat(self, **kwargs):
         self.chats.append(kwargs)
-        return {"message": {"role": "assistant", "content": "ok"}}
+        if self.raise_on_think and kwargs.get("think"):
+            raise RuntimeError('"x" does not support thinking (status code: 400)')
+        if self.make_gen is not None:
+            return self.make_gen()
+        return iter(list(self.chunks))
 
-    def generate(self, **kwargs):  # OllamaClient.unload calls generate(keep_alive=0)
+    def generate(self, **kwargs):  # OllamaClient.unload → generate(keep_alive=0)
         self.unloads.append(kwargs.get("model"))
         return {"response": ""}
 
 
-def test_chat_messages_sets_num_ctx_to_budget_and_keep_alive():
-    """num_ctx is pinned to model_context_window (Ollama otherwise auto-sizes context
-    by VRAM → 256K → 45 GB coder), and keep_alive is sent (Fix A + config knob)."""
-    from jeanmichel.config import model_context_window
+def _bare_ollama_client(fake):
+    """Build an OllamaClient without touching ollama (bypass __init__)."""
+    from jeanmichel.llm import OllamaClient
+    c = OllamaClient.__new__(OllamaClient)
+    c.model = "qwen3-coder:latest"
+    c._client = fake
+    c._last_model = None
+    return c
 
-    fake = _RecordingOllama()
+
+def test_chat_messages_accumulates_streamed_chunks():
+    """Streamed deltas (content + tool_calls + usage) fold into one LLMResponse."""
+    fake = _StreamFake(chunks=[
+        _text_chunk("Hel"),
+        _text_chunk("lo"),
+        _text_chunk("", tool_calls=[{"function": {"name": "todo_write", "arguments": {"goal": "g"}}}]),
+        _text_chunk("", done=True, pe=12, ev=5),
+    ])
     client = _bare_ollama_client(fake)
-    client.chat_messages(
-        messages=[{"role": "user", "content": "hi"}], tools=[], temperature=0.0,
-        thinking=False, model="qwen3-coder:latest",
+    resp = client.chat_messages(messages=[{"role": "user", "content": "hi"}], tools=[],
+                                temperature=0.0, thinking=False)
+    assert resp.content == "Hello"
+    assert [tc.name for tc in resp.tool_calls] == ["todo_write"]
+    assert resp.tool_calls[0].arguments == {"goal": "g"}
+    assert resp.eval_count == 5 and resp.prompt_eval_count == 12
+
+
+def test_chat_messages_retries_without_thinking_on_400():
+    fake = _StreamFake(raise_on_think=True)
+    client = _bare_ollama_client(fake)
+    resp = client.chat_messages(
+        messages=[{"role": "user", "content": "hi"}], tools=[], temperature=0.1, thinking=True,
     )
-    opts = fake.chats[0]["options"]
-    assert opts["num_ctx"] == model_context_window("qwen3-coder:latest")
-    assert fake.chats[0]["keep_alive"]  # set from OLLAMA_KEEP_ALIVE
+    assert resp.content == "ok"
+    assert len(fake.chats) == 2          # first (with think) failed → retried
+    assert "think" in fake.chats[0]      # first attempt requested thinking
+    assert "think" not in fake.chats[1]  # retry dropped it
+
+
+def test_chat_messages_other_errors_propagate():
+    import pytest
+    client = _bare_ollama_client(_StreamFake(make_gen=lambda: (_ for _ in ()).throw(
+        RuntimeError("connection refused"))))
+    with pytest.raises(RuntimeError, match="connection refused"):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
+
+
+def test_chat_messages_sets_num_ctx_to_budget_and_keep_alive():
+    """num_ctx pinned to model_context_window (Ollama otherwise auto-sizes by VRAM →
+    256K → 45 GB coder) ; keep_alive sent ; stream=True."""
+    from jeanmichel.config import model_context_window
+    fake = _StreamFake()
+    client = _bare_ollama_client(fake)
+    client.chat_messages(messages=[{"role": "user", "content": "hi"}], tools=[],
+                         temperature=0.0, thinking=False, model="qwen3-coder:latest")
+    sent = fake.chats[0]
+    assert sent["options"]["num_ctx"] == model_context_window("qwen3-coder:latest")
+    assert sent["keep_alive"] and sent["stream"] is True
 
 
 def test_chat_messages_evicts_previous_model_only_on_switch():
     """Single-model-in-VRAM : unload the previous model only when switching to a
-    DIFFERENT one (not when re-using the same in a row). Sequence m1,m1,m2,m1 →
-    unloads m1 (→m2) then m2 (→m1)."""
-    fake = _RecordingOllama()
+    DIFFERENT one. Sequence m1,m1,m2,m1 → unloads m1 (→m2) then m2 (→m1)."""
+    fake = _StreamFake()
     client = _bare_ollama_client(fake)
     for m in ("m1", "m1", "m2", "m1"):
         client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False, model=m)
     assert fake.unloads == ["m1", "m2"]
+
+
+def test_stream_stall_aborts_and_unloads(monkeypatch):
+    """No token for LLM_STALL_TIMEOUT → LLMTimeoutError + best-effort unload (the
+    watchdog : a hung model is caught without guessing a total timeout)."""
+    import time
+
+    import pytest
+
+    from jeanmichel import llm
+    monkeypatch.setattr(llm, "LLM_STALL_TIMEOUT_SECONDS", 0.3)
+
+    def gen():
+        yield _text_chunk("partial ")
+        time.sleep(0.6)  # > stall timeout → queue.get times out
+        yield _text_chunk("never read", done=True)
+
+    fake = _StreamFake(make_gen=gen)
+    client = _bare_ollama_client(fake)
+    with pytest.raises(llm.LLMTimeoutError, match="stalled"):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False, model="m1")
+    assert "m1" in fake.unloads  # GPU-free requested
+
+
+def test_stream_hard_cap_aborts(monkeypatch):
+    """A call that keeps trickling past the hard cap is bounded (backstop)."""
+    import time
+
+    import pytest
+
+    from jeanmichel import llm
+    monkeypatch.setattr(llm, "LLM_STALL_TIMEOUT_SECONDS", 5)   # stall must NOT fire
+    monkeypatch.setattr(llm, "LLM_CALL_TIMEOUT_SECONDS", 0.3)  # cap fires
+
+    def gen():
+        for _ in range(12):
+            time.sleep(0.05)
+            yield _text_chunk("x")
+
+    fake = _StreamFake(make_gen=gen)
+    client = _bare_ollama_client(fake)
+    with pytest.raises(llm.LLMTimeoutError, match="hard cap"):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False, model="m1")
+    assert "m1" in fake.unloads
+
+
+def test_stream_dumps_slop_to_conversation_folder(tmp_path):
+    """The streamed text is teed to <conv>/llm_streams/*.txt for later debugging."""
+    fake = _StreamFake(chunks=[_text_chunk("hello "), _text_chunk("world", done=True)])
+    client = _bare_ollama_client(fake)
+    client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False,
+                         model="code-runner", stream_log_dir=tmp_path, stream_log_label="code-runner")
+    files = list((tmp_path / "llm_streams").glob("*.txt"))
+    assert len(files) == 1
+    assert "code-runner" in files[0].name
+    assert files[0].read_text(encoding="utf-8") == "hello world"
 
 
 def test_mock_client_mirrors_eviction_on_switch():
