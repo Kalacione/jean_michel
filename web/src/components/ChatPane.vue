@@ -115,6 +115,7 @@
             :busy="conv.busy"
             :dispatch="conv.dispatch"
             :events="conv.trace"
+            :live-thinking="conv.liveThinking"
             :queued="conv.queued"
           />
         </div>

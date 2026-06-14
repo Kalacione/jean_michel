@@ -461,15 +461,18 @@ def _run_agent_loop(
             ),
         )
 
-        # Live answer stream → UI (best-effort). ONLY the main agent (the router that
-        # writes the user-facing answer) and ONLY its CONTENT channel — not every
-        # subagent/critic, not the thinking channel (that would flood the GUI; thinking
-        # shows as a plain "working" indicator via LLMCallStarted/Completed). Emitted
-        # with conv_folder=None → forwarded to the WS but NEVER persisted (cf. event doc).
+        # Live stream → UI (best-effort), two channels rendered DIFFERENTLY by the GUI :
+        # - "thinking" → the dedicated thinking block, for EVERY agent (you see whoever
+        #   is currently reasoning) ;
+        # - "content"  → the answer bubble, ONLY for the main agent (the router writes
+        #   the user-facing answer ; a sub-agent's content is internal → it goes to a
+        #   workspace file, never streamed to the user).
+        # Emitted with conv_folder=None → forwarded to the WS but NEVER persisted.
         on_token = None
-        if event_emitter is not None and is_main_agent:
-            def on_token(delta: str, _agent: str = agent.code) -> None:
-                _emit(event_emitter, None, AgentTokenStreamed(agent=_agent, delta=delta))
+        if event_emitter is not None:
+            def on_token(delta: str, channel: str, _agent: str = agent.code, _main: bool = is_main_agent) -> None:
+                if channel == "thinking" or (_main and channel == "content"):
+                    _emit(event_emitter, None, AgentTokenStreamed(agent=_agent, delta=delta, channel=channel))
 
         try:
             resp = llm_client.chat_messages(
@@ -885,6 +888,19 @@ def _handle_tool_call(
                     "changes instead of applying them. Redo it and ACTUALLY modify the files via "
                     "repo_edit / repo_write / repo_exec."
                 )
+
+        # P3 — materialize the sub-agent's deliverable as a workspace FILE if it didn't
+        # write one itself : so the output is inspectable AND reusable by the next agent
+        # via support_files (the handoff), not buried in messages. Distinct from the raw
+        # llm_streams/ slop dump. Idempotent per request_id.
+        if not sub_result.files_produced and (sub_result.summary or "").strip():
+            try:
+                ws_root = workspace_root_for(conv_folder)
+                fname = f"{target_code}_{sub_result.request_id or uuid.uuid4().hex[:8]}.md"
+                (ws_root / fname).write_text(sub_result.summary, encoding="utf-8")
+                sub_result.files_produced = [fname]
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("workspace output materialization failed for %s: %s", target_code, exc)
 
         result_payload = sub_result.to_dict()
         # DOWNSTREAM VALIDATION (important phases only) : the critics VALIDATE a

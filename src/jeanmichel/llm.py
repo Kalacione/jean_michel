@@ -323,11 +323,15 @@ class OllamaClient:
                 if kind is _STREAM_DONE:
                     break
                 content_delta, thinking_delta = _accumulate_chunk(acc, payload)
-                # Stream ONLY content to the UI (the answer building live). Thinking is a
-                # mere "is working" indicator, not shown token-by-token (it floods).
-                if content_delta and on_token is not None:
-                    with contextlib.suppress(Exception):
-                        on_token(content_delta)  # best-effort, never breaks the call
+                # Stream both channels SEPARATELY (the UI renders them in different
+                # places : thinking → dedicated block, content → answer bubble).
+                if on_token is not None:
+                    if thinking_delta:
+                        with contextlib.suppress(Exception):
+                            on_token(thinking_delta, "thinking")
+                    if content_delta:
+                        with contextlib.suppress(Exception):
+                            on_token(content_delta, "content")
                 if sink is not None and (content_delta or thinking_delta):
                     with contextlib.suppress(Exception):
                         sink.write(thinking_delta + content_delta)

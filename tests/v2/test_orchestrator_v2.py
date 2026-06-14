@@ -1203,3 +1203,71 @@ def test_blocked_subagent_round_trip_resumes_via_router(tmp_path: Path):
     router_blob = json.dumps(router_msgs, ensure_ascii=False)
     assert "8080" in router_blob                       # the answer reached the router
     assert "[HUMAN ANSWER" not in router_blob          # subagent internals stay in the sub trace
+
+
+# =============================================================================
+# Section 12 : sub-agent output → workspace file + token-stream channels
+# =============================================================================
+
+
+def test_subagent_output_materialized_to_workspace(tmp_path: Path):
+    """A sub-agent that reports a summary but writes no file → the orchestrator
+    materializes its deliverable to a workspace file and adds it to files_produced
+    (handoff + inspectable), instead of leaving it only in messages."""
+    main_agent = make_agent("jean-michel", role="router", delegation_targets={"summarizer"})
+
+    def resolver(code):
+        return make_agent(code, role="specialist") if code == "summarizer" else None
+
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="summarizer", briefing="summarize X")]),
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="The summary of X is Y.", files_produced=[], confidence="high")]),
+        assistant_response("Done."),
+    ])
+    run_main_loop(conv_folder=tmp_path, agent=main_agent, tools_registry={}, llm_client=mock,
+                  user_text="x", agent_resolver=resolver)
+    files = list((tmp_path / "workspace").glob("summarizer_*.md"))
+    assert len(files) == 1
+    assert files[0].read_text(encoding="utf-8") == "The summary of X is Y."
+    msgs = mock.calls_v2[-1]["messages"]
+    deleg = [json.loads(m["content"]) for m in msgs
+             if m.get("role") == "tool" and m.get("tool_name") == "delegate_to"]
+    assert deleg and deleg[-1]["files_produced"] == [files[0].name]
+
+
+def test_token_stream_channels_thinking_all_content_main_only(tmp_path: Path):
+    """Live stream channels : thinking is emitted for EVERY agent (you see whoever is
+    reasoning) ; content (the answer) ONLY for the main agent — a sub-agent's content is
+    internal (→ workspace file), never streamed to the user."""
+    from jeanmichel.events import AgentTokenStreamed
+
+    class _StreamingMock(MockClient):
+        def chat_messages(self, **kw):
+            ot = kw.get("on_token")
+            if ot:
+                ot("T", "thinking")
+                ot("C", "content")
+            return super().chat_messages(**kw)
+
+    main_agent = make_agent("jean-michel", role="router", delegation_targets={"summarizer"})
+
+    def resolver(code):
+        return make_agent(code, role="specialist") if code == "summarizer" else None
+
+    mock = _StreamingMock(script=[
+        assistant_response("", tool_calls=[tool_call(
+            "delegate_to", agent_code="summarizer", briefing="b")]),
+        assistant_response("", tool_calls=[tool_call(
+            "report_back", summary="s", files_produced=[], confidence="high")]),
+        assistant_response("final"),
+    ])
+    seen: list = []
+    run_main_loop(conv_folder=tmp_path, agent=main_agent, tools_registry={}, llm_client=mock,
+                  user_text="x", agent_resolver=resolver, event_emitter=seen.append)
+    toks = [e for e in seen if isinstance(e, AgentTokenStreamed)]
+    thinking_agents = {e.agent for e in toks if e.channel == "thinking"}
+    content_agents = {e.agent for e in toks if e.channel == "content"}
+    assert {"jean-michel", "summarizer"} <= thinking_agents   # thinking : every agent
+    assert content_agents == {"jean-michel"}                  # content : main only

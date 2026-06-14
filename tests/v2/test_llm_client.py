@@ -212,20 +212,22 @@ def test_chat_messages_accumulates_streamed_chunks():
     assert resp.eval_count == 5 and resp.prompt_eval_count == 12
 
 
-def test_chat_messages_streams_only_content_to_on_token():
-    """on_token receives only the CONTENT deltas (the answer building live) — NOT the
-    thinking channel (that floods the GUI ; thinking is a mere activity indicator)."""
+def test_chat_messages_streams_both_channels_tagged():
+    """on_token receives (delta, channel) — thinking and content on SEPARATE channels
+    so the GUI can render them in different places (block vs bubble)."""
     fake = _StreamFake(chunks=[
-        _text_chunk("", thinking="hmm "),   # thinking → NOT streamed
+        _text_chunk("", thinking="hmm "),
         _text_chunk("Hel"),
         _text_chunk("lo", done=True),
     ])
     client = _bare_ollama_client(fake)
-    seen: list[str] = []
+    seen: list[tuple[str, str]] = []
     resp = client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True,
-                                on_token=seen.append)
-    assert "".join(seen) == "Hello"        # content only, in order
-    assert resp.content == "Hello" and resp.thinking == "hmm "  # both still accumulated
+                                on_token=lambda d, ch: seen.append((ch, d)))
+    thinking = "".join(d for ch, d in seen if ch == "thinking")
+    content = "".join(d for ch, d in seen if ch == "content")
+    assert thinking == "hmm " and content == "Hello"
+    assert resp.content == "Hello" and resp.thinking == "hmm "  # both accumulated
 
 
 def test_chat_messages_retries_without_thinking_on_400():

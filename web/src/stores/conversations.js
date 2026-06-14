@@ -19,6 +19,7 @@ export const useConvStore = defineStore('conversations', () => {
   const currentId = ref(null)
   const messages = ref([]) // chat bubbles : {role:'user'|'assistant', content}
   const trace = ref([]) // live event stream of the current/last turn
+  const liveThinking = ref('') // current agent's thinking, streamed into the dedicated block
   const busy = ref(false) // a turn is running
   const queued = ref(false) // waiting for the global turn slot
   const dispatch = ref(null) // last Tier-0 decision {intent, tool, confidence}
@@ -118,6 +119,7 @@ export const useConvStore = defineStore('conversations', () => {
     const loaded = (await api.messages(id)).messages
     messages.value = chatBubbles(loaded)
     streamingMsg = null
+    liveThinking.value = ''
     trace.value = []
     dispatch.value = null
     busy.value = false
@@ -131,21 +133,32 @@ export const useConvStore = defineStore('conversations', () => {
     turnWs = connectTurn(id, {
       dispatch: m => { dispatch.value = m },
       event: m => {
-        // Live answer stream : accumulate content deltas into a building assistant
-        // bubble instead of flooding the event trace with useless token events.
-        if (m.event?.type === 'AgentTokenStreamed') {
-          if (!streamingMsg) {
-            messages.value.push({ role: 'assistant', content: '', streaming: true })
-            streamingMsg = messages.value[messages.value.length - 1]
+        const ev = m.event
+        // Live token stream : two channels rendered in DIFFERENT places.
+        if (ev?.type === 'AgentTokenStreamed') {
+          if (ev.channel === 'thinking') {
+            liveThinking.value += ev.delta || ''   // → dedicated thinking block
+          } else {                                  // content → building answer bubble
+            if (!streamingMsg) {
+              messages.value.push({ role: 'assistant', content: '', streaming: true })
+              streamingMsg = messages.value[messages.value.length - 1]
+            }
+            streamingMsg.content += ev.delta || ''
           }
-          streamingMsg.content += m.event.delta || ''
           return
         }
+        // A tool/delegation means any streamed content so far was intermediate
+        // narration (not the final answer) → discard the half-built bubble.
+        if (ev?.type === 'ToolCallStarted' || ev?.type === 'DelegationStarted') {
+          discardStreamingBubble()
+        }
+        // A finished thinking step is now canonical (persisted row) → drop the live one.
+        if (ev?.type === 'AgentThinking') liveThinking.value = ''
         trace.value.push(m)
         if (vocal.value && m.speak) speak(m.speak)
         // Shadow consolidation result : surface candidates for human review.
-        if (m.event?.type === 'MemoryConsolidationProposed') {
-          pendingMemory.value = m.event.candidates || []
+        if (ev?.type === 'MemoryConsolidationProposed') {
+          pendingMemory.value = ev.candidates || []
         }
       },
       ask_human: m => { askHuman.value = { question: m.question, why: m.why, choices: m.choices || [], multi: !!m.multi } },
@@ -162,6 +175,7 @@ export const useConvStore = defineStore('conversations', () => {
         } else {
           messages.value.push({ role: 'assistant', content: m.answer })
         }
+        liveThinking.value = ''
         // A plan turn just finished → surface the Approve/Refine choice bar.
         planPending.value = lastTurnWasPlan
         refresh() // re-order the list (last interaction first) + pick up auto-title
@@ -176,6 +190,16 @@ export const useConvStore = defineStore('conversations', () => {
   // Stop the live "building" indicator, keeping whatever partial text was streamed.
   function stopStreaming () {
     if (streamingMsg) { delete streamingMsg.streaming; streamingMsg = null }
+    liveThinking.value = ''
+  }
+
+  // Drop the half-built answer bubble (the streamed content was intermediate narration,
+  // not the final user-facing answer) so only the final output survives.
+  function discardStreamingBubble () {
+    if (!streamingMsg) return
+    const idx = messages.value.indexOf(streamingMsg)
+    if (idx !== -1 && streamingMsg.streaming) messages.value.splice(idx, 1)
+    streamingMsg = null
   }
 
   function closeWs () {
@@ -190,6 +214,7 @@ export const useConvStore = defineStore('conversations', () => {
     if ((!clean && !files.length) || !turnWs || busy.value) return
     const isPlan = plan === undefined ? (planAvailable.value && planMode.value) : plan
     streamingMsg = null // fresh turn → new building bubble
+    liveThinking.value = ''
     messages.value.push({ role: 'user', content: clean, files: [...files] })
     trace.value = []
     dispatch.value = null
@@ -279,7 +304,7 @@ export const useConvStore = defineStore('conversations', () => {
   }
 
   return {
-    list, currentId, messages, trace, busy, queued, dispatch, askHuman, error, vocal,
+    list, currentId, messages, trace, liveThinking, busy, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
     currentMode, planMode, planAvailable, planPending, planEditorOpen,
     refresh, create, select, sendTurn, answer, approveAndExecute, rename, remove, reset,

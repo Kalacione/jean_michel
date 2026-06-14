@@ -197,12 +197,15 @@ class AgentThinking:
 
 @dataclass(frozen=True)
 class AgentTokenStreamed:
-    """A streamed token delta (content + thinking) from the model, forwarded LIVE to the
-    UI as it is generated. Emitted with conv_folder=None so it is NEVER persisted to
-    events.jsonl (it would bloat it by thousands of lines) — the full text still lands
-    via AgentThinking / the final answer at end of turn."""
+    """A streamed token delta forwarded LIVE to the UI as it is generated. `channel`
+    distinguishes the model's two streams so the GUI renders them in DIFFERENT places :
+    - "thinking" → the dedicated collapsible thinking block (small, auto-fold) ;
+    - "content"  → the answer bubble (only the main agent's final answer is streamed).
+    Emitted with conv_folder=None so it is NEVER persisted to events.jsonl (it would
+    bloat it) — the full text still lands via AgentThinking / the final answer."""
     agent: str
     delta: str
+    channel: str = "content"  # "content" | "thinking"
     utc: str = field(default_factory=_utc_now)
 
     def to_dict(self) -> dict[str, Any]:
