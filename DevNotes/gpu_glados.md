@@ -1,4 +1,9 @@
-Voici le rapport complet.
+2× Quadro GV100, 32 GB each (64 GB total), connected by PCIe/NODE — no NVLink bridge (topo shows NODE, not NV#). This matters: splitting a model across them pays a per-token PCIe transfer cost.
+Right now: GPU0 = 30 GB / 89% / 77°C / 182 W, GPU1 = idle / 49°C / 28 W. The 128K cap made the coder fit on one card → one maxed, one glandant.
+
+# the honest truth
+
+
 
 ---
 
