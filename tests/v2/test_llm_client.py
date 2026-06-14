@@ -169,6 +169,7 @@ def _bare_ollama_client(fake):
     c = OllamaClient.__new__(OllamaClient)
     c.model = "qwen3-coder:latest"
     c._client = fake
+    c._last_model = None
     c._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-ollama")
     return c
 
@@ -196,3 +197,57 @@ def test_chat_messages_other_errors_propagate():
     client = _bare_ollama_client(_Boom())
     with pytest.raises(RuntimeError, match="connection refused"):
         client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
+
+
+# ---- num_ctx + keep_alive + single-model eviction (VRAM firefight) --------
+
+
+class _RecordingOllama:
+    """Fake ollama Client recording chat() kwargs and generate() (= unload) models."""
+
+    def __init__(self) -> None:
+        self.chats: list[dict] = []
+        self.unloads: list[str] = []
+
+    def chat(self, **kwargs):
+        self.chats.append(kwargs)
+        return {"message": {"role": "assistant", "content": "ok"}}
+
+    def generate(self, **kwargs):  # OllamaClient.unload calls generate(keep_alive=0)
+        self.unloads.append(kwargs.get("model"))
+        return {"response": ""}
+
+
+def test_chat_messages_sets_num_ctx_to_budget_and_keep_alive():
+    """num_ctx is pinned to model_context_window (Ollama otherwise auto-sizes context
+    by VRAM → 256K → 45 GB coder), and keep_alive is sent (Fix A + config knob)."""
+    from jeanmichel.config import model_context_window
+
+    fake = _RecordingOllama()
+    client = _bare_ollama_client(fake)
+    client.chat_messages(
+        messages=[{"role": "user", "content": "hi"}], tools=[], temperature=0.0,
+        thinking=False, model="qwen3-coder:latest",
+    )
+    opts = fake.chats[0]["options"]
+    assert opts["num_ctx"] == model_context_window("qwen3-coder:latest")
+    assert fake.chats[0]["keep_alive"]  # set from OLLAMA_KEEP_ALIVE
+
+
+def test_chat_messages_evicts_previous_model_only_on_switch():
+    """Single-model-in-VRAM : unload the previous model only when switching to a
+    DIFFERENT one (not when re-using the same in a row). Sequence m1,m1,m2,m1 →
+    unloads m1 (→m2) then m2 (→m1)."""
+    fake = _RecordingOllama()
+    client = _bare_ollama_client(fake)
+    for m in ("m1", "m1", "m2", "m1"):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False, model=m)
+    assert fake.unloads == ["m1", "m2"]
+
+
+def test_mock_client_mirrors_eviction_on_switch():
+    """MockClient applies the same eviction policy so integration tests see it."""
+    mock = MockClient(script=[LLMResponse(thinking="", content="x") for _ in range(4)])
+    for m in ("A", "A", "B", "A"):
+        mock.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False, model=m)
+    assert mock.unloaded == ["A", "B"]

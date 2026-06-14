@@ -23,10 +23,29 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as _FutureTimeout
 from typing import Any, Protocol
 
-from .config import DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_MODEL, LLM_CALL_TIMEOUT_SECONDS
+from .config import (
+    DEFAULT_OLLAMA_HOST,
+    DEFAULT_OLLAMA_MODEL,
+    LLM_CALL_TIMEOUT_SECONDS,
+    OLLAMA_KEEP_ALIVE,
+    model_context_window,
+)
 from .models import LLMResponse, ToolCall
 
 _log = logging.getLogger(__name__)
+
+
+def _maybe_evict_on_switch(client: Any, eff_model: str) -> None:
+    """Single-model-in-VRAM policy. We chain different models within one turn
+    (dispatch → router → analyst → coder) ; keeping each resident piles up VRAM.
+    So when the client switches to a DIFFERENT model than the one it last used,
+    unload the previous one first (same model in a row → no churn). Reloads on
+    demand — `keep_alive` is short anyway. Used by OllamaClient AND MockClient so
+    the behaviour is identical and testable."""
+    last = getattr(client, "_last_model", None)
+    if last and last != eff_model:
+        client.unload(last)
+    client._last_model = eff_model
 
 _CORRUPTION_MARKERS = (
     "<thought",
@@ -75,6 +94,10 @@ class LLMClientV2(Protocol):
         format: str | None = None,
     ) -> LLMResponse: ...
 
+    def unload(self, model: str) -> None:
+        """Free the model from (V)RAM. Best-effort, no-op for backends without one."""
+        ...
+
 
 # ---- Ollama implementation ------------------------------------------------
 
@@ -87,6 +110,7 @@ class OllamaClient:
             raise RuntimeError("Install `ollama` to use OllamaClient.") from e
         self.model = model
         self.host = host
+        self._last_model: str | None = None  # last model loaded → evict on switch
         from ollama import Client
         self._client = Client(host=host)
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ollama-call")
@@ -123,6 +147,15 @@ class OllamaClient:
             eval_count=int(eval_count),
         )
 
+    def unload(self, model: str) -> None:
+        """Ask Ollama to evict ``model`` from (V)RAM now (keep_alive=0), instead of
+        letting it sit resident for the keep_alive window. Used to free big chained
+        models the moment a specialist finishes. Best-effort : never raises."""
+        try:
+            self._client.generate(model=model, keep_alive=0)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("ollama unload(%s) failed: %s", model, exc)
+
     def chat(self, *, system: str, user: str, tools: list[dict[str, Any]],
              temperature: float, thinking: bool) -> LLMResponse:
         """v1 legacy path. Builds a 2-message array and forwards to chat_messages."""
@@ -153,11 +186,18 @@ class OllamaClient:
         Supports per-call model override and Ollama's `format="json"` constraint
         used by the Tier 0 dispatcher.
         """
+        eff_model = model or self.model
+        # Single-model-in-VRAM : free the previous model when switching to a different
+        # one (before loading the new) so they don't pile up.
+        _maybe_evict_on_switch(self, eff_model)
         kwargs: dict[str, Any] = {
-            "model": model or self.model,
+            "model": eff_model,
             "messages": messages,
-            "options": {"temperature": temperature},
-            "keep_alive": "30m",
+            # Pin num_ctx to the window WE budget against. Ollama 0.24 otherwise
+            # defaults context by VRAM (≥48 GiB → 256K), which made qwen3-coder eat
+            # ~45 GB of KV cache. Ollama clamps this to the model's own max.
+            "options": {"temperature": temperature, "num_ctx": model_context_window(eff_model)},
+            "keep_alive": OLLAMA_KEEP_ALIVE,
             "stream": False,
         }
         if tools:
@@ -223,6 +263,12 @@ class MockClient:
         self.calls: list[tuple[str, str]] = []
         # v2 — each call records the full args dict (messages, tools, model, …).
         self.calls_v2: list[dict[str, Any]] = []
+        self.unloaded: list[str] = []  # models asked to unload (tests inspect this)
+        self._last_model: str | None = None  # mirrors OllamaClient eviction-on-switch
+
+    def unload(self, model: str) -> None:
+        """Record an unload request ; no real model to evict in tests."""
+        self.unloaded.append(model)
 
     def _pop_with_corruption_retry(self) -> LLMResponse:
         last_resp: LLMResponse | None = None
@@ -255,6 +301,7 @@ class MockClient:
         format: str | None = None,
     ) -> LLMResponse:
         """v2 native multi-turn path."""
+        _maybe_evict_on_switch(self, model or self.model)
         self.calls_v2.append({
             "messages": list(messages),
             "tools": list(tools),

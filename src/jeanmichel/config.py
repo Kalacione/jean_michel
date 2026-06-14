@@ -286,6 +286,15 @@ SUBAGENT_BUDGET_RATIO = float(os.environ.get("JEANMICHEL_SUBAGENT_BUDGET_RATIO",
 # avec ':' et '-' remplacés par '_'.
 DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 128_000)
 
+# How long Ollama keeps a model resident after a call. We CHAIN different models
+# within one turn (dispatch → router → analyst → coder), so the old hardcoded "30m"
+# pinned every one for 30 min → VRAM pile-up (a 256K-ctx coder alone is ~45 GB), and
+# left them resident long after the turn. Short by default (éco) : nothing sits idle
+# in VRAM for nothing, it reloads on demand. The client ALSO evicts the previous
+# model the moment it switches to a different one (cf. llm._maybe_evict_on_switch).
+# Override via env ("0" = unload right after every call, "30m" = keep hot).
+OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
+
 
 def model_context_window(model: str) -> int:
     """Return the context window size (in tokens) for a given Ollama model.
