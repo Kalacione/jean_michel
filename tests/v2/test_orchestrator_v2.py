@@ -871,17 +871,15 @@ def test_spawn_subagent_returns_low_confidence_on_abort(tmp_path: Path):
     assert result.low_confidence_reason  # non-empty
 
 
-def test_subagent_prose_abort_injects_no_corrective(tmp_path: Path):
-    """A subagent that emits prose instead of report_back aborts low — WITHOUT an
-    '[ORCHESTRATOR] must terminate' corrective. A role=user nudge there makes the
-    model mistake orchestrator control for the user and spiral (conv 9f428b47, P3)."""
+def test_subagent_prose_becomes_implicit_report_back(tmp_path: Path):
+    """A specialist that CONCLUDES IN PROSE (no report_back tool_call) has its work
+    preserved as an implicit report_back (confidence=medium) — not discarded, and
+    WITHOUT a confusing '[ORCHESTRATOR] must terminate' role=user corrective (conv
+    b2701c32 : qwen3:14b wrote a full analysis then never called report_back)."""
     sub_agent = make_agent("specialist", role="specialist")
     parent_state = ConversationState(depth_current=0)
-    mock = MockClient(script=[
-        assistant_response("Here is my prose answer, no tool call."),
-        assistant_response("Still prose."),
-        assistant_response("Prose again."),
-    ])
+    report = "Report on v1 usage: it is still referenced in db/ and tests/; cleanup is partial."
+    mock = MockClient(script=[assistant_response(report)])
     result = spawn_subagent(
         conv_folder=tmp_path,
         sub_agent=sub_agent,
@@ -893,13 +891,30 @@ def test_subagent_prose_abort_injects_no_corrective(tmp_path: Path):
         parent_state=parent_state,
         max_iterations=5,
     )
-    assert result.confidence == "low"
-    assert "report_back" in result.low_confidence_reason
+    # The prose IS the conclusion : captured as the summary, not lost.
+    assert result.confidence == "medium"
+    assert result.summary == report
+    # No corrective injected, and only ONE LLM call (no wasted retries).
+    assert len(mock.calls_v2) == 1
     injected = [
         m for call in mock.calls_v2 for m in call["messages"]
         if m.get("role") == "user" and "must terminate" in (m.get("content") or "")
     ]
-    assert not injected, "no '[ORCHESTRATOR] must terminate' corrective may be injected into a subagent"
+    assert not injected
+
+
+def test_subagent_empty_turn_still_aborts(tmp_path: Path):
+    """A truly EMPTY turn (no tool_call AND no content) has nothing to salvage →
+    bounded retries then abort low (no implicit report_back from emptiness)."""
+    sub_agent = make_agent("specialist", role="specialist")
+    parent_state = ConversationState(depth_current=0)
+    mock = MockClient(script=[assistant_response(""), assistant_response(""), assistant_response("")])
+    result = spawn_subagent(
+        conv_folder=tmp_path, sub_agent=sub_agent, tools_registry={}, llm_client=mock,
+        briefing="x", support_files=[], expected="", parent_state=parent_state, max_iterations=5,
+    )
+    assert result.confidence == "low"
+    assert "neither a tool_call nor any content" in result.low_confidence_reason
 
 
 # Section 7 : PLAN mode — the plan must be recorded via todo_write
@@ -999,9 +1014,10 @@ def test_subagent_does_not_clobber_main_conv_files(tmp_path: Path):
     assert list(tmp_path.glob("subagent_*.json"))
 
 
-def test_subagent_prose_report_back_aborts_low_not_loop(tmp_path: Path):
-    """A subagent that emits report_back as PROSE (no tool_call) must abort low
-    after ≤3 turns — not loop to max_iterations (bug B, conv dfcafc75)."""
+def test_subagent_prose_report_back_captured_not_looped(tmp_path: Path):
+    """A subagent that narrates its conclusion as PROSE (no tool_call) is captured as
+    an implicit report_back on the FIRST turn — neither looped to max_iterations (bug
+    B, conv dfcafc75) nor discarded (Fix D, conv b2701c32)."""
     sub_agent = make_agent("code-analyst", role="specialist")
     parent_state = ConversationState(depth_current=0)
     # Always prose, never a real tool_call : would loop 50× before the fix.
@@ -1012,10 +1028,10 @@ def test_subagent_prose_report_back_aborts_low_not_loop(tmp_path: Path):
         briefing="list deps from v1_analysis.md", support_files=[], expected="",
         parent_state=parent_state, parent_agent_code="code-router",
     )
-    assert result.confidence == "low"
-    assert "report_back" in (result.low_confidence_reason or "")
-    # Bounded : 2 correctives + the 3rd no-tool-call aborts → ≤3 LLM calls, not 50.
-    assert len(mock.calls_v2) <= 3
+    assert result.confidence == "medium"
+    assert "introuvable" in result.summary
+    # Captured immediately : ONE call, not a 50× loop and not an empty abort.
+    assert len(mock.calls_v2) == 1
 
 
 # Section 10 : support_file handoff validation (bug C)

@@ -563,20 +563,31 @@ def _run_agent_loop(
                 )
                 _persist()
                 return _LoopOutcome(kind="final_answer", content=resp.content)
-            # Subagent emitted no tool_call → it MUST terminate via report_back.
-            # Small models sometimes "narrate" report_back as prose instead of
-            # emitting the tool_call → the corrective would otherwise loop to
-            # max_iterations (50). Bound it : 2 correctives, then abort low.
-            # Subagent emitted prose instead of a report_back tool_call. We do NOT
-            # inject a "[ORCHESTRATOR] must terminate" corrective : a role=user nudge
-            # here makes the model mistake orchestrator control for the user and
-            # spiral (cf. conv 9f428b47). It also can't help — the model just can't
-            # tool-call. Retry once (it sees its own dangling turn) ; then abort low.
+            # Subagent emitted NO tool_call. A specialist's only valid exit is
+            # report_back, but small models routinely CONCLUDE IN PROSE instead of
+            # emitting the tool_call (qwen3:14b did exactly this — wrote a full analysis
+            # report as prose then never called report_back, conv b2701c32). We neither
+            # inject a "[ORCHESTRATOR] must terminate" corrective (a role=user nudge makes
+            # the model mistake orchestrator control for the user and spiral, conv
+            # 9f428b47) NOR silently discard the work. Instead, treat a SUBSTANTIVE prose
+            # turn as an IMPLICIT report_back so the analysis/diff is preserved.
+            prose = (resp.content or "").strip()
+            if prose:
+                return _LoopOutcome(
+                    kind="report_back",
+                    sub_result=SubResult(
+                        agent=agent.code,
+                        summary=prose,
+                        confidence="medium",  # implicit conclusion, not a self-asserted verdict
+                    ),
+                )
+            # Truly empty turn (no content, no tool_call) : nothing to salvage. Retry a
+            # couple of times (the model sees its own dangling turn), then abort low.
             no_tool_call_turns += 1
             if no_tool_call_turns > 2:
                 return _LoopOutcome(
                     kind="aborted",
-                    reason="subagent did not terminate via report_back (emitted prose instead)",
+                    reason="subagent produced neither a tool_call nor any content",
                 )
             _persist()
             continue
