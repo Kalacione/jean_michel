@@ -42,8 +42,6 @@
 - On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur,
   tests).
 - Rafraîchir le paradigm viewer/editor.
-- Ajouter un moyen de **kill une opération LLM en cours** (si elle part en vrille).
-- Bench du budget de tokens allouable (semblait petit ; fenêtres ~40-128k, serveur 2×32 Go).
 - Audit des paradigmes de tous les agents (incohérences ?).
 - **meta_analyst — qualité** : `--meta-analysis` remarche (prompt → délégation explicite, commit 78055ce), MAIS
   le meta-analyst **hallucine** des noms d'agents/outils inexistants (ex. `analyst`/`researcher`, `sandbox_execute`)
