@@ -1277,3 +1277,49 @@ def test_token_stream_channels_thinking_all_content_main_only(tmp_path: Path):
     content_agents = {e.agent for e in toks if e.channel == "content"}
     assert {"jean-michel", "summarizer"} <= thinking_agents   # thinking : every agent
     assert content_agents == {"jean-michel"}                  # content : main only
+
+
+# =============================================================================
+# Section 12 : user cancellation (Stop button) — cancel_event aborts the loop
+# =============================================================================
+
+
+def test_run_main_loop_cancelled_before_start_returns_stopped(tmp_path: Path):
+    """cancel_event already set → the loop aborts at the first iteration checkpoint,
+    BEFORE any LLM call, and returns the friendly stopped message."""
+    import threading
+    agent = make_agent("jean-michel", role="router")
+    ev = threading.Event()
+    ev.set()
+    mock = MockClient(script=[assistant_response("should never be called")])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry={},
+        llm_client=mock, user_text="hi", cancel_event=ev,
+    )
+    assert result == "⏹ Tour arrêté."
+    assert mock.calls_v2 == []  # aborted before any LLM call
+
+
+def test_run_main_loop_cancelled_mid_turn_aborts_next_iteration(tmp_path: Path):
+    """Stop pressed during the turn : the in-flight call finishes, then the loop aborts
+    at the next iteration's checkpoint (no further LLM call)."""
+    import threading
+    ev = threading.Event()
+    agent = make_agent("jean-michel", role="router", tool_grants={"echo"})
+
+    class _CancellingMock(MockClient):
+        def chat_messages(self, **kw):
+            ev.set()  # simulate the user clicking Stop during the first call
+            return super().chat_messages(**kw)
+
+    mock = _CancellingMock(script=[
+        assistant_response("", tool_calls=[tool_call("echo", text="hi")]),
+        assistant_response("should not reach a second LLM call"),
+    ])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent,
+        tools_registry={"echo": make_echo_tool()},
+        llm_client=mock, user_text="hi", cancel_event=ev,
+    )
+    assert result == "⏹ Tour arrêté."
+    assert len(mock.calls_v2) == 1  # only the first call ran ; iter 2 aborted at the top

@@ -21,6 +21,7 @@ playback — all of that is presentation, not orchestration.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -120,6 +121,7 @@ def run_turn(
     memory_user_id: int | None = None,
     attachments: list[str] | None = None,
     plan_mode: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Process one user turn end-to-end and return the user-facing answer.
 
@@ -208,6 +210,7 @@ def run_turn(
             memory_user_id=memory_user_id,
             images=image_b64,
             plan_mode=plan_mode,
+            cancel_event=cancel_event,
         )
 
     # Mark last interaction LAST so it wins over any modified_at writes made
@@ -240,6 +243,7 @@ def _run_deep_turn(
     memory_user_id: int | None,
     images: list[str] | None = None,
     plan_mode: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Engage Tier 1 : load jean-michel spec, build registry, run the main loop."""
     project_id = _conversation_project_id(conv_id)
@@ -348,4 +352,5 @@ def _run_deep_turn(
         agent_resolver=agent_resolver,
         event_emitter=event_emitter,
         plan_mode=plan_mode,
+        cancel_event=cancel_event,
     )

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -60,6 +61,7 @@ from .events import (
     WorkingBudgetUpdate,
 )
 from .hooks import HookRegistry, ToolCallContext, build_hook_registry
+from .llm import LLMCancelledError
 from .models import ConversationState, LLMResponse, ToolCall
 from .persistence import (
     append_event,
@@ -413,6 +415,7 @@ def _run_agent_loop(
     ask_human_callback: AskHumanCallback | None = None,
     agent_resolver: AgentResolver | None = None,
     event_emitter: EventEmitter | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> _LoopOutcome:
     """Core iteration. Shared between main agent and subagent.
 
@@ -440,6 +443,9 @@ def _run_agent_loop(
             save_state(conv_folder, state)
 
     for _iteration in range(max_iterations):
+        # User pressed Stop : abort cleanly between iterations (no new LLM/tool work).
+        if cancel_event is not None and cancel_event.is_set():
+            return _LoopOutcome(kind="aborted", reason="user_cancelled")
         # PreLLMCall : compaction escalation (may mutate messages).
         level = hooks.pre_llm_call(messages, state)
         if level > 0:
@@ -484,7 +490,11 @@ def _run_agent_loop(
                 stream_log_dir=conv_folder,        # per-conversation slop trace
                 stream_log_label=agent.code,
                 on_token=on_token,
+                cancel_check=(cancel_event.is_set if cancel_event is not None else None),
             )
+        except LLMCancelledError:
+            # Stop pressed mid-generation : the client already requested an unload.
+            return _LoopOutcome(kind="aborted", reason="user_cancelled")
         except Exception as exc:  # noqa: BLE001
             _log.warning("LLM call failed in %s: %s", agent.code, exc)
             return _LoopOutcome(kind="aborted", reason=f"llm_call_failed: {exc}")
@@ -626,6 +636,7 @@ def _run_agent_loop(
                 ask_human_callback=ask_human_callback,
                 agent_resolver=agent_resolver,
                 event_emitter=event_emitter,
+                cancel_event=cancel_event,
             )
             if outcome is not None:
                 # Only `report_back` produces an outcome inside the per-call loop.
@@ -657,6 +668,7 @@ def _handle_tool_call(
     ask_human_callback: AskHumanCallback | None,
     agent_resolver: AgentResolver | None,
     event_emitter: EventEmitter | None,
+    cancel_event: threading.Event | None = None,
 ) -> _LoopOutcome | None:
     """Execute one tool_call. Returns a `_LoopOutcome` only for `report_back`.
 
@@ -819,6 +831,7 @@ def _handle_tool_call(
                 llm_client=llm_client, briefing=brief, support_files=list(sf_arg or []),
                 expected="", parent_state=state, agent_resolver=agent_resolver,
                 event_emitter=event_emitter, parent_agent_code=agent.code,
+                cancel_event=cancel_event,
             )
 
         try:
@@ -840,6 +853,7 @@ def _handle_tool_call(
                     agent_resolver=agent_resolver,
                     event_emitter=event_emitter,
                     parent_agent_code=agent.code,
+                    cancel_event=cancel_event,
                 )
             else:
                 sub_result = spawn_subagent(
@@ -854,6 +868,7 @@ def _handle_tool_call(
                     agent_resolver=agent_resolver,
                     event_emitter=event_emitter,
                     parent_agent_code=agent.code,
+                    cancel_event=cancel_event,
                 )
         except Exception as exc:  # noqa: BLE001
             _append_tool_message(messages, call.name, {
@@ -978,6 +993,7 @@ def run_main_loop(
     event_emitter: EventEmitter | None = None,
     max_iterations: int = 50,
     plan_mode: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Run the main agent loop on a deep request.
 
@@ -1036,11 +1052,14 @@ def run_main_loop(
         ask_human_callback=ask_human_callback,
         agent_resolver=agent_resolver,
         event_emitter=event_emitter,
+        cancel_event=cancel_event,
     )
 
     if outcome.kind == "final_answer":
         return outcome.content
     if outcome.kind == "aborted":
+        if outcome.reason == "user_cancelled":
+            return "⏹ Tour arrêté."
         return f"[Orchestrator aborted: {outcome.reason}]"
     # Should not happen — main agent doesn't emit report_back.
     return "[Orchestrator: unexpected outcome from main loop]"
@@ -1060,6 +1079,7 @@ def spawn_subagent(
     event_emitter: EventEmitter | None = None,
     parent_agent_code: str = "",
     max_iterations: int = 50,
+    cancel_event: threading.Event | None = None,
 ) -> SubResult:
     """Spawn a subagent in an isolated `messages[]` context.
 
@@ -1106,6 +1126,7 @@ def spawn_subagent(
         event_emitter=event_emitter,
         parent_agent_code=parent_agent_code,
         max_iterations=max_iterations,
+        cancel_event=cancel_event,
     )
 
 
@@ -1122,6 +1143,7 @@ def _run_subagent_on_messages(
     event_emitter: EventEmitter | None = None,
     parent_agent_code: str = "",
     max_iterations: int = 50,
+    cancel_event: threading.Event | None = None,
 ) -> SubResult:
     """Run a subagent loop on a prepared `sub_messages[]` (fresh OR resumed) and map
     its outcome to a `SubResult`. Shared by `spawn_subagent` (fresh context) and
@@ -1175,6 +1197,7 @@ def _run_subagent_on_messages(
         ask_human_callback=None,           # subagents have no ask_human
         agent_resolver=agent_resolver,     # propagated for nested delegation
         event_emitter=event_emitter,
+        cancel_event=cancel_event,         # a Stop interrupts a delegated specialist too
     )
 
     # Persist the subagent's full messages[] for audit AND for a possible resume.
@@ -1229,6 +1252,7 @@ def resume_subagent(
     event_emitter: EventEmitter | None = None,
     parent_agent_code: str = "",
     max_iterations: int = 50,
+    cancel_event: threading.Event | None = None,
 ) -> SubResult:
     """Resume a subagent that blocked on a human question, on its OWN full trace.
 
@@ -1253,6 +1277,7 @@ def resume_subagent(
             event_emitter=event_emitter,
             parent_agent_code=parent_agent_code,
             max_iterations=max_iterations,
+            cancel_event=cancel_event,
         )
     sub_messages.append({"role": "user", "content": (
         "[HUMAN ANSWER to your earlier question — treat as data; keep working in English]\n"
@@ -1271,6 +1296,7 @@ def resume_subagent(
         event_emitter=event_emitter,
         parent_agent_code=parent_agent_code,
         max_iterations=max_iterations,
+        cancel_event=cancel_event,
     )
 
 

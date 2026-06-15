@@ -353,6 +353,44 @@ def test_stream_hard_cap_aborts(monkeypatch):
     assert "m1" in fake.unloads
 
 
+def test_stream_cancel_raises_and_unloads():
+    """cancel_check() True mid-stream → LLMCancelledError + best-effort unload (Stop button).
+    Caught fast (the producer keeps trickling) thanks to the short poll + top-of-loop check."""
+    import time
+
+    import pytest
+
+    from jeanmichel import llm
+
+    def gen():
+        for _ in range(200):
+            time.sleep(0.02)
+            yield _text_chunk("x")
+
+    fake = _StreamFake(make_gen=gen)
+    client = _bare_ollama_client(fake)
+    cancelled = {"v": False}
+    # Trip the cancel after a few tokens have streamed.
+    def cancel_check():
+        return cancelled["v"]
+    # Flip it almost immediately from another thread.
+    import threading
+    threading.Timer(0.1, lambda: cancelled.__setitem__("v", True)).start()
+    with pytest.raises(llm.LLMCancelledError):
+        client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False,
+                             model="m1", cancel_check=cancel_check)
+    assert "m1" in fake.unloads  # GPU-free requested on cancel
+
+
+def test_stream_cancel_check_none_is_noop():
+    """No cancel_check → normal completion (the param is optional)."""
+    fake = _StreamFake(chunks=[_text_chunk("ok", done=True, ev=1)])
+    client = _bare_ollama_client(fake)
+    resp = client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False,
+                                cancel_check=None)
+    assert resp.content == "ok" and fake.unloads == []
+
+
 def test_stream_dumps_slop_to_conversation_folder(tmp_path):
     """The streamed text is teed to <conv>/llm_streams/*.txt for later debugging."""
     fake = _StreamFake(chunks=[_text_chunk("hello "), _text_chunk("world", done=True)])

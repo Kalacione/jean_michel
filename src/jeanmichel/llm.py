@@ -150,6 +150,11 @@ class LLMTimeoutError(RuntimeError):
     or exceeds the hard cap LLM_CALL_TIMEOUT_SECONDS."""
 
 
+class LLMCancelledError(RuntimeError):
+    """Raised when an in-flight streamed call is cancelled by the user (Stop button).
+    Like a stall/cap abort, it stops pulling + requests an unload (best-effort GPU free)."""
+
+
 class LLMClient(Protocol):
     """v1 protocol. Legacy single-turn signature."""
     def chat(self, *, system: str, user: str, tools: list[dict[str, Any]],
@@ -175,6 +180,7 @@ class LLMClientV2(Protocol):
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
         on_token: Any = None,
+        cancel_check: Any = None,
     ) -> LLMResponse: ...
 
     def unload(self, model: str) -> None:
@@ -232,6 +238,7 @@ class OllamaClient:
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
         on_token: Any = None,
+        cancel_check: Any = None,
     ) -> LLMResponse:
         """v2 native multi-turn path — STREAMED.
 
@@ -275,8 +282,8 @@ class OllamaClient:
             if think_enabled:
                 kwargs["think"] = True
             try:
-                last_resp = self._consume_stream(kwargs, eff_model, sink_dir, stream_log_label, on_token)
-            except LLMTimeoutError:
+                last_resp = self._consume_stream(kwargs, eff_model, sink_dir, stream_log_label, on_token, cancel_check)
+            except (LLMTimeoutError, LLMCancelledError):
                 raise
             except Exception as exc:
                 # Coder models without a reasoning channel reject Ollama's `think`
@@ -285,7 +292,7 @@ class OllamaClient:
                     _log.warning("model %r does not support thinking; retrying without it", eff_model)
                     think_enabled = False
                     _NO_THINKING_MODELS.add(eff_model)  # don't re-request it next call
-                    last_resp = self._consume_stream(dict(base), eff_model, sink_dir, stream_log_label, on_token)
+                    last_resp = self._consume_stream(dict(base), eff_model, sink_dir, stream_log_label, on_token, cancel_check)
                 else:
                     raise
             if not (_looks_corrupted(last_resp.content) or _looks_corrupted(last_resp.thinking or "")):
@@ -298,7 +305,7 @@ class OllamaClient:
 
     def _consume_stream(
         self, kwargs: dict[str, Any], eff_model: str, sink_dir: Path | None,
-        label: str | None, on_token: Any = None,
+        label: str | None, on_token: Any = None, cancel_check: Any = None,
     ) -> LLMResponse:
         """Drive one streamed chat. A producer thread iterates the stream onto a queue ;
         this thread pulls chunks with a STALL timeout (queue.Empty = no token for too
@@ -321,20 +328,37 @@ class OllamaClient:
         acc: dict[str, Any] = {"content": "", "thinking": "", "tool_calls": [], "prompt_eval": 0, "eval": 0}
         sink = _open_stream_sink(sink_dir, label, eff_model)
         start = time.monotonic()
+        last = start  # time of the last received token → stall is measured from here
+        # Poll on a SHORT interval (not the full stall window) so a user cancel — and a
+        # pre-first-token stall — are noticed within ~0.1s instead of up to STALL seconds.
+        # (Only spins while the queue is EMPTY ; a producing model returns chunks at once.)
+        poll = min(0.1, LLM_STALL_TIMEOUT_SECONDS, LLM_CALL_TIMEOUT_SECONDS)
         try:
             while True:
-                try:
-                    kind, payload = q.get(timeout=LLM_STALL_TIMEOUT_SECONDS)
-                except queue.Empty:
+                if cancel_check is not None and cancel_check():
                     self.unload(eff_model)  # best-effort GPU free (Ollama may keep going)
-                    raise LLMTimeoutError(
-                        f"Ollama stalled: no token for {LLM_STALL_TIMEOUT_SECONDS}s "
-                        f"(model {eff_model}); aborted and requested unload."
-                    ) from None
+                    raise LLMCancelledError(f"cancelled by user (model {eff_model})")
+                try:
+                    kind, payload = q.get(timeout=poll)
+                except queue.Empty:
+                    now = time.monotonic()
+                    if now - last > LLM_STALL_TIMEOUT_SECONDS:
+                        self.unload(eff_model)  # best-effort GPU free (Ollama may keep going)
+                        raise LLMTimeoutError(
+                            f"Ollama stalled: no token for {LLM_STALL_TIMEOUT_SECONDS}s "
+                            f"(model {eff_model}); aborted and requested unload."
+                        ) from None
+                    if now - start > LLM_CALL_TIMEOUT_SECONDS:
+                        self.unload(eff_model)
+                        raise LLMTimeoutError(
+                            f"Ollama exceeded hard cap {LLM_CALL_TIMEOUT_SECONDS}s (model {eff_model})."
+                        ) from None
+                    continue
                 if kind == "e":
                     raise payload
                 if kind is _STREAM_DONE:
                     break
+                last = time.monotonic()
                 content_delta, thinking_delta = _accumulate_chunk(acc, payload)
                 # Stream both channels SEPARATELY (the UI renders them in different
                 # places : thinking → dedicated block, content → answer bubble).
@@ -425,6 +449,7 @@ class MockClient:
         stream_log_dir: Any = None,
         stream_log_label: str | None = None,
         on_token: Any = None,
+        cancel_check: Any = None,
     ) -> LLMResponse:
         """v2 native multi-turn path."""
         _maybe_evict_on_switch(self, model or self.model)

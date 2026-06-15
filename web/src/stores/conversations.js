@@ -21,6 +21,7 @@ export const useConvStore = defineStore('conversations', () => {
   const trace = ref([]) // live event stream of the current/last turn
   const liveThinking = ref('') // current agent's thinking, streamed into the dedicated block
   const busy = ref(false) // a turn is running
+  const stopping = ref(false) // Stop requested ; awaiting the turn's terminal frame
   const queued = ref(false) // waiting for the global turn slot
   const dispatch = ref(null) // last Tier-0 decision {intent, tool, confidence}
   const askHuman = ref(null) // {question, why, choices[], multi} | null
@@ -166,6 +167,7 @@ export const useConvStore = defineStore('conversations', () => {
       final: m => {
         queued.value = false
         busy.value = false
+        stopping.value = false
         askHuman.value = null
         // Finalize the streamed bubble with the authoritative answer (or push fresh).
         if (streamingMsg) {
@@ -182,8 +184,8 @@ export const useConvStore = defineStore('conversations', () => {
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
       },
-      error: m => { busy.value = false; queued.value = false; stopStreaming(); error.value = m.detail || 'Erreur orchestrateur.' },
-      close: () => { busy.value = false; stopStreaming() },
+      error: m => { busy.value = false; stopping.value = false; queued.value = false; stopStreaming(); error.value = m.detail || 'Erreur orchestrateur.' },
+      close: () => { busy.value = false; stopping.value = false; stopStreaming() },
     })
   }
 
@@ -223,6 +225,15 @@ export const useConvStore = defineStore('conversations', () => {
     lastTurnWasPlan = isPlan
     busy.value = true
     turnWs.sendTurn(clean, files, isPlan)
+  }
+
+  // Abort the running turn. The backend stops the orchestrator (mid-stream too) and
+  // concludes via {final}, which clears busy/stopping. `stopping` drives the button's
+  // transient state so a second click can't spam stop frames.
+  function stopTurn () {
+    if (!turnWs || !busy.value || stopping.value) return
+    stopping.value = true
+    turnWs.sendStop()
   }
 
   // Approve the presented plan → execute it in a fresh Edit turn (gate OFF). The
@@ -311,10 +322,10 @@ export const useConvStore = defineStore('conversations', () => {
   }
 
   return {
-    list, currentId, messages, trace, liveThinking, busy, queued, dispatch, askHuman, error, vocal,
+    list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
     currentMode, planMode, planAvailable, planPending, planEditorOpen,
-    refresh, create, select, sendTurn, answer, approveAndExecute, rename, remove, reset,
+    refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,
   }

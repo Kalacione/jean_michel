@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import logging
 import queue
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,7 @@ async def run_turn_streaming(
     loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue = asyncio.Queue()
     answer_box: queue.Queue = queue.Queue()
+    cancel_event = threading.Event()  # set by a {type:"stop"} frame → aborts the turn
 
     def emit(event: Any) -> None:
         msg: dict[str, Any] = {"type": "event", "event": event.to_dict()}
@@ -143,6 +145,7 @@ async def run_turn_streaming(
                 memory_user_id=memory_user_id,
                 attachments=attachments,
                 plan_mode=plan_mode,
+                cancel_event=cancel_event,
             )
         except Exception as exc:  # noqa: BLE001
             _log.exception("turn worker EXCEPTION conv=%s : %s", conv_id, exc)
@@ -168,6 +171,13 @@ async def run_turn_streaming(
                 kind = data.get("type")
                 if kind == "answer":
                     answer_box.put(data.get("text", ""))
+                elif kind == "stop":
+                    # User hit Stop : signal the worker thread to abort at its next
+                    # checkpoint / mid-stream, and unblock a pending ask_human so the
+                    # loop can reach that checkpoint. The turn then concludes via {final}.
+                    _log.info("recv_answers STOP requested conv=%s", conv_id)
+                    cancel_event.set()
+                    answer_box.put("")
                 else:
                     # NB : non-answer frames (e.g. a {turn} sent mid-turn) are dropped here.
                     _log.warning("recv_answers DROPPED frame type=%r mid-turn conv=%s", kind, conv_id)

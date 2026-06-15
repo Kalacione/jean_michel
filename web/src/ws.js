@@ -28,6 +28,9 @@ export function connectTurn (convId, handlers = {}) {
     sendTurn: (text, files = [], planMode = false) =>
       ws.send(JSON.stringify({ type: 'turn', text, files, plan_mode: planMode })),
     sendAnswer: text => ws.send(JSON.stringify({ type: 'answer', text })),
+    // Abort the running turn : the backend signals the orchestrator to stop at its
+    // next checkpoint / mid-stream, then concludes the turn via {final}.
+    sendStop: () => ws.send(JSON.stringify({ type: 'stop' })),
     close: () => ws.close(),
     raw: ws,
   }

@@ -235,8 +235,17 @@
         </v-btn>
       </v-btn-toggle>
       <v-btn
+        v-if="conv.busy"
+        color="error"
+        :loading="conv.stopping"
+        icon="mdi-stop"
+        title="Arrêter le tour en cours"
+        @click="conv.stopTurn()"
+      />
+      <v-btn
+        v-else
         color="primary"
-        :disabled="conv.busy || (!draft.trim() && !attachments.length)"
+        :disabled="!draft.trim() && !attachments.length"
         icon="mdi-send"
         @click="send"
       />
