@@ -19,8 +19,10 @@
   qui répondent, appels d'outils non bloqués, mémoires visibles.
 
 ## Perf / qualité orchestration
-- **Shadow-consolidation à revoir** : produit des mémoires pourries (hallucinées) ET tourne dans le tour (coût
-  LLM) → la **décou­pler** (tâche de fond, hors `turn_lock`) et/ou **gater** (qualité + fréquence).
+- **Shadow-consolidation** : découplée du tour (tâche de fond post-tour + push notif) + grounding anti-GIGO
+  (user/tool only) ✅ (c48cfc1). **Reste** : (a) **persistance reload** — `GET /conversations/{id}/pending-memory`
+  + chargement au `select()` (sinon candidats perdus si on quitte la conv dans les ~15s) ; (b) éventuel
+  **gating** de fréquence (ne pas consolider chaque tour deep).
 - **Nudging tours vides de cogito** (tour assistant vide juste après un résultat d'outil → relancé par le garde,
   ~1 appel LLM en plus) : creuser la cause (prompt ? quirk modèle reasoning ?).
 - **Fluidité du streaming sous famine GIL** : le worker tient le GIL pendant les sections CPU lourdes → le live
