@@ -95,15 +95,15 @@ def test_ws_streams_real_turn(client, monkeypatch):
     assert {"RequestStarted", "RequestCompleted"} <= ev_types
 
 
-def test_ws_final_is_last_after_consolidation(client, monkeypatch):
-    """Regression : 'final' must be the LAST frame, emitted AFTER shadow consolidation.
-    If 'final' fired first, the turn was still active (lock held, recv_answers running)
-    during consolidation, so a turn sent right after (the plan 'Approve') got DROPPED
-    → frozen spinner. So consolidation event MUST precede 'final'."""
+def test_ws_no_consolidation_event_in_turn(client, monkeypatch):
+    """Shadow consolidation is DECOUPLED to a background task (post-turn, pushed over the
+    notifications WS). So the TURN itself must NOT emit MemoryConsolidationProposed, and
+    'final' is the last frame — the turn is truly done when 'final' fires (so an Approve
+    sent right after isn't dropped)."""
     monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
     monkeypatch.setattr(
         executor.consolidation_svc, "run_shadow",
-        lambda *a, **k: [{"code": "x", "title": "t", "scope": "world"}],  # one candidate
+        lambda *a, **k: [{"code": "x", "title": "t", "scope": "world"}],  # would-be candidate
     )
     _make_user("carol", "pw")
     token = _login(client, "carol", "pw")
@@ -119,12 +119,9 @@ def test_ws_final_is_last_after_consolidation(client, monkeypatch):
                 break
 
     assert msgs[-1]["type"] == "final", msgs           # final is the LAST frame
-    cons_idx = [
-        i for i, m in enumerate(msgs)
-        if m["type"] == "event" and m["event"]["type"] == "MemoryConsolidationProposed"
-    ]
-    assert cons_idx, "consolidation event should be emitted for a deep turn"
-    assert cons_idx[-1] < len(msgs) - 1                # consolidation BEFORE final
+    assert not any(                                     # consolidation is NOT on the turn WS
+        m["type"] == "event" and m["event"]["type"] == "MemoryConsolidationProposed" for m in msgs
+    )
 
     # Events are also persisted (replayable via the REST events endpoint).
     persisted = persistence.load_events(_conv_folder(conv_id))

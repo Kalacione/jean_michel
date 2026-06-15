@@ -28,6 +28,7 @@ from ..events import MemoryConsolidationProposed
 from ..llm import OllamaClient
 from ..service import consolidation as consolidation_svc
 from ..service import turn_runner
+from . import notifications
 
 _log = logging.getLogger(__name__)
 
@@ -36,6 +37,10 @@ _log = logging.getLogger(__name__)
 turn_lock = asyncio.Lock()
 
 _SENTINEL = object()
+
+# Strong refs to fire-and-forget background tasks (post-turn shadow consolidation),
+# so the event loop doesn't GC them mid-flight. Discarded on completion.
+_bg_tasks: set[Any] = set()
 
 _llm_clients: tuple[Any, Any] | None = None
 
@@ -143,29 +148,12 @@ async def run_turn_streaming(
             _log.exception("turn worker EXCEPTION conv=%s : %s", conv_id, exc)
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "detail": str(exc)})
         else:
-            _log.info("turn worker run_turn RETURNED conv=%s answer_len=%d", conv_id, len(answer or ""))
-            # Shadow consolidation runs BEFORE 'final' : 'final' is the client's
-            # "turn done" signal (it re-enables sending / shows the Approve bar). If we
-            # emit it first, the turn is STILL active (lock held, recv_answers running)
-            # during consolidation, so an Approve/next turn sent right after gets DROPPED
-            # by recv_answers → frozen spinner. So : consolidate (best-effort, isolated)
-            # THEN final, so "done" on the client == backend ready for the next turn.
-            if was_deep["v"]:
-                _log.info("shadow consolidation START conv=%s", conv_id)
-                try:
-                    cands = consolidation_svc.run_shadow(
-                        folder, conv_id, llm=main_llm, user_id=memory_user_id
-                    )
-                    _log.info("shadow consolidation DONE conv=%s candidates=%d", conv_id, len(cands or []))
-                    if cands:
-                        ev = MemoryConsolidationProposed(count=len(cands), candidates=cands)
-                        persistence.append_event(folder, ev)
-                        loop.call_soon_threadsafe(
-                            event_queue.put_nowait, {"type": "event", "event": ev.to_dict()}
-                        )
-                except Exception as exc:  # noqa: BLE001 — never let it block 'final'
-                    _log.exception("shadow consolidation FAILED conv=%s : %s", conv_id, exc)
-            _log.info("turn worker queue final conv=%s", conv_id)
+            _log.info("turn worker run_turn RETURNED conv=%s answer_len=%d → queue final",
+                      conv_id, len(answer or ""))
+            # 'final' is emitted as soon as the answer is ready — the turn is now truly
+            # done (drain → sentinel → lock released). Shadow consolidation is DECOUPLED
+            # to a background task AFTER the turn (see below) so it never delays 'final'
+            # nor holds the turn (which would drop an Approve/next-turn frame).
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
         finally:
             _log.info("turn worker END conv=%s → queue sentinel", conv_id)
@@ -186,6 +174,33 @@ async def run_turn_streaming(
         except Exception as exc:  # noqa: BLE001 — disconnect / bad frame ends receiving
             _log.info("recv_answers ended conv=%s : %s", conv_id, type(exc).__name__)
             answer_box.put("")  # unblock a pending ask_human so the turn finishes
+
+    async def _consolidate_bg() -> None:
+        # Shadow consolidation DECOUPLED from the turn : runs after the turn released
+        # the WS + lock, so it never delays 'final' nor holds the receiver (which would
+        # drop an Approve/next-turn frame). Serialized via turn_lock (GPU) ; best-effort.
+        # run_shadow stashes to pending_memory.json ; we also push the candidates live
+        # over the per-user notifications WS (the turn WS is already closed).
+        try:
+            async with turn_lock:
+                cands = await loop.run_in_executor(
+                    None,
+                    lambda: consolidation_svc.run_shadow(
+                        folder, conv_id, llm=main_llm, user_id=memory_user_id
+                    ),
+                )
+            _log.info("shadow consolidation (bg) DONE conv=%s candidates=%d", conv_id, len(cands or []))
+            if cands:
+                persistence.append_event(
+                    folder, MemoryConsolidationProposed(count=len(cands), candidates=cands)
+                )
+                if memory_user_id is not None:
+                    notifications.notify(memory_user_id, {
+                        "type": "notification", "kind": "memory_proposed",
+                        "conv_id": conv_id, "count": len(cands), "candidates": cands,
+                    })
+        except Exception as exc:  # noqa: BLE001 — best-effort ; the turn already succeeded
+            _log.exception("shadow consolidation (bg) FAILED conv=%s : %s", conv_id, exc)
 
     turn_future = loop.run_in_executor(None, worker)
     recv_task = asyncio.create_task(recv_answers())
@@ -213,3 +228,10 @@ async def run_turn_streaming(
         # Let the worker finish (persists messages/state/events) even if the
         # client vanished mid-turn.
         await turn_future
+        # Turn fully done (final + sentinel sent, lock about to release) → kick off
+        # shadow consolidation in the background (deep turns only). It acquires turn_lock
+        # itself once released, so the next user turn is never blocked/dropped by it.
+        if was_deep["v"]:
+            task = asyncio.create_task(_consolidate_bg())
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)

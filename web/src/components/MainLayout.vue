@@ -91,6 +91,7 @@
     notif = connectNotifications({
       notification: m => {
         notifTries = 0 // healthy connection
+        if (m.kind === 'memory_proposed') { conv.onMemoryProposed(m); return }
         if (m.kind !== 'project_image_build') return
         const name = m.project_name || 'projet'
         if (m.state === 'ok') snackbar.show(`Image du sandbox « ${name} » prête.`, 'success')

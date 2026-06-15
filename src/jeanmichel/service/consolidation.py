@@ -41,7 +41,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """You extract durable, reusable facts worth remem
 Rules:
 - Only propose a fact that is DURABLE and reusable across future conversations. Skip one-off task details, transient state, and anything already obvious.
 - `scope`: "user" (a stable fact/preference about the human), "project" (a decision/constraint of the current project), "tool" (a reusable lesson on how to use a tool — set `tool_code`), or "world" (a globally useful fact).
-- `grounding_quote`: a VERBATIM excerpt copied from the conversation that supports the fact. If you cannot quote it, do not propose it. Never paraphrase the quote.
+- `grounding_quote`: a VERBATIM excerpt copied from a USER message or a TOOL result that supports the fact — NEVER from the assistant's own statements (those may be unverified). If you cannot quote a user/tool source, do not propose it. Never paraphrase the quote.
 - `code`: a short kebab-case slug (e.g. "prefers-terse-answers"). No spaces.
 - Keep it concise: title <= 60 chars, description <= 150, content <= 1000.
 - If nothing is worth remembering, return {"candidates": []}. Do not invent facts to be helpful.
@@ -54,17 +54,35 @@ def _norm(s: str) -> str:
 
 
 def _transcript(messages: list[dict[str, Any]]) -> str:
-    """Render the user/assistant turns as a plain transcript (most recent kept)."""
+    """Render user/assistant/tool turns as a plain transcript (most recent kept).
+    Tool results are included (clamped) so the LLM can cite a real SOURCE."""
     lines: list[str] = []
     for m in messages:
         role = m.get("role")
         content = m.get("content")
-        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+        if not (isinstance(content, str) and content.strip()):
+            continue
+        if role in ("user", "assistant"):
             lines.append(f"{role}: {content.strip()}")
+        elif role == "tool":
+            lines.append(f"tool: {_clamp(content, 600)}")
     text = "\n".join(lines)
     if len(text) > MAX_TRANSCRIPT_CHARS:
         text = text[-MAX_TRANSCRIPT_CHARS:]  # keep the most recent context
     return text
+
+
+def _groundable(messages: list[dict[str, Any]]) -> str:
+    """Normalized text the grounding gate accepts as a SOURCE : user messages +
+    tool results ONLY — never the assistant's own (possibly hallucinated) claims.
+    This is the anti-GIGO gate (the model can't memorize its own inventions)."""
+    parts: list[str] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role in ("user", "tool") and isinstance(content, str) and content.strip():
+            parts.append(content)
+    return _norm("\n".join(parts))
 
 
 def _clamp(s: str, n: int) -> str:
@@ -122,7 +140,7 @@ def propose(
         _log.debug("consolidation propose failed: %s", exc)
         return []
 
-    norm_transcript = _norm(transcript)
+    norm_groundable = _groundable(messages)  # user + tool only (anti-GIGO)
     out: list[dict[str, Any]] = []
     for c in raw if isinstance(raw, list) else []:
         if not isinstance(c, dict):
@@ -140,9 +158,10 @@ def propose(
         # Code must be a valid kebab slug.
         if not code or " " in code:
             continue
-        # Grounding gate : the quote must really appear in the conversation.
+        # Grounding gate : the quote must appear in a USER message or TOOL result
+        # (never the assistant's own claims → anti-hallucination at the source).
         nq = _norm(quote)
-        if len(nq) < MIN_QUOTE_CHARS or nq not in norm_transcript:
+        if len(nq) < MIN_QUOTE_CHARS or nq not in norm_groundable:
             continue
 
         target = _target_for(scope, project_id=project_id, tool_code=tool_code)

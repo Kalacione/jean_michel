@@ -93,6 +93,39 @@ def test_project_scope_dropped_without_project(tmp_db_v2):
     assert cands[0]["project_id"] == 1
 
 
+def test_assistant_only_grounding_rejected(tmp_db_v2):
+    """Anti-GIGO : a quote that appears ONLY in the ASSISTANT's own message is dropped
+    (the model must not memorize its own, possibly hallucinated, claims)."""
+    llm = FakeLLM({"candidates": [{
+        "scope": "world", "code": "grain-volume", "title": "Grain volume",
+        "description": "d", "content": "c",
+        "grounding_quote": "a semolina grain is about 0.04 cubic centimeters",  # assistant said it
+    }]})
+    msgs = [
+        {"role": "user", "content": "how many grains of semolina in a couscous plate?"},
+        {"role": "assistant", "content": "Well, a semolina grain is about 0.04 cubic centimeters, so…"},
+    ]
+    with db_connect() as conn:
+        assert consolidation.propose(conn, msgs, llm=llm, user_id=_uid()) == []
+
+
+def test_tool_result_grounding_kept(tmp_db_v2):
+    """A quote from a TOOL result (a real source) is accepted."""
+    llm = FakeLLM({"candidates": [{
+        "scope": "world", "code": "py314-release", "title": "Python 3.14",
+        "description": "d", "content": "c",
+        "grounding_quote": "Python 3.14 was released in October 2025",
+    }]})
+    msgs = [
+        {"role": "user", "content": "when did python 3.14 come out?"},
+        {"role": "tool", "content": "search result: Python 3.14 was released in October 2025."},
+        {"role": "assistant", "content": "It shipped in late 2025."},
+    ]
+    with db_connect() as conn:
+        cands = consolidation.propose(conn, msgs, llm=llm, user_id=_uid())
+    assert len(cands) == 1 and cands[0]["code"] == "py314-release"
+
+
 # ---- dedup / contradiction surfacing --------------------------------------
 
 

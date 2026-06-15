@@ -303,12 +303,19 @@ export const useConvStore = defineStore('conversations', () => {
     pendingMemory.value = pendingMemory.value.filter(c => c !== candidate)
   }
 
+  // Shadow consolidation is now decoupled (runs ~after the turn) and pushes its
+  // candidates over the per-user notifications WS. Surface them only for the
+  // conversation currently open (the payload is per-user, not per-tab).
+  function onMemoryProposed (m) {
+    if (m && m.conv_id === currentId.value) pendingMemory.value = m.candidates || []
+  }
+
   return {
     list, currentId, messages, trace, liveThinking, busy, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
     currentMode, planMode, planAvailable, planPending, planEditorOpen,
     refresh, create, select, sendTurn, answer, approveAndExecute, rename, remove, reset,
-    fetchWsFiles, openWorkspace, dismissMemory,
+    fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,
   }
 })
