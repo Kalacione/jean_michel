@@ -252,6 +252,19 @@ def test_chat_messages_retries_without_thinking_on_400():
     assert "think" not in fake.chats[1]  # retry dropped it
 
 
+def test_chat_messages_skips_thinking_proactively_from_config(monkeypatch):
+    """Model listed in models.toml `no_thinking` → `think` is NEVER requested (no 400,
+    no retry), even with thinking=True. Single clean call."""
+    from jeanmichel import config
+    monkeypatch.setattr(config, "_MODELS_CONFIG", {"no_thinking": ["qwen3-coder:latest"]})
+    fake = _StreamFake(raise_on_think=True)  # would 400 if think were ever sent
+    client = _bare_ollama_client(fake)       # model = qwen3-coder:latest
+    resp = client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=True)
+    assert resp.content == "ok"
+    assert len(fake.chats) == 1           # proactive skip → one clean call, no retry
+    assert "think" not in fake.chats[0]   # never requested
+
+
 def test_chat_messages_caches_no_thinking_model():
     """After a 400, the model is remembered so we don't think+400+retry every call."""
     fake = _StreamFake(raise_on_think=True)

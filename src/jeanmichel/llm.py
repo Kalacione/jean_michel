@@ -35,6 +35,7 @@ from .config import (
     LLM_STREAM_DIR,
     OLLAMA_KEEP_ALIVE,
     model_context_window,
+    model_skips_thinking,
 )
 from .models import LLMResponse, ToolCall
 
@@ -261,7 +262,13 @@ class OllamaClient:
             base["format"] = format
 
         sink_dir = _resolve_stream_dir(stream_log_dir)
-        think_enabled = thinking and eff_model not in _NO_THINKING_MODELS
+        # Proactive (models.toml `no_thinking`) + reactive (learned on a 400) skip, so a
+        # model without an Ollama thinking channel never gets `think` (no 400 + retry).
+        think_enabled = (
+            thinking
+            and eff_model not in _NO_THINKING_MODELS
+            and not model_skips_thinking(eff_model)
+        )
         last_resp: LLMResponse | None = None
         for attempt in (1, 2):
             kwargs = dict(base)

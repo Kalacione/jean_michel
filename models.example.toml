@@ -12,6 +12,18 @@
 #   voice            → JEANMICHEL_VOICE_MODEL, JEANMICHEL_AUDIO_PLAYER
 # =============================================================================
 
+# ---- Top-level scalars (MUST stay above the first [table] to be top-level) ---
+# Context window cap + fallback (pinned as Ollama num_ctx). The per-model value is
+# the model's REAL need in its role, NOT its native max : a 256k window on an 8B
+# ≈ 54 GB of KV cache → OOM. Only the code model needs the big window.
+ceiling = 128000   # hard cap on every resolved window (VRAM safety)
+default = 32768    # fallback for any model not in [context_window]
+
+# Models that don't expose Ollama's `think` API → we never request thinking for them
+# (else Ollama answers HTTP 400 on the first call → a wasted retry). Their reasoning
+# still happens internally ; there's just no separate thinking channel to capture.
+no_thinking = ["cogito:32b"]
+
 # ---- Role → model -----------------------------------------------------------
 # Which Ollama model plays each role in the deterministic orchestration chain.
 [roles]
@@ -23,12 +35,6 @@ subagent  = "gemma4:26b"      # default for specialists without a model_override
 reasoner  = "gemma4:26b"      # reasoning-heavy roles (strategist, critical-thinker…)
 
 # ---- Context window (pinned as Ollama num_ctx, in tokens) -------------------
-# The value is the model's REAL need in its role, NOT its native max: a 256k
-# window on an 8B ≈ 54 GB of KV cache → OOM. Only the code model needs the big
-# window. Everything is capped at `ceiling`.
-ceiling = 128000   # hard cap on every resolved window (VRAM safety)
-default = 32768    # fallback for any model not listed below
-
 [context_window]
 "qwen3-coder:latest" = 128000   # code-runner — code needs the large context
 "cogito:32b"         = 40960    # main router / orchestrator

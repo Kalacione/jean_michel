@@ -410,6 +410,13 @@ def model_context_window(model: str) -> int:
     return min(resolved, _ctx_ceiling())
 
 
+def model_skips_thinking(model: str) -> bool:
+    """True if the model doesn't expose Ollama's `think` API (models.toml `no_thinking`
+    list). We then never request thinking for it → no HTTP 400 + wasted retry."""
+    lst = _MODELS_CONFIG.get("no_thinking")
+    return isinstance(lst, list) and model in lst
+
+
 # Audit sandbox cross-conversation : fichier JSONL global (cf. §6 bis doc 06).
 SANDBOX_AUDIT_LOG = Path(
     os.environ.get(

@@ -118,3 +118,15 @@ def test_real_example_has_sane_defaults():
     assert cfg["context_window"]["qwen3-coder:latest"] == 128000  # code keeps its big window
     assert cfg["context_window"]["granite4.1:8b"] <= 16000        # dispatcher stays small
     assert cfg["roles"]["dispatch"] and cfg["roles"]["main"] and cfg["roles"]["code"]
+    assert "cogito:32b" in cfg["no_thinking"]                     # orchestrator has no think channel
+
+
+# ---- model_skips_thinking -------------------------------------------------
+
+
+def test_model_skips_thinking(monkeypatch):
+    monkeypatch.setattr(config, "_MODELS_CONFIG", {"no_thinking": ["cogito:32b"]})
+    assert config.model_skips_thinking("cogito:32b") is True
+    assert config.model_skips_thinking("gemma4:26b") is False
+    monkeypatch.setattr(config, "_MODELS_CONFIG", {})  # no list → nobody skips
+    assert config.model_skips_thinking("cogito:32b") is False
