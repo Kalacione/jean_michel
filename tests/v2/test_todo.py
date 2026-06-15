@@ -164,41 +164,55 @@ def test_render_recap_next_action_falls_back_to_pending():
     assert "Next action: b" in todomod.render_recap(todo)
 
 
-# ---- workspace plan artifact ---------------------------------------------
+# ---- rich plan document + acceptance status ------------------------------
 
 
-def test_save_todo_mirrors_plan_to_workspace(tmp_path):
-    todo_write.make_spec(tmp_path).handler(goal="ship X", items=_items("done", "in_progress", "pending"))
-    plan = tmp_path / "workspace" / "plan.md"
-    assert plan.exists()
-    md = plan.read_text(encoding="utf-8")
-    assert "# Plan (1/3 done)" in md
-    assert "**Goal:** ship X" in md
-    assert "- [x] 1. step 1" in md
-    assert "- [ ] 2. step 2 _(in progress)_" in md
-    assert "- [ ] 3. step 3" in md
+def test_save_plan_load_plan_roundtrip(tmp_path):
+    assert todomod.load_plan(tmp_path) is None  # absent → None
+    todomod.save_plan(tmp_path, "# Plan\n\n## Context\nReasoning here.\n")
+    assert todomod.load_plan(tmp_path).startswith("# Plan")
+    # Whitespace-only → None (not a real plan).
+    todomod.save_plan(tmp_path, "   \n  ")
+    assert todomod.load_plan(tmp_path) is None
 
 
-def test_plan_artifact_refreshed_on_each_save(tmp_path):
-    spec = todo_write.make_spec(tmp_path)
-    spec.handler(goal="g", items=_items("in_progress", "pending"))
-    spec.handler(goal="g", items=_items("done", "in_progress"))
-    md = (tmp_path / "workspace" / "plan.md").read_text(encoding="utf-8")
-    assert "# Plan (1/2 done)" in md  # reflects the latest save, not accumulated
-
-
-def test_clear_todo_removes_plan_artifact(tmp_path):
+def test_save_todo_defaults_status_proposed(tmp_path):
     todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
-    assert (tmp_path / "workspace" / "plan.md").exists()
+    assert todomod.load_todo(tmp_path)["status"] == "proposed"
+
+
+def test_save_todo_preserves_status_across_updates(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}],
+                      status="accepted")
+    # A status-less re-save (e.g. todo_update during execution) keeps 'accepted'.
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "done"},
+                                      {"id": "2", "text": "more", "status": "in_progress"}])
+    assert todomod.load_todo(tmp_path)["status"] == "accepted"
+
+
+def test_set_plan_status(tmp_path):
+    todomod.set_plan_status(tmp_path, "accepted")  # no todo → no-op, no crash
+    assert todomod.load_todo(tmp_path) is None
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    todomod.set_plan_status(tmp_path, "accepted")
+    assert todomod.load_todo(tmp_path)["status"] == "accepted"
+
+
+def test_clear_todo_removes_plan_doc(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    todomod.save_plan(tmp_path, "# Plan\n")
     todomod.clear_todo(tmp_path)
-    assert not (tmp_path / "workspace" / "plan.md").exists()
+    assert todomod.load_todo(tmp_path) is None
+    assert todomod.load_plan(tmp_path) is None
 
 
-def test_todo_write_all_done_clears_plan_artifact(tmp_path):
+def test_todo_write_all_done_clears_plan(tmp_path):
     spec = todo_write.make_spec(tmp_path)
     spec.handler(goal="g", items=_items("in_progress"))
+    todomod.save_plan(tmp_path, "# Plan\n")
     spec.handler(goal="g", items=_items("done", "done"))  # all done → cleared
-    assert not (tmp_path / "workspace" / "plan.md").exists()
+    assert todomod.load_todo(tmp_path) is None
+    assert todomod.load_plan(tmp_path) is None
 
 
 # ---- PreLLMCall recap injection ------------------------------------------
@@ -237,6 +251,42 @@ def test_recap_not_injected_for_subagent(tmp_path):
     msgs = _msgs()
     hook(msgs, _state())
     assert not any(m["content"].startswith(todomod.RECAP_MARKER) for m in msgs)
+
+
+# ---- PreLLMCall rich-plan ([PLAN]) injection -----------------------------
+
+
+def test_plan_doc_injected_for_main_agent(tmp_path):
+    todomod.save_plan(tmp_path, "# Plan\n\n## Context\nWhy this approach.\n")
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    hook(msgs, _state())
+    plans = [m for m in msgs if m["content"].startswith("[PLAN]")]
+    assert len(plans) == 1 and "## Context" in plans[0]["content"]
+
+
+def test_plan_doc_refreshed_not_accumulated(tmp_path):
+    todomod.save_plan(tmp_path, "# Plan\n")
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    for _ in range(3):
+        hook(msgs, _state())
+    assert sum(1 for m in msgs if m["content"].startswith("[PLAN]")) == 1
+
+
+def test_plan_doc_noop_without_plan(tmp_path):
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
+    msgs = _msgs()
+    hook(msgs, _state())
+    assert not any(m["content"].startswith("[PLAN]") for m in msgs)
+
+
+def test_plan_doc_not_injected_for_subagent(tmp_path):
+    todomod.save_plan(tmp_path, "# Plan\n")
+    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=False)
+    msgs = _msgs()
+    hook(msgs, _state())
+    assert not any(m["content"].startswith("[PLAN]") for m in msgs)
 
 
 # ---- report_back extension (D11) -----------------------------------------

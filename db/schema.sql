@@ -698,6 +698,7 @@ INSERT INTO agent_tools VALUES(20,'workspace_view');
 -- migrate_134: code-router (21) — owns the PDCA TODO + memory + scratch read.
 INSERT INTO agent_tools VALUES(21,'todo_write');
 INSERT INTO agent_tools VALUES(21,'todo_update');
+INSERT INTO agent_tools VALUES(21,'plan_write');
 INSERT INTO agent_tools VALUES(21,'manage_memory');
 INSERT INTO agent_tools VALUES(21,'workspace_view');
 INSERT INTO agent_tools VALUES(12,'self_inspect_architecture');
@@ -813,6 +814,7 @@ INSERT INTO agent_tools VALUES(13,'analyze_image');
 INSERT INTO agent_tools VALUES(1,'image_fetch');
 INSERT INTO agent_tools VALUES(1,'todo_write');
 INSERT INTO agent_tools VALUES(1,'todo_update');
+INSERT INTO agent_tools VALUES(1,'plan_write');
 INSERT INTO agent_tools VALUES(13,'image_fetch');
 CREATE TABLE agent_workspace_grants (
   agent_id       INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,

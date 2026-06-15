@@ -33,7 +33,7 @@ from . import worktree
 from .compaction import escalate_compaction
 from .config import MAX_DEPTH, MAX_SEARCH_CALLS_PER_TURN
 from .models import ConversationState, ToolCall
-from .todo import RECAP_MARKER, load_todo, render_recap
+from .todo import RECAP_MARKER, load_plan, load_todo, render_recap
 
 _log = logging.getLogger(__name__)
 
@@ -164,6 +164,7 @@ class PreLLMCall:
         # Re-inject the living TODO recap + the attached-repo notice — main agent
         # only, no-op without todo.json / without a code-mode worktree.
         if self.is_main_agent and self.conv_folder is not None:
+            _refresh_plan_doc(messages, self.conv_folder)
             _refresh_todo_recap(messages, self.conv_folder)
             _refresh_repo_recap(messages, self.conv_folder)
             _refresh_plan_nudge(messages, self.conv_folder, state)
@@ -375,6 +376,35 @@ def _summarize_for_cache(result: Any) -> str:
     return s[:200] if len(s) > 200 else s
 
 
+_PLAN_DOC_MARKER = "[PLAN]"
+
+
+def _refresh_plan_doc(messages: list[dict[str, Any]], conv_folder: Path) -> None:
+    """Re-surface the rich plan document (plan.md) as the latest `[PLAN]` message.
+
+    The PLAN turn authors the analysis (Context/approach, detailed steps, verification) ;
+    this re-injects it into EVERY turn (plan + execution) so the executor works from the
+    reasoning, not just the terse recap. Injected fresh AFTER compaction → immune to it.
+    Idempotent per turn ; no-op without plan.md (a trivial turn carries no plan).
+    """
+    messages[:] = [
+        m for m in messages
+        if not (
+            m.get("role") == "user"
+            and isinstance(m.get("content"), str)
+            and m["content"].startswith(_PLAN_DOC_MARKER)
+        )
+    ]
+    plan = load_plan(conv_folder)
+    if not plan:
+        return
+    messages.append({"role": "user", "content": (
+        f"{_PLAN_DOC_MARKER} (orchestrator control — not the human user) The plan for this "
+        "conversation — follow its analysis and per-step approach, and keep the terse TODO "
+        "in sync as you execute.\n\n" + plan
+    )})
+
+
 def _refresh_todo_recap(messages: list[dict[str, Any]], conv_folder: Path) -> None:
     """Re-surface the orchestrator's living TODO as the latest `[TODO-RECAP]` msg.
 
@@ -476,11 +506,14 @@ def _refresh_plan_nudge(
             f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) You are in PLAN "
             "mode. Explore read-only — you may read "
             "(repo_read/grep/glob/git, workspace_view), run repo_test, search, and delegate FOR "
-            "EXPLORATION — but nothing writes, runs, or implements. Produce a concrete plan with "
-            "todo_write (as many scoped steps as the task needs — no minimum, no cap), then CONCLUDE "
-            "with a short summary of the plan for the "
-            "human to approve. Do NOT edit files, run commands, or implement: execution happens in a "
-            "separate Edit turn once the human approves."
+            "EXPLORATION — but nothing writes, runs, or implements. Produce a SUBSTANTIVE plan with "
+            "plan_write(markdown): a '## Context' section (the problem + your analysis and chosen "
+            "approach), the concrete steps WITH detail and rationale (how each will be done and why), "
+            "risks or open questions, and a '## Verification' section. ALSO call todo_write with the "
+            "terse trackable steps (one line each, exactly one in_progress — the progress tracker for "
+            "execution; as many steps as the task needs, no cap). Then CONCLUDE with a one-line pointer "
+            "for the human to approve. Do NOT edit files, run commands, or implement: execution happens "
+            "in a separate Edit turn once the human approves."
         )})
         return
     # EDIT mode : execute directly. The opening banner branches on whether a plan
@@ -492,9 +525,11 @@ def _refresh_plan_nudge(
     if has_todo:
         parts = [
             f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: EXECUTE the "
-            "approved plan now. Work the TODO — delegate the in_progress step to the right specialist, then "
-            "mark it done with todo_update and start the next. Synthesize the final answer once every step "
-            "is done. The plan is already approved — do NOT ask the user to approve anything."
+            "approved plan now. Follow the [PLAN] document above (its analysis and per-step approach). "
+            "Work the TODO — delegate the in_progress step to the right specialist; when its work is "
+            "finished, mark it done with todo_update(id, 'done') and set the next in_progress. Synthesize "
+            "the final answer once every step is done. The plan is already approved — do NOT ask the user "
+            "to approve anything."
         ]
     else:
         parts = [

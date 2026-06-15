@@ -117,7 +117,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
 # reload). The `]` on `[ORCHESTRATOR]` is deliberate — it matches the one-shot
 # nudges but NOT the compaction summaries `[ORCHESTRATOR CONTEXT COLLAPSE]` /
 # `[ORCHESTRATOR AUTOCOMPACT]`, which ARE real (compacted) history and must stay.
-_TRANSIENT_USER_PREFIXES = ("[TODO-RECAP]", "[CODE-REPO]", "[ORCHESTRATOR]")
+_TRANSIENT_USER_PREFIXES = ("[TODO-RECAP]", "[CODE-REPO]", "[ORCHESTRATOR]", "[PLAN]")
 
 
 def _is_transient_injection(m: dict[str, Any]) -> bool:

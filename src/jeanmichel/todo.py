@@ -22,41 +22,40 @@ RECAP_MARKER = "[TODO-RECAP]"
 STATUSES = ("pending", "in_progress", "done")
 _GLYPH = {"done": "[x]", "in_progress": "[>]", "pending": "[ ]"}
 
-# The plan is also mirrored as a human-readable artifact in the workspace, so it
-# is findable alongside the agents' outputs (todo.json itself lives at the conv
-# root, which is not surfaced as a workspace artifact).
-PLAN_ARTIFACT_NAME = "plan.md"
-
-
 def todo_path(conv_folder: Path) -> Path:
     return conv_folder / TODO_FILENAME
 
 
-def _plan_artifact_path(conv_folder: Path) -> Path:
-    return conv_folder / "workspace" / PLAN_ARTIFACT_NAME
+# ---- Rich plan document (markdown) ----------------------------------------
+# The PLAN turn authors a SUBSTANTIVE plan (Context/analysis, steps WITH detail
+# and rationale, verification) via the ``plan_write`` tool, stored at
+# ``conv_folder/plan.md`` (conversation root, alongside todo.json). It is the
+# durable reasoning the human approves and that is re-injected into every
+# execution turn — todo.json stays as the terse progress tracker. (This replaces
+# the old auto-rendered checklist mirror, which carried no analysis.)
+PLAN_FILENAME = "plan.md"
 
 
-def render_plan_md(goal: str, items: list[dict[str, Any]]) -> str:
-    """Render the plan as a markdown checklist (the workspace artifact)."""
-    done = sum(1 for it in items if it.get("status") == "done")
-    lines = [f"# Plan ({done}/{len(items)} done)", ""]
-    if goal.strip():
-        lines += [f"**Goal:** {goal.strip()}", ""]
-    for it in items:
-        box = "[x]" if it.get("status") == "done" else "[ ]"
-        active = " _(in progress)_" if it.get("status") == "in_progress" else ""
-        lines.append(f"- {box} {it.get('id')}. {it.get('text')}{active}")
-    return "\n".join(lines) + "\n"
+def plan_path(conv_folder: Path) -> Path:
+    return conv_folder / PLAN_FILENAME
 
 
-def _mirror_plan_to_workspace(conv_folder: Path, goal: str, items: list[dict[str, Any]]) -> None:
-    """Best-effort write of the plan artifact ; never breaks the todo save."""
-    p = _plan_artifact_path(conv_folder)
+def load_plan(conv_folder: Path) -> str | None:
+    """Return the stored rich plan markdown, or None when absent/empty/unreadable."""
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(render_plan_md(goal, items), encoding="utf-8")
-    except OSError:
-        pass
+        raw = plan_path(conv_folder).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return raw or None
+
+
+def save_plan(conv_folder: Path, markdown: str) -> None:
+    """Atomically write the rich plan document (tmp + replace)."""
+    conv_folder.mkdir(parents=True, exist_ok=True)
+    p = plan_path(conv_folder)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(markdown, encoding="utf-8")
+    tmp.replace(p)
 
 
 def load_todo(conv_folder: Path) -> dict[str, Any] | None:
@@ -76,21 +75,47 @@ def load_todo(conv_folder: Path) -> dict[str, Any] | None:
     return data
 
 
-def save_todo(conv_folder: Path, goal: str, items: list[dict[str, Any]]) -> None:
-    """Atomically write the whole TODO list (tmp + replace)."""
+def save_todo(
+    conv_folder: Path,
+    goal: str,
+    items: list[dict[str, Any]],
+    *,
+    status: str | None = None,
+) -> None:
+    """Atomically write the whole TODO list (tmp + replace).
+
+    ``status`` is the plan's acceptance lifecycle (``proposed`` → awaiting the
+    human's approval ; ``accepted`` → being executed). ``None`` PRESERVES the
+    existing status (so a todo_update during execution keeps ``accepted``) ; a
+    brand-new plan defaults to ``proposed``.
+    """
     conv_folder.mkdir(parents=True, exist_ok=True)
-    payload = {"goal": goal, "items": items}
+    if status is None:
+        existing = load_todo(conv_folder)
+        status = (existing.get("status") if existing else None) or "proposed"
+    payload = {"goal": goal, "status": status, "items": items}
     p = todo_path(conv_folder)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
-    _mirror_plan_to_workspace(conv_folder, goal, items)
+
+
+def set_plan_status(conv_folder: Path, status: str) -> None:
+    """Set the plan's acceptance status (proposed/accepted) without touching items.
+
+    No-op when there is no todo. Used at turn boundaries : a PLAN turn (re)proposes,
+    the first EDIT turn on a proposed plan accepts it.
+    """
+    todo = load_todo(conv_folder)
+    if todo is None:
+        return
+    save_todo(conv_folder, todo.get("goal", ""), todo.get("items") or [], status=status)
 
 
 def clear_todo(conv_folder: Path) -> None:
-    """Remove the TODO file (called when every item is done)."""
+    """Remove the plan artifacts — todo.json + plan.md (called when every item is done)."""
     todo_path(conv_folder).unlink(missing_ok=True)
-    _plan_artifact_path(conv_folder).unlink(missing_ok=True)
+    plan_path(conv_folder).unlink(missing_ok=True)
 
 
 def normalize_items(items: Any) -> tuple[list[dict[str, Any]] | None, str | None]:
