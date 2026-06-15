@@ -36,7 +36,6 @@ export const useConvStore = defineStore('conversations', () => {
   const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
-  let lastTurnWasPlan = false // remembers whether the in-flight turn was a plan turn
   // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
   const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
 
@@ -204,10 +203,13 @@ export const useConvStore = defineStore('conversations', () => {
           messages.value.push({ role: 'assistant', content: m.answer })
         }
         liveThinking.value = ''
-        // A plan turn just finished → surface the Approve/Refine choice bar + the
-        // freshly authored plan document (plan.md) it produced.
-        planPending.value = lastTurnWasPlan
-        api.getPlan(id).then(r => { plan.value = r.plan || null }).catch(() => {})
+        // Surface the Approve/Refine bar ONLY if a plan was actually authored and awaits
+        // approval (status 'proposed') — never on an aborted/no-plan turn (a plain
+        // "was a plan turn" flag showed an EMPTY bar after a Stop). Truth = the persisted plan.
+        api.getPlan(id).then(r => {
+          plan.value = r.plan || null
+          planPending.value = r.status === 'proposed'
+        }).catch(() => { planPending.value = false })
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
@@ -250,7 +252,6 @@ export const useConvStore = defineStore('conversations', () => {
     dispatch.value = null
     error.value = ''
     planPending.value = false // a new turn supersedes any pending choice bar
-    lastTurnWasPlan = isPlan
     busy.value = true
     turnWs.sendTurn(clean, files, isPlan)
   }
