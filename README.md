@@ -15,8 +15,8 @@ Tier 1).
 
 - **ALEXA** : un tool natif (clock / weather / wikipedia_search) est invoqué,
   le résultat est formaté en français/anglais selon la langue détectée, fin.
-- **DEEP** : le **Tier 1 — Main agent** (`gemma4:latest` par défaut, multi-turn
-  natif, thinking ON) prend la main avec son propre `messages[]` accumulé. Il
+- **DEEP** : le **Tier 1 — Main agent** (rôle `main`, `cogito:32b` par défaut,
+  multi-turn natif) prend la main avec son propre `messages[]` accumulé. Il
   peut appeler des tools natifs, ou déléguer à un spécialiste via
   `delegate_to` — qui spawne un **Tier 2 — Subagent** avec son propre
   `messages[]` frais, jusqu'à `MAX_DEPTH=5` niveaux de délégation imbriquée.
@@ -77,8 +77,8 @@ colonne SQL formelle, mais une convention reflétée dans
 
 | Tier cognitif | Agents | Modèle |
 |---|---|---|
-| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `code-fetcher`, `workspace-manager` | `gemma4:latest` (default) |
-| **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | `gemma4:latest` (default) |
+| **I/O & lookup** | `weather-specialist`, `wikipedia-specialist`, `web-search-specialist`, `news-specialist`, `code-fetcher`, `workspace-manager` | rôle `subagent` (`gemma4:26b`) |
+| **Synthèse / format** | `summarizer`, `document-builder`, `synthesizer` (finalizer) | rôle `subagent` (`gemma4:26b`) |
 | **Reasoners** | `strategist`, `critical-thinker`, `comparator-specialist`, `meta-analyst` | `gemma4:26b` via `model_override` |
 | **Code (workers)** | `code-runner`, `code-runner-node` | `qwen3-coder:latest` via `model_override` |
 
@@ -117,7 +117,7 @@ Choisi au démarrage via `--mode {analyse,chat,vocal,code}` (défaut `analyse`).
   workers) → Act (réécriture du TODO par l'orchestrateur). Le TODO est
   ré-injecté dans le prompt à chaque tour par `PreLLMCall`. Voir
   [DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md](DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md).
-  Les autres modes conservent `gemma4:latest` (et ses capacités image).
+  Les autres modes utilisent le rôle `main` (`cogito:32b`).
 - **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
   `concise_output` activé. Le texte est aussi synthétisé via **Piper TTS**
   (modèle ONNX local) puis joué via `paplay` / `aplay` / `ffplay`. Voir
@@ -273,41 +273,48 @@ Livré (migrate_115→119) :
    classifie pas d'image).
 4. **Listing** : les dotfiles sont masqués dans le workspace.
 
-## Modèles configurables
+## Modèles configurables — `models.toml`
 
-6 slots dans `config.py`, chacun overridable par env var et CLI flag :
+Toute la config modèle vit dans **`models.toml`** (gitignored ; défauts committés dans
+`models.example.toml` — copie-le et édite ce que tu veux changer). Résolution :
+**env var (si présente) > `models.toml` > défaut intégré.**
 
-| Slot                     | Défaut             | Env var                           | CLI flag           |
-|--------------------------|--------------------|-----------------------------------|--------------------|
-| `DISPATCH_MODEL`         | `granite4.1:8b`    | `JEANMICHEL_DISPATCH_MODEL`       | `--dispatch-model` |
-| `MAIN_MODEL`             | `gemma4:latest`    | `JEANMICHEL_MAIN_MODEL`           | `--main-model`     |
-| `CODE_MODEL`             | `qwen3:14b`        | `JEANMICHEL_CODE_MODEL`           | —                  |
-| `COMPACTOR_MODEL`        | `gemma4:latest`    | `JEANMICHEL_COMPACTOR_MODEL`      | —                  |
-| `SUBAGENT_DEFAULT_MODEL` | `gemma4:latest`    | `JEANMICHEL_SUBAGENT_MODEL`       | —                  |
-| `REASONER_MODEL`         | `gemma4:26b`       | `JEANMICHEL_REASONER_MODEL`       | —                  |
+`[roles]` — quel modèle joue chaque rôle de la chaîne :
 
-**Routage du main agent par mode** : `MODE_ROUTER_MODEL` mappe un mode → un
-modèle de routeur. Aujourd'hui seul `code` est mappé (`→ CODE_MODEL`,
-`qwen3:14b`) ; les autres modes gardent `MAIN_MODEL` (`gemma4:latest`), ce
-qui préserve les capacités image de gemma4 hors mode code. Si la requête
-porte une image, le main agent retombe sur `MAIN_MODEL` quel que soit le mode.
+| Rôle (`models.toml`) | Modèle par défaut    | Env override                 |
+|----------------------|----------------------|------------------------------|
+| `main` (orchestrateur / routeur analyse·chat·vocal) | `cogito:32b`    | `JEANMICHEL_MAIN_MODEL`      |
+| `dispatch` (tier-0)  | `granite4.1:8b`      | `JEANMICHEL_DISPATCH_MODEL`  |
+| `code` (code-router) | `qwen3:14b`          | `JEANMICHEL_CODE_MODEL`      |
+| `compactor`          | `gemma4:26b`         | `JEANMICHEL_COMPACTOR_MODEL` |
+| `subagent` (défaut specialists) | `gemma4:26b` | `JEANMICHEL_SUBAGENT_MODEL`  |
+| `reasoner`           | `gemma4:26b`         | `JEANMICHEL_REASONER_MODEL`  |
 
-Per-agent override : la colonne `agents.model_override` permet d'assigner
-un modèle spécifique à un subagent (ex. `strategist → gemma4:26b`, les
-workers code → `qwen3-coder:latest`).
+Autres sections de `models.toml` :
+- `[context_window]` — `num_ctx` épinglé par modèle (taille du KV cache) + `ceiling` (plafond dur, 128k) +
+  `default` (modèle non listé). La valeur = le **besoin réel** du modèle dans son rôle, PAS son contexte natif
+  max : un KV 128k sur un 8B ≈ 54 Go → OOM. Override env : `JEANMICHEL_CTX_WINDOW_<slug>`.
+- `no_thinking` — liste des modèles **sans canal `think` Ollama** (ex. `cogito:32b`) : on ne leur demande jamais
+  le thinking → pas de HTTP 400 + retry. Leur raisonnement reste interne.
+- `[voice]` — modèle Piper (TTS) + lecteur audio (override `JEANMICHEL_VOICE_MODEL` / `JEANMICHEL_AUDIO_PLAYER`).
 
-**Convention** : aujourd'hui, les 4 reasoners (strategist, critical-thinker,
-comparator-specialist, meta-analyst) ont chacun `model_override='gemma4:26b'`
-directement en BDD. Le slot `REASONER_MODEL` existe en Python comme point
-d'extension stable — un futur switch global (changer de modèle de raisonnement
-pour tous les reasoners) pourra se faire par env var sans migration DB, une
-fois qu'on aura introduit un flag d'agent (genre `cognitive_tier='high'`)
-lu par le résolveur.
+**Routage par mode** : `MODE_ROUTER_MODEL` mappe `code → code-router` (`qwen3:14b`) ; les autres modes utilisent
+le rôle `main` (`cogito:32b`). Per-agent : `agents.model_override` (BDD) assigne un modèle à un subagent —
+ex. les workers code → `qwen3-coder:latest`, les reasoners → `gemma4:26b`.
 
 **Les paradigmes (contenu en BDD injecté dans les system prompts) sont
 strictement model-agnostic** : aucun ne mentionne `gemma`, `qwen`, `granite`
 ou un nom de slot. Le choix du modèle est une décision d'infrastructure
-(via `model_override` ou config Python), pas une instruction comportementale.
+(via `model_override` ou `models.toml`), pas une instruction comportementale.
+
+## Logs
+
+Le daemon écrit dans **`logs/jean-michel.log`** (rotatif, + stderr) ; niveau via
+`JEANMICHEL_LOG_LEVEL` (défaut `INFO`). Le chemin WS/turn est instrumenté (réception
+d'un tour, `final`, consolidation, sentinel, déconnexion) — utile pour diagnostiquer
+les hangs côté daemon. Les logs uvicorn/websockets y sont aussi captés.
+
+> **Base de connaissance** (design, audits, plans par thème) : [docs/README.md](docs/README.md).
 
 ## Hooks Python
 
@@ -909,10 +916,10 @@ jeanmichel/
 ## État
 
 Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`),
-mergée sur `main`. **16 agents actifs** : 4 reasoners sur gemma4:26b
-(strategist + critical-thinker + comparator + meta-analyst), 2 workers code
-sur qwen3-coder (code-runner + code-runner-node) avec le pattern
-fetcher/runner, le reste sur gemma4:latest. **~550 tests v2 verts.**
+mergée sur `main`. Config modèle via `models.toml` : orchestrateur (`main`) sur
+**cogito:32b**, dispatcher sur granite4.1:8b, code-router sur qwen3:14b, 4 reasoners +
+compactor/subagent sur gemma4:26b, 2 workers code sur qwen3-coder (pattern
+fetcher/runner). **835 tests v2 verts.**
 
 **Cœur stabilisé** : CLI multi-tour en tous modes, `--resume`, `--list-conv`,
 dispatcher Tier 0 opérationnel via granite, main loop Tier 1 multi-turn

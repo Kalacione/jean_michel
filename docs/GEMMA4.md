@@ -1,5 +1,9 @@
 # Gemma 4 — Capabilities & Interaction Cheat-Sheet
 
+> **NB (2026-06-15)** : gemma4 n'est PLUS le modèle par défaut du routeur (→ `cogito:32b`, cf.
+> [20260614_model_selection.md](20260614_model_selection.md)). gemma4:26b reste utilisé pour les rôles
+> `reasoner` / `compactor` / `subagent`, et gemma4 (multimodal) pour le tool `analyze_image`.
+
 Source: <https://ai.google.dev/gemma/docs/core/prompt-formatting-gemma4> (last verified 2026-04-27).
 
 ## Control tokens

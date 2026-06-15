@@ -1,6 +1,6 @@
 # Agent synoptic — chaînes logiques
 
-> Généré depuis `jeanmichel.db` le 2026-06-14 01:41 UTC (commit `1a2d39f`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
+> Généré depuis `jeanmichel.db` le 2026-06-15 01:00 UTC (commit `5fb0417`). Ne pas éditer à la main — régénérer avec `./jm.sh --synoptic`.
 
 Rectangles = maillons LLM · losange = dispatch · sous-graphe = délibération (invoquée par le moteur, mode code). Les arêtes pleines = `delegate_to` (table `agent_delegation_targets`).
 
@@ -74,11 +74,11 @@ flowchart TD
 | Agent | Role | Model | Tools | Paradigms | Delegates to |
 |---|---|---|--:|--:|---|
 | `code-router` | router | qwen3:14b | 4 | 15 | code-analyst, code-fetcher, code-runner, code-runner-node |
-| `jean-michel` | router | default | 9 | 45 | code-fetcher, code-runner, code-runner-node, comparator-specialist, critical-thinker, document-builder, meta-analyst, news-specialist, strategist, summarizer, weather-specialist, web-search-specialist, wikipedia-specialist, workspace-manager |
+| `jean-michel` | router | default | 8 | 45 | code-fetcher, code-runner, code-runner-node, comparator-specialist, critical-thinker, document-builder, meta-analyst, news-specialist, strategist, summarizer, weather-specialist, web-search-specialist, wikipedia-specialist, workspace-manager |
 | `code-analyst` | specialist | qwen3:14b | 10 | 3 | — |
 | `code-fetcher` | specialist | default | 10 | 11 | — |
-| `code-runner` | specialist | qwen3-coder:latest | 19 | 18 | code-fetcher |
-| `code-runner-node` | specialist | qwen3-coder:latest | 19 | 18 | code-fetcher |
+| `code-runner` | specialist | qwen3-coder:latest | 19 | 19 | code-fetcher |
+| `code-runner-node` | specialist | qwen3-coder:latest | 19 | 19 | code-fetcher |
 | `comparator-specialist` | specialist | gemma4:26b | 5 | 29 | news-specialist, weather-specialist, web-search-specialist, wikipedia-specialist |
 | `critical-coder` · engine | specialist | gemma4:26b | 4 | 7 | — |
 | `critical-thinker` | specialist | gemma4:26b | 5 | 38 | web-search-specialist, wikipedia-specialist |
