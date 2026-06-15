@@ -139,27 +139,34 @@ async def run_turn_streaming(
                 attachments=attachments,
                 plan_mode=plan_mode,
             )
-            _log.info("turn worker run_turn RETURNED conv=%s answer_len=%d → queue final",
-                      conv_id, len(answer or ""))
-            loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
-            # Shadow consolidation : the answer is already on its way to the
-            # client ; introspect (DEEP turns only) and surface grounded memory
-            # candidates as a typed event. Best-effort — run_shadow never raises.
-            if was_deep["v"]:
-                _log.info("shadow consolidation START conv=%s", conv_id)
-                cands = consolidation_svc.run_shadow(
-                    folder, conv_id, llm=main_llm, user_id=memory_user_id
-                )
-                _log.info("shadow consolidation DONE conv=%s candidates=%d", conv_id, len(cands or []))
-                if cands:
-                    ev = MemoryConsolidationProposed(count=len(cands), candidates=cands)
-                    persistence.append_event(folder, ev)
-                    loop.call_soon_threadsafe(
-                        event_queue.put_nowait, {"type": "event", "event": ev.to_dict()}
-                    )
         except Exception as exc:  # noqa: BLE001
             _log.exception("turn worker EXCEPTION conv=%s : %s", conv_id, exc)
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "detail": str(exc)})
+        else:
+            _log.info("turn worker run_turn RETURNED conv=%s answer_len=%d", conv_id, len(answer or ""))
+            # Shadow consolidation runs BEFORE 'final' : 'final' is the client's
+            # "turn done" signal (it re-enables sending / shows the Approve bar). If we
+            # emit it first, the turn is STILL active (lock held, recv_answers running)
+            # during consolidation, so an Approve/next turn sent right after gets DROPPED
+            # by recv_answers → frozen spinner. So : consolidate (best-effort, isolated)
+            # THEN final, so "done" on the client == backend ready for the next turn.
+            if was_deep["v"]:
+                _log.info("shadow consolidation START conv=%s", conv_id)
+                try:
+                    cands = consolidation_svc.run_shadow(
+                        folder, conv_id, llm=main_llm, user_id=memory_user_id
+                    )
+                    _log.info("shadow consolidation DONE conv=%s candidates=%d", conv_id, len(cands or []))
+                    if cands:
+                        ev = MemoryConsolidationProposed(count=len(cands), candidates=cands)
+                        persistence.append_event(folder, ev)
+                        loop.call_soon_threadsafe(
+                            event_queue.put_nowait, {"type": "event", "event": ev.to_dict()}
+                        )
+                except Exception as exc:  # noqa: BLE001 — never let it block 'final'
+                    _log.exception("shadow consolidation FAILED conv=%s : %s", conv_id, exc)
+            _log.info("turn worker queue final conv=%s", conv_id)
+            loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "final", "answer": answer})
         finally:
             _log.info("turn worker END conv=%s → queue sentinel", conv_id)
             loop.call_soon_threadsafe(event_queue.put_nowait, _SENTINEL)
