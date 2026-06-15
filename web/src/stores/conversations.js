@@ -117,8 +117,6 @@ export const useConvStore = defineStore('conversations', () => {
     // Plan-first : default to Plan for code & analyse (sticky thereafter).
     planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
     planPending.value = false
-    const loaded = (await api.messages(id)).messages
-    messages.value = chatBubbles(loaded)
     streamingMsg = null
     liveThinking.value = ''
     trace.value = []
@@ -126,6 +124,20 @@ export const useConvStore = defineStore('conversations', () => {
     busy.value = false
     askHuman.value = null
     wsFiles.value = []
+    // Load messages + the persisted (coarse) trace + plan state in PARALLEL, then
+    // rehydrate : a reload / switch shows the agent's thinking & steps (events.jsonl,
+    // no token deltas → cheap), not a blank panel. events/state/todo are best-effort
+    // (a failure leaves the panel empty, never breaks select) ; messages stays strict.
+    const [loaded, ev, st, td] = await Promise.all([
+      api.messages(id).then(r => r.messages),
+      api.events(id).then(r => r.events || []).catch(() => []),
+      api.state(id).then(r => r.state || null).catch(() => null),
+      api.getTodo(id).then(r => r.todo || null).catch(() => null),
+    ])
+    if (currentId.value !== id) return // switched again mid-load → don't clobber the newer conv
+    messages.value = chatBubbles(loaded)
+    trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
+    planPending.value = !!(st?.plan_mode && td?.items?.length) // Approve/Refine bar survives reload
     openWs(id)
     fetchWsFiles()
   }
