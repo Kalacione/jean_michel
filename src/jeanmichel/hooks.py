@@ -509,27 +509,33 @@ def _refresh_plan_nudge(
             "EXPLORATION — but nothing writes, runs, or implements. Produce a SUBSTANTIVE plan with "
             "plan_write(markdown): a '## Context' section (the problem + your analysis and chosen "
             "approach), the concrete steps WITH detail and rationale (how each will be done and why), "
-            "risks or open questions, and a '## Verification' section. ALSO call todo_write with the "
-            "terse trackable steps (one line each, exactly one in_progress — the progress tracker for "
-            "execution; as many steps as the task needs, no cap). Then CONCLUDE with a one-line pointer "
-            "for the human to approve. Do NOT edit files, run commands, or implement: execution happens "
-            "in a separate Edit turn once the human approves."
+            "risks or open questions, and a '## Verification' section. Do NOT create a todo and do NOT "
+            "implement — the execution tracker is built later, in the separate Edit turn that runs once "
+            "the human approves. CONCLUDE with a one-line pointer for the human to approve."
         )})
         return
-    # EDIT mode : execute directly. The opening banner branches on whether a plan
-    # (todo) already exists — otherwise it contradicts reality and the model freezes
-    # (a just-approved plan + a banner saying "you have NO plan to execute" = empty
-    # output). With a todo → execute it ; without → answer/delegate directly and never
-    # invent an approval flow (convs 15-43 / 15-51).
+    # EDIT mode : execute directly. Plan and todo are DECOUPLED — the banner branches on
+    # both. With an approved plan → execute it and BUILD the execution tracker now (the
+    # todo is created at execution, not at plan time). With a todo but no plan → work the
+    # tracker. With neither → answer/delegate directly, optionally self-tracking a
+    # multi-step task, and never invent a plan-approval flow (convs 15-43 / 15-51).
+    has_plan = load_plan(conv_folder) is not None
     has_todo = load_todo(conv_folder) is not None
-    if has_todo:
+    if has_plan:
         parts = [
             f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: EXECUTE the "
-            "approved plan now. Follow the [PLAN] document above (its analysis and per-step approach). "
-            "Work the TODO — delegate the in_progress step to the right specialist; when its work is "
-            "finished, mark it done with todo_update(id, 'done') and set the next in_progress. Synthesize "
-            "the final answer once every step is done. The plan is already approved — do NOT ask the user "
-            "to approve anything."
+            "approved plan now — follow the [PLAN] document above (its analysis and per-step approach). "
+            "Build the execution tracker FROM the plan: if no todo exists yet, call todo_write to turn the "
+            "plan's steps into a real todo (exactly one in_progress); as each step's work finishes, mark it "
+            "done with todo_update(id, 'done') and start the next. Synthesize the final answer once every "
+            "step is done. The plan is already approved — do NOT ask the user to approve anything."
+        ]
+    elif has_todo:
+        parts = [
+            f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: work your TODO — "
+            "delegate the in_progress step to the right specialist; when its work is finished, mark it "
+            "done with todo_update(id, 'done') and start the next. Synthesize the final answer once every "
+            "step is done."
         ]
     else:
         parts = [
@@ -545,18 +551,17 @@ def _refresh_plan_nudge(
         )
         if worktree.worktree_path_for(conv_folder).exists():  # code mode
             parts.append("Review the worktree diff (repo_git) as well.")
-        # Keep the plan current in EVERY mode (not just code). This is the discipline
-        # pdca used to carry on the router ; without it, analyse-mode todos never
-        # progress (a step finishes but stays pending, the next never starts).
+        # Keep the tracker current in EVERY mode. Without it, a step finishes but stays
+        # pending and the next never starts (analyse-mode todos never progressed).
         if has_todo:
             parts.append(
-                "Update the plan: mark the finished step done with todo_update(item_id, 'done') and set "
+                "Update the tracker: mark the finished step done with todo_update(item_id, 'done') and set "
                 "the next step in_progress — use todo_write only to re-scope or add steps the report surfaced."
             )
-        elif _count_delegations(messages) >= 2:
+        elif has_plan or _count_delegations(messages) >= 2:
             parts.append(
-                "You have no plan for this multi-step task — decompose it with todo_write (as many "
-                "scoped steps as it needs, exactly one in_progress)."
+                "No tracker yet for this multi-step work — create one with todo_write (as many scoped "
+                "steps as it needs, exactly one in_progress)."
             )
         parts.append(
             "Re-delegate ONLY if a concrete gap remains. Otherwise synthesize your answer — or, if you are "

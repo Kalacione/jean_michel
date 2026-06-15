@@ -322,7 +322,8 @@ def create_app() -> Any:
 
     @app.get("/api/conversations/{conversation_id}/plan")
     def get_plan(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
-        return {"plan": todo_mod.load_plan(Path(conv["folder_path"]))}
+        folder = Path(conv["folder_path"])
+        return {"plan": todo_mod.load_plan(folder), "status": todo_mod.load_plan_status(folder)}
 
     @app.put("/api/conversations/{conversation_id}/plan")
     def put_plan(
@@ -335,9 +336,9 @@ def create_app() -> Any:
         md = body.markdown.strip()
         if md:
             todo_mod.save_plan(folder, md)
-        else:  # emptied → remove the plan document
-            todo_mod.plan_path(folder).unlink(missing_ok=True)
-        return {"plan": todo_mod.load_plan(folder)}
+        else:  # emptied → remove the plan document + its status sidecar
+            todo_mod.clear_plan(folder)
+        return {"plan": todo_mod.load_plan(folder), "status": todo_mod.load_plan_status(folder)}
 
     # ---- conversation snapshots (git per conversation) -------------------
 

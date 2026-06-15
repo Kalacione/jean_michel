@@ -62,8 +62,9 @@ def test_put_then_get_plan_roundtrip(client, alice):
     resp = client.put(f"/api/conversations/{conv_id}/plan", json={"markdown": md}, headers=_auth(token))
     assert resp.status_code == 200, resp.text
     assert resp.json()["plan"].startswith("# Plan")
-    got = client.get(f"/api/conversations/{conv_id}/plan", headers=_auth(token)).json()["plan"]
-    assert "## Context" in got
+    body = client.get(f"/api/conversations/{conv_id}/plan", headers=_auth(token)).json()
+    assert "## Context" in body["plan"]
+    assert "status" in body  # plan-level acceptance status (None until a turn boundary sets it)
 
 
 def test_put_empty_plan_clears(client, alice):

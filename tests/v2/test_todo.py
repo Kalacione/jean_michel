@@ -164,7 +164,7 @@ def test_render_recap_next_action_falls_back_to_pending():
     assert "Next action: b" in todomod.render_recap(todo)
 
 
-# ---- rich plan document + acceptance status ------------------------------
+# ---- rich plan document + acceptance status (decoupled from the todo) ----
 
 
 def test_save_plan_load_plan_roundtrip(tmp_path):
@@ -176,67 +176,74 @@ def test_save_plan_load_plan_roundtrip(tmp_path):
     assert todomod.load_plan(tmp_path) is None
 
 
-def test_save_todo_defaults_status_proposed(tmp_path):
+def test_todo_carries_no_status(tmp_path):
+    # The todo is a pure tracker — acceptance is a plan-level concept, not on the todo.
     todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
-    assert todomod.load_todo(tmp_path)["status"] == "proposed"
+    assert "status" not in todomod.load_todo(tmp_path)
 
 
-def test_save_todo_preserves_status_across_updates(tmp_path):
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}],
-                      status="accepted")
-    # A status-less re-save (e.g. todo_update during execution) keeps 'accepted'.
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "done"},
-                                      {"id": "2", "text": "more", "status": "in_progress"}])
-    assert todomod.load_todo(tmp_path)["status"] == "accepted"
-
-
-def test_set_plan_status(tmp_path):
-    todomod.set_plan_status(tmp_path, "accepted")  # no todo → no-op, no crash
-    assert todomod.load_todo(tmp_path) is None
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+def test_set_plan_status_requires_a_plan(tmp_path):
+    todomod.set_plan_status(tmp_path, "accepted")  # no plan.md → no-op, no sidecar
+    assert todomod.load_plan_status(tmp_path) is None
+    todomod.save_plan(tmp_path, "# Plan\n")
     todomod.set_plan_status(tmp_path, "accepted")
-    assert todomod.load_todo(tmp_path)["status"] == "accepted"
+    assert todomod.load_plan_status(tmp_path) == "accepted"
 
 
-def test_reconcile_accepts_proposed_on_edit_start(tmp_path):
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])  # proposed
+def test_reconcile_accepts_proposed_plan_on_edit_start(tmp_path):
+    todomod.save_plan(tmp_path, "# Plan\n")
+    todomod.set_plan_status(tmp_path, "proposed")
     todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=False, at_start=True)
-    assert todomod.load_todo(tmp_path)["status"] == "accepted"
+    assert todomod.load_plan_status(tmp_path) == "accepted"
 
 
 def test_reconcile_keeps_proposed_on_plan_turn_start(tmp_path):
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    todomod.save_plan(tmp_path, "# Plan\n")
+    todomod.set_plan_status(tmp_path, "proposed")
     todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=True, at_start=True)
-    assert todomod.load_todo(tmp_path)["status"] == "proposed"
+    assert todomod.load_plan_status(tmp_path) == "proposed"
 
 
 def test_reconcile_proposes_on_plan_turn_end(tmp_path):
-    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}],
-                      status="accepted")
+    todomod.save_plan(tmp_path, "# Plan\n")
+    todomod.set_plan_status(tmp_path, "accepted")
     todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=True, at_start=False)
-    assert todomod.load_todo(tmp_path)["status"] == "proposed"  # a re-plan resets to proposed
+    assert todomod.load_plan_status(tmp_path) == "proposed"  # a re-plan resets to proposed
 
 
-def test_reconcile_noop_without_todo(tmp_path):
+def test_reconcile_noop_without_plan(tmp_path):
+    # A todo without a plan must NOT trigger any acceptance status (decoupled).
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
     todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=False, at_start=True)
-    assert todomod.load_todo(tmp_path) is None  # no crash, nothing created
+    assert todomod.load_plan_status(tmp_path) is None
 
 
-def test_clear_todo_removes_plan_doc(tmp_path):
+def test_clear_todo_leaves_plan(tmp_path):
+    # Decoupled : clearing the tracker does NOT remove the plan document.
     todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
     todomod.save_plan(tmp_path, "# Plan\n")
     todomod.clear_todo(tmp_path)
     assert todomod.load_todo(tmp_path) is None
+    assert todomod.load_plan(tmp_path) is not None
+
+
+def test_clear_plan_removes_doc_and_status_leaves_todo(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    todomod.save_plan(tmp_path, "# Plan\n")
+    todomod.set_plan_status(tmp_path, "accepted")
+    todomod.clear_plan(tmp_path)
     assert todomod.load_plan(tmp_path) is None
+    assert todomod.load_plan_status(tmp_path) is None
+    assert todomod.load_todo(tmp_path) is not None  # tracker untouched
 
 
-def test_todo_write_all_done_clears_plan(tmp_path):
+def test_todo_write_all_done_clears_only_todo(tmp_path):
     spec = todo_write.make_spec(tmp_path)
     spec.handler(goal="g", items=_items("in_progress"))
     todomod.save_plan(tmp_path, "# Plan\n")
-    spec.handler(goal="g", items=_items("done", "done"))  # all done → cleared
+    spec.handler(goal="g", items=_items("done", "done"))  # all done → tracker cleared
     assert todomod.load_todo(tmp_path) is None
-    assert todomod.load_plan(tmp_path) is None
+    assert todomod.load_plan(tmp_path) is not None  # plan stays
 
 
 # ---- PreLLMCall recap injection ------------------------------------------

@@ -136,21 +136,21 @@ export const useConvStore = defineStore('conversations', () => {
       api.state(id).then(r => r.state || null).catch(() => null),
       api.getTodo(id).then(r => r.todo || null).catch(() => null),
       api.pendingMemory(id).then(r => r.pending_memory || []).catch(() => []),
-      api.getPlan(id).then(r => r.plan || null).catch(() => null),
+      api.getPlan(id).then(r => r || {}).catch(() => ({})),
     ])
     if (currentId.value !== id) return // switched again mid-load → don't clobber the newer conv
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
-    plan.value = pl // rich plan markdown survives reload (rendered in the Approve bar / editor)
-    // Approve/Refine bar = plan still awaiting approval. Source of truth: the persisted
-    // plan status (proposed → pending) ; legacy todos without a status fall back to the
-    // old heuristic. Decoupled from the (sticky) planMode selector + state.plan_mode.
-    planPending.value = td?.status
-      ? td.status === 'proposed'
+    plan.value = pl.plan || null // rich plan markdown survives reload (Approve bar / editor)
+    // Approve/Refine bar = a plan still awaiting approval. Source of truth: the plan-level
+    // status (proposed → pending), DECOUPLED from the todo and from the (sticky) planMode
+    // selector + state.plan_mode. Legacy convs (no status sidecar) fall back to the old heuristic.
+    planPending.value = pl.status
+      ? pl.status === 'proposed'
       : !!(st?.plan_mode && td?.items?.length)
     // An already-accepted plan → default the selector to Edit so a continuation message
     // executes/continues instead of silently re-planning (the reload re-arm bug).
-    if (td?.status === 'accepted') planMode.value = false
+    if (pl.status === 'accepted') planMode.value = false
     pendingMemory.value = pend // memory suggestions survive reload/switch (loaded from disk)
     openWs(id)
     fetchWsFiles()

@@ -75,64 +75,79 @@ def load_todo(conv_folder: Path) -> dict[str, Any] | None:
     return data
 
 
-def save_todo(
-    conv_folder: Path,
-    goal: str,
-    items: list[dict[str, Any]],
-    *,
-    status: str | None = None,
-) -> None:
+def save_todo(conv_folder: Path, goal: str, items: list[dict[str, Any]]) -> None:
     """Atomically write the whole TODO list (tmp + replace).
 
-    ``status`` is the plan's acceptance lifecycle (``proposed`` → awaiting the
-    human's approval ; ``accepted`` → being executed). ``None`` PRESERVES the
-    existing status (so a todo_update during execution keeps ``accepted``) ; a
-    brand-new plan defaults to ``proposed``.
-    """
+    The TODO is the terse EXECUTION tracker — created during execution (after a plan is
+    approved) or self-initiated for a multi-step task that needs no formal plan. It is
+    DECOUPLED from the plan and carries no acceptance status (that is a plan-level
+    concept ; see ``plan_status``)."""
     conv_folder.mkdir(parents=True, exist_ok=True)
-    if status is None:
-        existing = load_todo(conv_folder)
-        status = (existing.get("status") if existing else None) or "proposed"
-    payload = {"goal": goal, "status": status, "items": items}
+    payload = {"goal": goal, "items": items}
     p = todo_path(conv_folder)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
 
 
-def set_plan_status(conv_folder: Path, status: str) -> None:
-    """Set the plan's acceptance status (proposed/accepted) without touching items.
+def clear_todo(conv_folder: Path) -> None:
+    """Remove the TODO tracker (called when every item is done). The plan is left
+    untouched — plan and todo are independent artifacts."""
+    todo_path(conv_folder).unlink(missing_ok=True)
 
-    No-op when there is no todo. Used at turn boundaries : a PLAN turn (re)proposes,
-    the first EDIT turn on a proposed plan accepts it.
-    """
-    todo = load_todo(conv_folder)
-    if todo is None:
+
+# ---- Plan acceptance lifecycle (a PLAN-level concept, NOT the todo's) ------
+# Plan and todo are decoupled : a plan can be proposed before any todo exists, and a todo
+# can exist with no plan. So the acceptance status lives in a sidecar next to plan.md, not
+# on todo.json.
+PLAN_STATUS_FILENAME = "plan_status.json"
+
+
+def plan_status_path(conv_folder: Path) -> Path:
+    return conv_folder / PLAN_STATUS_FILENAME
+
+
+def load_plan_status(conv_folder: Path) -> str | None:
+    """Return the plan's acceptance status (``proposed``/``accepted``), or None when absent."""
+    try:
+        data = json.loads(plan_status_path(conv_folder).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    status = data.get("status") if isinstance(data, dict) else None
+    return status if status in ("proposed", "accepted") else None
+
+
+def set_plan_status(conv_folder: Path, status: str) -> None:
+    """Write the plan's acceptance status sidecar (no-op without a plan.md to qualify)."""
+    if load_plan(conv_folder) is None:
         return
-    save_todo(conv_folder, todo.get("goal", ""), todo.get("items") or [], status=status)
+    conv_folder.mkdir(parents=True, exist_ok=True)
+    p = plan_status_path(conv_folder)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps({"status": status}), encoding="utf-8")
+    tmp.replace(p)
+
+
+def clear_plan(conv_folder: Path) -> None:
+    """Remove the plan document + its status sidecar (the todo is left untouched)."""
+    plan_path(conv_folder).unlink(missing_ok=True)
+    plan_status_path(conv_folder).unlink(missing_ok=True)
 
 
 def reconcile_plan_status_on_turn(conv_folder: Path, *, plan_mode: bool, at_start: bool) -> None:
-    """Drive the plan's acceptance lifecycle at a turn boundary (no-op without a todo).
+    """Drive the PLAN's acceptance lifecycle at a turn boundary (no-op without a plan.md).
 
-    - START of an EDIT turn on a ``proposed`` plan → ``accepted`` (the user is now
-      executing the plan the orchestrator proposed) ;
-    - END of a PLAN turn that produced a todo → ``proposed`` (a (re)plan awaits the
-      human's approval — this also resets a previously ``accepted`` plan on a re-plan).
+    - START of an EDIT turn on a ``proposed`` plan → ``accepted`` (the human approved it,
+      execution is starting) ;
+    - END of a PLAN turn (a plan.md exists) → ``proposed`` (a (re)plan awaits approval —
+      also resets a previously ``accepted`` plan when the user re-plans).
     """
-    todo = load_todo(conv_folder)
-    if todo is None:
+    if load_plan(conv_folder) is None:
         return
-    if at_start and not plan_mode and todo.get("status") == "proposed":
+    if at_start and not plan_mode and load_plan_status(conv_folder) == "proposed":
         set_plan_status(conv_folder, "accepted")
     elif not at_start and plan_mode:
         set_plan_status(conv_folder, "proposed")
-
-
-def clear_todo(conv_folder: Path) -> None:
-    """Remove the plan artifacts — todo.json + plan.md (called when every item is done)."""
-    todo_path(conv_folder).unlink(missing_ok=True)
-    plan_path(conv_folder).unlink(missing_ok=True)
 
 
 def normalize_items(items: Any) -> tuple[list[dict[str, Any]] | None, str | None]:

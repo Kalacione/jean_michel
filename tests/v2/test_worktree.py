@@ -340,10 +340,10 @@ def test_router_stocktake_nudge(conv_folder):
     assert "take stock" not in nudges(msgs)[0]["content"]
 
 
-def test_edit_banner_branches_on_todo(conv_folder):
-    """EDIT-mode banner must NOT claim 'no plan' when a todo exists (a just-approved
-    plan) — that contradiction froze the model into empty output. With a todo →
-    'EXECUTE the approved plan' ; without → the anti-hallucination wording."""
+def test_edit_banner_branches_on_plan_and_todo(conv_folder):
+    """EDIT-mode banner is DECOUPLED (plan vs todo): an approved PLAN (plan.md) → 'EXECUTE
+    the approved plan' + build the tracker FROM it ; a todo alone (self-initiated) → 'work
+    your TODO' ; neither → the anti-hallucination wording (never claim/await an approval)."""
     from jeanmichel import todo as todo_mod
     from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
@@ -353,14 +353,22 @@ def test_edit_banner_branches_on_todo(conv_folder):
     def banner(ms):
         return next(m["content"] for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER))
 
-    # No todo → anti-hallucination wording.
+    # Neither plan nor todo → anti-hallucination wording.
     msgs = [{"role": "user", "content": "hi"}]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert "NO plan to execute" in banner(msgs)
 
-    # Todo exists (approved plan) → execute-the-plan wording, no contradiction.
+    # A todo alone (self-initiated tracker, no plan) → work the TODO, not "approved plan".
     items, _ = todo_mod.normalize_items([{"text": "step 1", "status": "in_progress"}])
     todo_mod.save_todo(conv_folder, "do the thing", items)
+    msgs = [{"role": "user", "content": "go"}]
+    _refresh_plan_nudge(msgs, conv_folder, state)
+    assert "work your TODO" in banner(msgs)
+    assert "EXECUTE the approved plan" not in banner(msgs)
+
+    # An approved plan (plan.md) → execute-the-plan wording + build the tracker FROM it.
+    todo_mod.clear_todo(conv_folder)
+    todo_mod.save_plan(conv_folder, "# Plan\n\n## Steps\n1. do\n")
     msgs = [{"role": "user", "content": "Approved — execute the plan above."}]
     _refresh_plan_nudge(msgs, conv_folder, state)
     b = banner(msgs)
@@ -382,5 +390,7 @@ def test_plan_mode_nudge(conv_folder):
     _refresh_plan_nudge(msgs, conv_folder, state)  # idempotent
     assert len(nudges(msgs)) == 1
     content = nudges(msgs)[0]["content"]
-    assert "PLAN mode" in content and "todo_write" in content
-    assert "execution happens in a separate Edit turn" in content
+    # PLAN mode authors the rich plan (plan_write) and does NOT create a todo — that is
+    # built later, in the Edit turn after approval.
+    assert "PLAN mode" in content and "plan_write" in content
+    assert "todo" in content.lower() and "separate Edit turn" in content
