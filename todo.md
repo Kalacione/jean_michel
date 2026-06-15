@@ -42,7 +42,12 @@
 - Rafraîchir le paradigm viewer/editor.
 - Ajouter un moyen de **kill une opération LLM en cours** (si elle part en vrille).
 - Bench du budget de tokens allouable (semblait petit ; fenêtres ~40-128k, serveur 2×32 Go).
-- Audit des paradigmes de tous les agents (incohérences ?) ; le meta_analyst sert-il encore ?
+- Audit des paradigmes de tous les agents (incohérences ?).
+- **meta_analyst — qualité** : `--meta-analysis` remarche (prompt → délégation explicite, commit 78055ce), MAIS
+  le meta-analyst **hallucine** des noms d'agents/outils inexistants (ex. `analyst`/`researcher`, `sandbox_execute`)
+  alors qu'il a `self_inspect_config`. Durcir une discipline grounding (ne référencer que des agents/outils
+  RÉELS du roster ; citer les noms exacts). Idée : le lancer **périodiquement** (le vieux doc proposait un
+  auto-trigger sur seuil d'échecs/ask_human) — mais sortie à **filtrer par un humain**, jamais auto-appliquer.
 
 ## Idées
 - Plein de micro-LLM prédisant le prochain token sur le même contexte → triplets de précogs.
