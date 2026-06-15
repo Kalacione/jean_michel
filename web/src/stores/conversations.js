@@ -7,7 +7,7 @@ import { connectTurn } from '@/ws'
 // are role:user but are NOT conversation history — hide them from the chat view.
 // (Backend now also strips them from messages.json; this also cleans already-
 // persisted conversations on load.) Mirrors persistence._TRANSIENT_USER_PREFIXES.
-const INJECTION_PREFIXES = ['[TODO-RECAP]', '[CODE-REPO]', '[ORCHESTRATOR]']
+const INJECTION_PREFIXES = ['[TODO-RECAP]', '[CODE-REPO]', '[ORCHESTRATOR]', '[PLAN]']
 const isInjection = m =>
   m.role === 'user' && typeof m.content === 'string' &&
   INJECTION_PREFIXES.some(p => m.content.trimStart().startsWith(p))
@@ -34,6 +34,7 @@ export const useConvStore = defineStore('conversations', () => {
   const currentMode = ref('') // task mode of the selected conversation
   const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
   const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
+  const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
   let lastTurnWasPlan = false // remembers whether the in-flight turn was a plan turn
   // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
@@ -117,6 +118,7 @@ export const useConvStore = defineStore('conversations', () => {
     // Plan-first : default to Plan for code & analyse (sticky thereafter).
     planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
     planPending.value = false
+    plan.value = null
     streamingMsg = null
     liveThinking.value = ''
     trace.value = []
@@ -128,16 +130,18 @@ export const useConvStore = defineStore('conversations', () => {
     // rehydrate : a reload / switch shows the agent's thinking & steps (events.jsonl,
     // no token deltas → cheap), not a blank panel. events/state/todo are best-effort
     // (a failure leaves the panel empty, never breaks select) ; messages stays strict.
-    const [loaded, ev, st, td, pend] = await Promise.all([
+    const [loaded, ev, st, td, pend, pl] = await Promise.all([
       api.messages(id).then(r => r.messages),
       api.events(id).then(r => r.events || []).catch(() => []),
       api.state(id).then(r => r.state || null).catch(() => null),
       api.getTodo(id).then(r => r.todo || null).catch(() => null),
       api.pendingMemory(id).then(r => r.pending_memory || []).catch(() => []),
+      api.getPlan(id).then(r => r.plan || null).catch(() => null),
     ])
     if (currentId.value !== id) return // switched again mid-load → don't clobber the newer conv
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
+    plan.value = pl // rich plan markdown survives reload (rendered in the Approve bar / editor)
     planPending.value = !!(st?.plan_mode && td?.items?.length) // Approve/Refine bar survives reload
     pendingMemory.value = pend // memory suggestions survive reload/switch (loaded from disk)
     openWs(id)
@@ -192,8 +196,10 @@ export const useConvStore = defineStore('conversations', () => {
           messages.value.push({ role: 'assistant', content: m.answer })
         }
         liveThinking.value = ''
-        // A plan turn just finished → surface the Approve/Refine choice bar.
+        // A plan turn just finished → surface the Approve/Refine choice bar + the
+        // freshly authored plan document (plan.md) it produced.
         planPending.value = lastTurnWasPlan
+        api.getPlan(id).then(r => { plan.value = r.plan || null }).catch(() => {})
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
@@ -341,7 +347,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, planPending, planEditorOpen,
+    currentMode, planMode, planAvailable, planPending, plan, planEditorOpen,
     refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,

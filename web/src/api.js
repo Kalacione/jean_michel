@@ -65,6 +65,8 @@ export const api = {
     request('POST', `/conversations/${id}/pending-memory/dismiss`, candidate),
   getTodo: id => request('GET', `/conversations/${id}/todo`),
   putTodo: (id, goal, items) => request('PUT', `/conversations/${id}/todo`, { goal, items }),
+  getPlan: id => request('GET', `/conversations/${id}/plan`),
+  putPlan: (id, markdown) => request('PUT', `/conversations/${id}/plan`, { markdown }),
 
   snapshots: id => request('GET', `/conversations/${id}/snapshots`),
   revertConversation: (id, commit) => request('POST', `/conversations/${id}/revert`, { commit }),

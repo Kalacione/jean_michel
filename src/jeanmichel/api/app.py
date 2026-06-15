@@ -149,6 +149,9 @@ def create_app() -> Any:
         goal: str = ""
         items: list[dict[str, Any]] = []
 
+    class PlanUpdate(BaseModel):
+        markdown: str = ""
+
     class MemorySaveRequest(BaseModel):
         scope: str
         code: str
@@ -314,6 +317,27 @@ def create_app() -> Any:
         folder = Path(conv["folder_path"])
         todo_mod.save_todo(folder, body.goal.strip(), items)
         return {"todo": todo_mod.load_todo(folder)}
+
+    # ---- rich plan document (plan.md) — read + human edit (markdown) -------
+
+    @app.get("/api/conversations/{conversation_id}/plan")
+    def get_plan(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"plan": todo_mod.load_plan(Path(conv["folder_path"]))}
+
+    @app.put("/api/conversations/{conversation_id}/plan")
+    def put_plan(
+        body: PlanUpdate, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        # Reject a turn-time race : the orchestrator also writes plan.md.
+        if executor.turn_lock.locked():
+            raise HTTPException(status_code=409, detail="a turn is in progress")
+        folder = Path(conv["folder_path"])
+        md = body.markdown.strip()
+        if md:
+            todo_mod.save_plan(folder, md)
+        else:  # emptied → remove the plan document
+            todo_mod.plan_path(folder).unlink(missing_ok=True)
+        return {"plan": todo_mod.load_plan(folder)}
 
     # ---- conversation snapshots (git per conversation) -------------------
 

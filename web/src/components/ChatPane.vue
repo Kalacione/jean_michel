@@ -133,29 +133,39 @@
     <v-divider />
 
     <!-- Plan presented → approve (execute in a fresh Edit turn) or type feedback to refine. -->
-    <div v-if="conv.planPending" class="px-3 pt-2 d-flex align-center ga-2">
-      <v-icon color="primary" icon="mdi-clipboard-check-outline" size="18" />
-      <span class="text-body-2 text-medium-emphasis">
-        Plan prêt — relis-le ci-dessus, ou écris un retour pour l'affiner.
-      </span>
-      <v-spacer />
-      <v-btn
-        :disabled="conv.busy"
-        size="small"
-        variant="text"
-        @click="conv.planEditorOpen = true"
-      >
-        Modifier le plan
-      </v-btn>
-      <v-btn
-        color="primary"
-        :disabled="conv.busy"
-        size="small"
-        variant="flat"
-        @click="conv.approveAndExecute()"
-      >
-        Approuver &amp; exécuter
-      </v-btn>
+    <div v-if="conv.planPending" class="px-3 pt-2">
+      <div class="d-flex align-center ga-2">
+        <v-icon color="primary" icon="mdi-clipboard-check-outline" size="18" />
+        <span class="text-body-2 text-medium-emphasis">
+          Plan prêt — relis-le, ou écris un retour pour l'affiner.
+        </span>
+        <v-spacer />
+        <v-btn
+          :disabled="conv.busy"
+          size="small"
+          variant="text"
+          @click="conv.planEditorOpen = true"
+        >
+          Modifier le plan
+        </v-btn>
+        <v-btn
+          color="primary"
+          :disabled="conv.busy"
+          size="small"
+          variant="flat"
+          @click="conv.approveAndExecute()"
+        >
+          Approuver &amp; exécuter
+        </v-btn>
+      </div>
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <v-sheet
+        v-if="conv.plan"
+        class="md mt-2 pa-3 rounded"
+        color="surface-light"
+        style="max-height: 320px; overflow-y: auto;"
+        v-html="renderMarkdown(conv.plan)"
+      />
     </div>
 
     <div v-if="attachments.length" class="px-3 pt-2 d-flex flex-wrap ga-1">
