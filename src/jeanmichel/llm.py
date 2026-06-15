@@ -19,6 +19,7 @@ methods — order of pops is the order of calls.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import queue
 import threading
@@ -143,6 +144,28 @@ def _open_stream_sink(target_dir: Path | None, label: str | None, model: str):
     except Exception as exc:  # noqa: BLE001
         _log.warning("llm stream sink open failed: %s", exc)
         return None
+
+
+def _write_response_footer(sink: Any, acc: dict[str, Any], model: str) -> None:
+    """Tee the FULL response to the debug sink at end of call. For a TOOL-CALLING turn the
+    streamed deltas are empty (the output is tool_calls, not prose) and for a no-thinking
+    model the thinking channel is empty too — so without this footer the file is blank and
+    the turn is undebuggable. Always written, in addition to any live-streamed deltas."""
+    parts = [
+        f"\n\n===== RESPONSE ({model} · "
+        f"prompt_eval={acc.get('prompt_eval', 0)} eval={acc.get('eval', 0)}) ====="
+    ]
+    if acc.get("thinking"):
+        parts.append(f"[thinking]\n{acc['thinking']}")
+    parts.append(f"[content]\n{acc['content'] or '(no prose content)'}")
+    for tc in acc.get("tool_calls", []):
+        try:
+            args = json.dumps(tc.arguments, ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001
+            args = str(getattr(tc, "arguments", ""))
+        parts.append(f"[tool_call] {tc.name}({args})")
+    sink.write("\n".join(parts) + "\n")
+    sink.flush()
 
 
 class LLMTimeoutError(RuntimeError):
@@ -380,6 +403,8 @@ class OllamaClient:
                     ) from None
         finally:
             if sink is not None:
+                with contextlib.suppress(Exception):
+                    _write_response_footer(sink, acc, eff_model)
                 with contextlib.suppress(Exception):
                     sink.close()
         return LLMResponse(

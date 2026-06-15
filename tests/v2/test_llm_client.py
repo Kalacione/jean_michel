@@ -400,7 +400,27 @@ def test_stream_dumps_slop_to_conversation_folder(tmp_path):
     files = list((tmp_path / "llm_streams").glob("*.txt"))
     assert len(files) == 1
     assert "code-runner" in files[0].name
-    assert files[0].read_text(encoding="utf-8") == "hello world"
+    text = files[0].read_text(encoding="utf-8")
+    assert text.startswith("hello world")  # live-streamed deltas
+    # The final-response footer is ALWAYS teed (a tool-only / no-thinking turn would
+    # otherwise leave the file blank — undebuggable).
+    assert "===== RESPONSE" in text and "[content]\nhello world" in text
+
+
+def test_stream_footer_captures_tool_only_turn(tmp_path):
+    """A tool-calling turn streams NO prose (and a no-thinking orchestrator no thinking) —
+    the footer must still record the output (the tool_calls), so the trace isn't blank."""
+    fake = _StreamFake(chunks=[
+        _text_chunk("", tool_calls=[{"function": {"name": "plan_write",
+                                                  "arguments": {"markdown": "# Plan"}}}]),
+        _text_chunk("", done=True),
+    ])
+    client = _bare_ollama_client(fake)
+    client.chat_messages(messages=[], tools=[], temperature=0.0, thinking=False,
+                         model="jean-michel", stream_log_dir=tmp_path, stream_log_label="jean-michel")
+    text = list((tmp_path / "llm_streams").glob("*.txt"))[0].read_text(encoding="utf-8")
+    assert "[content]\n(no prose content)" in text
+    assert "[tool_call] plan_write(" in text and "# Plan" in text
 
 
 def test_mock_client_mirrors_eviction_on_switch():
