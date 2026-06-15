@@ -305,19 +305,20 @@ cmd_test() {
 
 cmd_meta_analysis() {
   ensure_venv
-  # Note (v2 update): self_inspect was split into three scoped tools in
-  # migration 015 — self_inspect_config / _activity / _architecture.
-  # The v1 prompt referenced a non-existent self_inspect(scope=...) tool.
-  local prompt="Run a full meta-analysis of your own configuration and recent activity."
-  prompt+=' Use the three scoped introspection tools:'
-  prompt+=' - self_inspect_config to review agent roster, tool grants, and paradigm bindings,'
-  prompt+=' - self_inspect_activity for conversation stats, sandbox audit, and recent summaries,'
-  prompt+=' - self_inspect_architecture to read the README and DB schema before writing any SQL or code.'
-  prompt+=' Then produce a structured improvement proposal document in the workspace covering:'
-  prompt+=' 1) Agent / tool gap analysis,'
-  prompt+=' 2) Paradigm effectiveness observations,'
-  prompt+=' 3) Behavioural patterns from recent activity,'
-  prompt+=' 4) Concrete SQL proposals with rationale.'
+  # The MAIN agent (router) does NOT hold the self_inspect tools — the `meta-analyst`
+  # specialist does (migration 015 split self_inspect into _config/_activity/_architecture).
+  # So instruct the orchestrator to DELEGATE explicitly ; otherwise it tries to call
+  # tools it lacks and stalls on empty turns (verified : cogito produced no delegation).
+  local prompt="Delegate to the meta-analyst specialist to run a full meta-analysis of the system."
+  prompt+=' The meta-analyst holds the introspection tools (self_inspect_config / self_inspect_activity /'
+  prompt+=' self_inspect_architecture). Brief it to:'
+  prompt+=' inspect the agent roster + tool grants + paradigm bindings (self_inspect_config),'
+  prompt+=' review recent activity — request volume, failures, ask_human frequency, sandbox audit (self_inspect_activity),'
+  prompt+=' read the README + DB schema before proposing any SQL (self_inspect_architecture),'
+  prompt+=' then WRITE a structured improvement-proposal document in the workspace covering:'
+  prompt+=' 1) Agent/tool gap analysis, 2) Paradigm effectiveness observations,'
+  prompt+=' 3) Behavioural patterns from recent activity, 4) Concrete SQL proposals with rationale.'
+  prompt+=' Finally, report back a short summary of the key findings.'
   jean-michel --mode analyse --once "${prompt}"
 }
 
