@@ -244,7 +244,14 @@ async def run_turn_streaming(
         # Turn fully done (final + sentinel sent, lock about to release) → kick off
         # shadow consolidation in the background (deep turns only). It acquires turn_lock
         # itself once released, so the next user turn is never blocked/dropped by it.
+        # Frequency gate : not every deep turn warrants a ~15s memory pass. Run on the
+        # 1st then every Nth deep turn (counter persisted per conv) ; skipped turns are
+        # caught up by the next run (it reads the whole transcript).
         if was_deep["v"]:
-            task = asyncio.create_task(_consolidate_bg())
-            _bg_tasks.add(task)
-            task.add_done_callback(_bg_tasks.discard)
+            if consolidation_svc.consolidation_due(folder, config.CONSOLIDATION_EVERY_N):
+                task = asyncio.create_task(_consolidate_bg())
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
+            else:
+                _log.info("shadow consolidation gated (not due, every=%d) conv=%s",
+                          config.CONSOLIDATION_EVERY_N, conv_id)

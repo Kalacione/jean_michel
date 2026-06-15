@@ -262,6 +262,27 @@ def clear_pending(conv_folder: Path) -> None:
     _pending_path(conv_folder).unlink(missing_ok=True)
 
 
+COUNTER_FILE = "consolidation_state.json"
+
+
+def consolidation_due(conv_folder: Path, every_n: int = 3) -> bool:
+    """Frequency gate for the shadow pass. INCREMENTS the per-conversation deep-turn
+    counter and returns True on the 1st deep turn then every Nth (turns 1, N+1, 2N+1…).
+    ``every_n <= 1`` → always True. A skipped turn's content is NOT lost : the next run
+    reads the whole transcript and catches up. Best-effort (counter write never raises)."""
+    path = conv_folder / COUNTER_FILE
+    try:
+        n = int(json.loads(path.read_text(encoding="utf-8")).get("deep_turns", 0))
+    except Exception:  # noqa: BLE001 — missing/corrupt → start fresh
+        n = 0
+    n += 1
+    try:
+        persistence._atomic_write_text(path, json.dumps({"deep_turns": n}))
+    except Exception as exc:  # noqa: BLE001
+        _log.debug("consolidation counter write failed: %s", exc)
+    return every_n <= 1 or (n - 1) % every_n == 0
+
+
 # ---- shadow entry point (called by the CLI / API after the response) ------
 
 def run_shadow(

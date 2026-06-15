@@ -330,6 +330,12 @@ WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
 # ask_human prompt before giving up and letting the orchestrator conclude (S4).
 ASK_HUMAN_TIMEOUT_SECONDS = _int_env("JEANMICHEL_ASK_HUMAN_TIMEOUT", 300)
 
+# Shadow-consolidation frequency gate : run the memory pass on the 1st deep turn of a
+# conversation, then every Nth (turns 1, N+1, 2N+1…) instead of every deep turn (a ~15s
+# LLM pass each). 1 = every turn. Skipped turns aren't lost — the next run reads the
+# whole transcript and catches up.
+CONSOLIDATION_EVERY_N = _int_env("JEANMICHEL_CONSOLIDATION_EVERY_N", 3)
+
 # Mémoire long-terme (cf. §10 doc 06). Seuil d'alerte sur la mémoire user.
 USER_MEMORY_INDEX_LIMIT = _int_env("JEANMICHEL_USER_MEMORY_LIMIT", 100)
 USER_MEMORY_WARN_AT = _int_env("JEANMICHEL_USER_MEMORY_WARN_AT", 90)

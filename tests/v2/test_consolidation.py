@@ -187,6 +187,16 @@ def test_remove_pending_drops_by_key(tmp_db_v2, conv_folder):
     assert [c["code"] for c in consolidation.remove_pending(conv_folder, a)] == ["b"]
 
 
+def test_consolidation_due_gates_every_n(tmp_path):
+    # N=3 : run on the 1st deep turn then every 3rd (turns 1, 4, 7). Counter persists.
+    due = [consolidation.consolidation_due(tmp_path, 3) for _ in range(7)]
+    assert due == [True, False, False, True, False, False, True]
+
+
+def test_consolidation_due_every_turn_when_n_le_1(tmp_path):
+    assert all(consolidation.consolidation_due(tmp_path, 1) for _ in range(4))
+
+
 def test_apply_save_and_extend(tmp_db_v2):
     cand = {"scope": "user", "code": "fav", "title": "Fav", "description": "d",
             "content": "v1", "project_id": None, "tool_code": None}
