@@ -292,7 +292,7 @@ class PostToolUse:
             state.search_calls_since_last_persist += 1
         elif call.name in _WORKSPACE_WRITE_TOOLS:
             state.search_calls_since_last_persist = 0
-        if call.name == "todo_write":
+        if call.name in ("todo_write", "todo_update"):
             state.reeval_pending = False  # plan (re-)evaluated → clear the ACT nudge
 
         # 2. Cache the result for future dedup
