@@ -5,6 +5,13 @@
 ## En cours
 - **Plan mode — vérif live + étape 5** : roder le cycle Plan→Approuver→Edit en code/analyse, puis analyse
   écrite de généralisation aux autres modes + patterns d'orchestration transverses (doc `docs/20260613_plan_mode/`).
+- **Plan riche (modèle Claude) — LIVRÉ** : `plan.md` markdown authored par `plan_write` (analyse/étapes/vérif),
+  réinjecté `[PLAN]` chaque tour ; **plan et todo DÉCOUPLÉS** (todo.json = vrai tracker via `todo_write`, créé
+  À l'exécution depuis le plan) ; acceptation `proposed/accepted` sur sidecar `plan_status.json` ; complétion
+  todo_update cohérente. **DÉFÉRÉ — plusieurs plans/todos séquentiels par conversation** : aujourd'hui `plan.md`
+  et `todo.json` sont uniques (le courant ; un nouveau écrase). Cible : un couple plan+todo PAR demande
+  (demande 1 → plan 1 & todo 1, demande 2 → plan 2 & todo 2, séquentiels), avec historique. Demande de la
+  réflexion (nommage/cycle de vie des artefacts, ce que `[PLAN]`/recap injectent, ce que le front montre).
 
 ## Bugs / à revérifier en live
 - **Front : contexte perdu au reload / changement de conversation.** L'état `planPending` (barre d'approbation)
