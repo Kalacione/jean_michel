@@ -262,25 +262,33 @@ def clear_pending(conv_folder: Path) -> None:
     _pending_path(conv_folder).unlink(missing_ok=True)
 
 
-COUNTER_FILE = "consolidation_state.json"
+STATE_FILE = "consolidation_state.json"
 
 
-def consolidation_due(conv_folder: Path, every_n: int = 3) -> bool:
-    """Frequency gate for the shadow pass. INCREMENTS the per-conversation deep-turn
-    counter and returns True on the 1st deep turn then every Nth (turns 1, N+1, 2N+1…).
-    ``every_n <= 1`` → always True. A skipped turn's content is NOT lost : the next run
-    reads the whole transcript and catches up. Best-effort (counter write never raises)."""
-    path = conv_folder / COUNTER_FILE
+def _studied_msgs(conv_folder: Path) -> int:
+    """Message count at the last successful study (the reflection watermark). 0 if none."""
     try:
-        n = int(json.loads(path.read_text(encoding="utf-8")).get("deep_turns", 0))
-    except Exception:  # noqa: BLE001 — missing/corrupt → start fresh
-        n = 0
-    n += 1
+        return int(json.loads((conv_folder / STATE_FILE).read_text(encoding="utf-8")).get("studied_msgs", 0))
+    except Exception:  # noqa: BLE001 — missing/corrupt → never studied
+        return 0
+
+
+def reflection_due(conv_folder: Path, msg_count: int) -> bool:
+    """True if the conversation has NEW content since its last study — i.e. its current
+    message count exceeds the watermark. A studied conversation that CONTINUES becomes due
+    again (no permanent 'done' state). Pure read."""
+    return msg_count > _studied_msgs(conv_folder)
+
+
+def mark_studied(conv_folder: Path, msg_count: int) -> None:
+    """Advance the watermark to ``msg_count`` after a completed reflection pass (the conv
+    is studied up to that message). Best-effort (never raises)."""
     try:
-        persistence._atomic_write_text(path, json.dumps({"deep_turns": n}))
+        persistence._atomic_write_text(
+            conv_folder / STATE_FILE, json.dumps({"studied_msgs": int(msg_count)})
+        )
     except Exception as exc:  # noqa: BLE001
-        _log.debug("consolidation counter write failed: %s", exc)
-    return every_n <= 1 or (n - 1) % every_n == 0
+        _log.debug("consolidation watermark write failed: %s", exc)
 
 
 # ---- shadow entry point (called by the CLI / API after the response) ------

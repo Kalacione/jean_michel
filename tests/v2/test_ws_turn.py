@@ -96,15 +96,11 @@ def test_ws_streams_real_turn(client, monkeypatch):
 
 
 def test_ws_no_consolidation_event_in_turn(client, monkeypatch):
-    """Shadow consolidation is DECOUPLED to a background task (post-turn, pushed over the
-    notifications WS). So the TURN itself must NOT emit MemoryConsolidationProposed, and
-    'final' is the last frame — the turn is truly done when 'final' fires (so an Approve
+    """Memory consolidation is handled by the background reflection daemon (api/reflection.py),
+    NOT in the turn. So the TURN itself must NOT run a pass nor emit MemoryConsolidationProposed,
+    and 'final' is the last frame — the turn is truly done when 'final' fires (so an Approve
     sent right after isn't dropped)."""
     monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
-    monkeypatch.setattr(
-        executor.consolidation_svc, "run_shadow",
-        lambda *a, **k: [{"code": "x", "title": "t", "scope": "world"}],  # would-be candidate
-    )
     _make_user("carol", "pw")
     token = _login(client, "carol", "pw")
     conv_id = _create_conv(client, token)

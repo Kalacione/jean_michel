@@ -70,7 +70,7 @@ def create_app() -> Any:
     from fastapi.responses import FileResponse
     from pydantic import BaseModel
 
-    from .. import db, mcp_client, persistence, snapshot
+    from .. import config, db, mcp_client, persistence, snapshot
     from .. import todo as todo_mod
     from ..config import UserProfile
     from ..service import consolidation as consolidation_svc
@@ -78,7 +78,7 @@ def create_app() -> Any:
     from ..service import memory as memory_svc
     from ..service import project as project_svc
     from ..service import workspace as workspace_svc
-    from . import auth, executor, notifications, project_build
+    from . import auth, executor, notifications, project_build, reflection
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app):
@@ -93,9 +93,19 @@ def create_app() -> Any:
         # Connect to MCP servers at startup (off-loop : startup() blocks on a
         # bounded connect). No-op when MCP is off/unconfigured. Best-effort.
         await asyncio.to_thread(mcp_client.startup)
+        # Background memory-reflection daemon (sleep-time consolidation) : studies
+        # conversations off the turn path when idle. Cancelled on shutdown.
+        reflection_task = (
+            asyncio.create_task(reflection.reflection_loop())
+            if config.REFLECTION_ENABLED else None
+        )
         try:
             yield
         finally:
+            if reflection_task is not None:
+                reflection_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reflection_task
             await asyncio.to_thread(mcp_client.shutdown)
             # Stop all jm-sandbox-* / jm-repo-* containers on clean shutdown.
             await asyncio.to_thread(reap_sandboxes)

@@ -187,14 +187,15 @@ def test_remove_pending_drops_by_key(tmp_db_v2, conv_folder):
     assert [c["code"] for c in consolidation.remove_pending(conv_folder, a)] == ["b"]
 
 
-def test_consolidation_due_gates_every_n(tmp_path):
-    # N=3 : run on the 1st deep turn then every 3rd (turns 1, 4, 7). Counter persists.
-    due = [consolidation.consolidation_due(tmp_path, 3) for _ in range(7)]
-    assert due == [True, False, False, True, False, False, True]
-
-
-def test_consolidation_due_every_turn_when_n_le_1(tmp_path):
-    assert all(consolidation.consolidation_due(tmp_path, 1) for _ in range(4))
+def test_reflection_due_tracks_watermark(tmp_path):
+    # Never studied → any content is due.
+    assert consolidation.reflection_due(tmp_path, 4) is True
+    consolidation.mark_studied(tmp_path, 4)
+    # Studied up to 4 → not due at 4 ; due again when the conversation CONTINUES.
+    assert consolidation.reflection_due(tmp_path, 4) is False
+    assert consolidation.reflection_due(tmp_path, 6) is True
+    consolidation.mark_studied(tmp_path, 6)
+    assert consolidation.reflection_due(tmp_path, 6) is False
 
 
 def test_apply_save_and_extend(tmp_db_v2):

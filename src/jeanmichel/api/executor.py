@@ -25,11 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from .. import config, persistence, voice
-from ..events import MemoryConsolidationProposed
 from ..llm import OllamaClient
-from ..service import consolidation as consolidation_svc
 from ..service import turn_runner
-from . import notifications
 
 _log = logging.getLogger(__name__)
 
@@ -38,10 +35,6 @@ _log = logging.getLogger(__name__)
 turn_lock = asyncio.Lock()
 
 _SENTINEL = object()
-
-# Strong refs to fire-and-forget background tasks (post-turn shadow consolidation),
-# so the event loop doesn't GC them mid-flight. Discarded on completion.
-_bg_tasks: set[Any] = set()
 
 _llm_clients: tuple[Any, Any] | None = None
 
@@ -96,10 +89,7 @@ async def run_turn_streaming(
                 msg["speak"] = phrase
         loop.call_soon_threadsafe(event_queue.put_nowait, msg)
 
-    was_deep = {"v": False}
-
     def on_dispatch(decision: Any) -> None:
-        was_deep["v"] = decision.intent != "alexa"
         loop.call_soon_threadsafe(
             event_queue.put_nowait,
             {
@@ -185,35 +175,10 @@ async def run_turn_streaming(
             _log.info("recv_answers ended conv=%s : %s", conv_id, type(exc).__name__)
             answer_box.put("")  # unblock a pending ask_human so the turn finishes
 
-    async def _consolidate_bg() -> None:
-        # Shadow consolidation DECOUPLED from the turn : runs after the turn released
-        # the WS + lock, so it never delays 'final' nor holds the receiver (which would
-        # drop an Approve/next-turn frame). Serialized via turn_lock (GPU) ; best-effort.
-        # run_shadow stashes to pending_memory.json ; we also push the candidates live
-        # over the per-user notifications WS (the turn WS is already closed).
-        try:
-            async with turn_lock:
-                cands = await loop.run_in_executor(
-                    None,
-                    lambda: consolidation_svc.run_shadow(
-                        folder, conv_id, llm=main_llm, user_id=memory_user_id
-                    ),
-                )
-            _log.info("shadow consolidation (bg) DONE conv=%s candidates=%d", conv_id, len(cands or []))
-            if cands:
-                # Push the FULL accumulated awaiting-review set (not just this turn's new
-                # ones) so the live panel matches what GET /pending-memory returns on reload.
-                pending = consolidation_svc.load_pending(folder)
-                persistence.append_event(
-                    folder, MemoryConsolidationProposed(count=len(pending), candidates=pending)
-                )
-                if memory_user_id is not None:
-                    notifications.notify(memory_user_id, {
-                        "type": "notification", "kind": "memory_proposed",
-                        "conv_id": conv_id, "count": len(pending), "candidates": pending,
-                    })
-        except Exception as exc:  # noqa: BLE001 — best-effort ; the turn already succeeded
-            _log.exception("shadow consolidation (bg) FAILED conv=%s : %s", conv_id, exc)
+    # NB : memory consolidation is NO LONGER done per-turn. A background reflection
+    # daemon (api/reflection.py, registered in the app lifespan) studies conversations
+    # with new content when the system is idle — so it never consumes a turn nor delays
+    # 'final'. See plan « Daemon de réflexion mémoire ».
 
     turn_future = loop.run_in_executor(None, worker)
     recv_task = asyncio.create_task(recv_answers())
@@ -241,17 +206,3 @@ async def run_turn_streaming(
         # Let the worker finish (persists messages/state/events) even if the
         # client vanished mid-turn.
         await turn_future
-        # Turn fully done (final + sentinel sent, lock about to release) → kick off
-        # shadow consolidation in the background (deep turns only). It acquires turn_lock
-        # itself once released, so the next user turn is never blocked/dropped by it.
-        # Frequency gate : not every deep turn warrants a ~15s memory pass. Run on the
-        # 1st then every Nth deep turn (counter persisted per conv) ; skipped turns are
-        # caught up by the next run (it reads the whole transcript).
-        if was_deep["v"]:
-            if consolidation_svc.consolidation_due(folder, config.CONSOLIDATION_EVERY_N):
-                task = asyncio.create_task(_consolidate_bg())
-                _bg_tasks.add(task)
-                task.add_done_callback(_bg_tasks.discard)
-            else:
-                _log.info("shadow consolidation gated (not due, every=%d) conv=%s",
-                          config.CONSOLIDATION_EVERY_N, conv_id)
