@@ -247,6 +247,17 @@ def add_pending(conv_folder: Path, new: list[dict[str, Any]]) -> list[dict[str, 
     return merged
 
 
+def remove_pending(conv_folder: Path, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Drop the candidate sharing ``candidate``'s key (scope/code/target) from the
+    pending file and return what remains. Idempotent (no-op if already gone). Called
+    when the human reviews a candidate (saved OR dismissed) so it doesn't resurrect on
+    reload — the web mirror of the CLI's prune."""
+    target = _key(candidate)
+    remaining = [c for c in load_pending(conv_folder) if _key(c) != target]
+    save_pending(conv_folder, remaining)
+    return remaining
+
+
 def clear_pending(conv_folder: Path) -> None:
     _pending_path(conv_folder).unlink(missing_ok=True)
 

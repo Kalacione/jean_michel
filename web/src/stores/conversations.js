@@ -128,16 +128,18 @@ export const useConvStore = defineStore('conversations', () => {
     // rehydrate : a reload / switch shows the agent's thinking & steps (events.jsonl,
     // no token deltas → cheap), not a blank panel. events/state/todo are best-effort
     // (a failure leaves the panel empty, never breaks select) ; messages stays strict.
-    const [loaded, ev, st, td] = await Promise.all([
+    const [loaded, ev, st, td, pend] = await Promise.all([
       api.messages(id).then(r => r.messages),
       api.events(id).then(r => r.events || []).catch(() => []),
       api.state(id).then(r => r.state || null).catch(() => null),
       api.getTodo(id).then(r => r.todo || null).catch(() => null),
+      api.pendingMemory(id).then(r => r.pending_memory || []).catch(() => []),
     ])
     if (currentId.value !== id) return // switched again mid-load → don't clobber the newer conv
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
     planPending.value = !!(st?.plan_mode && td?.items?.length) // Approve/Refine bar survives reload
+    pendingMemory.value = pend // memory suggestions survive reload/switch (loaded from disk)
     openWs(id)
     fetchWsFiles()
   }
@@ -324,6 +326,9 @@ export const useConvStore = defineStore('conversations', () => {
 
   function dismissMemory (candidate) {
     pendingMemory.value = pendingMemory.value.filter(c => c !== candidate)
+    // Persist the prune (reviewed = saved OR ignored ; accept() calls this after saving)
+    // so the candidate doesn't resurrect from pending_memory.json on reload. Best-effort.
+    if (currentId.value) api.dismissPendingMemory(currentId.value, candidate).catch(() => {})
   }
 
   // Shadow consolidation is now decoupled (runs ~after the turn) and pushes its

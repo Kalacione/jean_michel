@@ -73,6 +73,7 @@ def create_app() -> Any:
     from .. import db, mcp_client, persistence, snapshot
     from .. import todo as todo_mod
     from ..config import UserProfile
+    from ..service import consolidation as consolidation_svc
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
     from ..service import project as project_svc
@@ -267,6 +268,22 @@ def create_app() -> Any:
     @app.get("/api/conversations/{conversation_id}/state")
     def get_state(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         return {"state": persistence.load_state(Path(conv["folder_path"]))}
+
+    # ---- shadow-consolidation candidates (memory suggestions awaiting review) ----
+    # Persist across reload/switch : the bg consolidation stashes to pending_memory.json
+    # but the live notif is lost if the client leaves. GET reloads the set ; dismiss
+    # prunes the reviewed one (saved OR ignored) so it doesn't resurrect on reload.
+
+    @app.get("/api/conversations/{conversation_id}/pending-memory")
+    def get_pending_memory(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        return {"pending_memory": consolidation_svc.load_pending(Path(conv["folder_path"]))}
+
+    @app.post("/api/conversations/{conversation_id}/pending-memory/dismiss")
+    def dismiss_pending_memory(
+        candidate: dict[str, Any],
+        conv: Any = Depends(auth.require_conversation_owner),
+    ) -> dict[str, Any]:
+        return {"pending_memory": consolidation_svc.remove_pending(Path(conv["folder_path"]), candidate)}
 
     # ---- living plan (todo.json) — read + human edit (plan mode) ----------
 

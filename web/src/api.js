@@ -60,6 +60,9 @@ export const api = {
   messages: id => request('GET', `/conversations/${id}/messages`),
   events: id => request('GET', `/conversations/${id}/events`),
   state: id => request('GET', `/conversations/${id}/state`),
+  pendingMemory: id => request('GET', `/conversations/${id}/pending-memory`),
+  dismissPendingMemory: (id, candidate) =>
+    request('POST', `/conversations/${id}/pending-memory/dismiss`, candidate),
   getTodo: id => request('GET', `/conversations/${id}/todo`),
   putTodo: (id, goal, items) => request('PUT', `/conversations/${id}/todo`, { goal, items }),
 

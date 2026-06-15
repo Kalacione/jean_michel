@@ -175,6 +175,18 @@ def test_pending_roundtrip_and_dedup(tmp_db_v2, conv_folder):
     assert consolidation.load_pending(conv_folder) == []
 
 
+def test_remove_pending_drops_by_key(tmp_db_v2, conv_folder):
+    a = {"scope": "user", "code": "a", "title": "t", "description": "d", "content": "c",
+         "grounding_quote": "q", "tool_code": None, "project_id": None}
+    b = {**a, "code": "b"}
+    consolidation.add_pending(conv_folder, [a, b])
+    remaining = consolidation.remove_pending(conv_folder, a)
+    assert [c["code"] for c in remaining] == ["b"]
+    assert [c["code"] for c in consolidation.load_pending(conv_folder)] == ["b"]
+    # Idempotent : removing an absent candidate is a no-op (the human reviewed it once).
+    assert [c["code"] for c in consolidation.remove_pending(conv_folder, a)] == ["b"]
+
+
 def test_apply_save_and_extend(tmp_db_v2):
     cand = {"scope": "user", "code": "fav", "title": "Fav", "description": "d",
             "content": "v1", "project_id": None, "tool_code": None}

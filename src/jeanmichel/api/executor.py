@@ -201,13 +201,16 @@ async def run_turn_streaming(
                 )
             _log.info("shadow consolidation (bg) DONE conv=%s candidates=%d", conv_id, len(cands or []))
             if cands:
+                # Push the FULL accumulated awaiting-review set (not just this turn's new
+                # ones) so the live panel matches what GET /pending-memory returns on reload.
+                pending = consolidation_svc.load_pending(folder)
                 persistence.append_event(
-                    folder, MemoryConsolidationProposed(count=len(cands), candidates=cands)
+                    folder, MemoryConsolidationProposed(count=len(pending), candidates=pending)
                 )
                 if memory_user_id is not None:
                     notifications.notify(memory_user_id, {
                         "type": "notification", "kind": "memory_proposed",
-                        "conv_id": conv_id, "count": len(cands), "candidates": cands,
+                        "conv_id": conv_id, "count": len(pending), "candidates": pending,
                     })
         except Exception as exc:  # noqa: BLE001 — best-effort ; the turn already succeeded
             _log.exception("shadow consolidation (bg) FAILED conv=%s : %s", conv_id, exc)

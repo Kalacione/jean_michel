@@ -109,6 +109,33 @@ def test_get_state(client, alice_conv):
     assert resp.json()["state"]["depth_current"] == 2
 
 
+def test_get_pending_memory(client, alice_conv):
+    token, conv_id, folder = alice_conv
+    (folder / "pending_memory.json").write_text(
+        json.dumps([{"scope": "user", "code": "likes_tea", "title": "T",
+                     "description": "d", "content": "c"}]),
+        encoding="utf-8",
+    )
+    resp = client.get(f"/api/conversations/{conv_id}/pending-memory", headers=_auth(token))
+    assert resp.status_code == 200
+    assert [c["code"] for c in resp.json()["pending_memory"]] == ["likes_tea"]
+
+
+def test_dismiss_pending_memory_prunes_and_persists(client, alice_conv):
+    token, conv_id, folder = alice_conv
+    a = {"scope": "user", "code": "a", "title": "A", "description": "d", "content": "c"}
+    b = {"scope": "user", "code": "b", "title": "B", "description": "d", "content": "c"}
+    (folder / "pending_memory.json").write_text(json.dumps([a, b]), encoding="utf-8")
+    resp = client.post(
+        f"/api/conversations/{conv_id}/pending-memory/dismiss", json=a, headers=_auth(token)
+    )
+    assert resp.status_code == 200
+    assert [c["code"] for c in resp.json()["pending_memory"]] == ["b"]
+    # Persisted : a re-GET no longer returns the dismissed candidate (no resurrection).
+    again = client.get(f"/api/conversations/{conv_id}/pending-memory", headers=_auth(token))
+    assert [c["code"] for c in again.json()["pending_memory"]] == ["b"]
+
+
 # ---- Workspace reads ------------------------------------------------------
 
 
