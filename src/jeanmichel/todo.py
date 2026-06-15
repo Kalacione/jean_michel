@@ -112,6 +112,23 @@ def set_plan_status(conv_folder: Path, status: str) -> None:
     save_todo(conv_folder, todo.get("goal", ""), todo.get("items") or [], status=status)
 
 
+def reconcile_plan_status_on_turn(conv_folder: Path, *, plan_mode: bool, at_start: bool) -> None:
+    """Drive the plan's acceptance lifecycle at a turn boundary (no-op without a todo).
+
+    - START of an EDIT turn on a ``proposed`` plan → ``accepted`` (the user is now
+      executing the plan the orchestrator proposed) ;
+    - END of a PLAN turn that produced a todo → ``proposed`` (a (re)plan awaits the
+      human's approval — this also resets a previously ``accepted`` plan on a re-plan).
+    """
+    todo = load_todo(conv_folder)
+    if todo is None:
+        return
+    if at_start and not plan_mode and todo.get("status") == "proposed":
+        set_plan_status(conv_folder, "accepted")
+    elif not at_start and plan_mode:
+        set_plan_status(conv_folder, "proposed")
+
+
 def clear_todo(conv_folder: Path) -> None:
     """Remove the plan artifacts — todo.json + plan.md (called when every item is done)."""
     todo_path(conv_folder).unlink(missing_ok=True)

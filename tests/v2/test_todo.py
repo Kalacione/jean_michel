@@ -198,6 +198,30 @@ def test_set_plan_status(tmp_path):
     assert todomod.load_todo(tmp_path)["status"] == "accepted"
 
 
+def test_reconcile_accepts_proposed_on_edit_start(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])  # proposed
+    todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=False, at_start=True)
+    assert todomod.load_todo(tmp_path)["status"] == "accepted"
+
+
+def test_reconcile_keeps_proposed_on_plan_turn_start(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
+    todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=True, at_start=True)
+    assert todomod.load_todo(tmp_path)["status"] == "proposed"
+
+
+def test_reconcile_proposes_on_plan_turn_end(tmp_path):
+    todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}],
+                      status="accepted")
+    todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=True, at_start=False)
+    assert todomod.load_todo(tmp_path)["status"] == "proposed"  # a re-plan resets to proposed
+
+
+def test_reconcile_noop_without_todo(tmp_path):
+    todomod.reconcile_plan_status_on_turn(tmp_path, plan_mode=False, at_start=True)
+    assert todomod.load_todo(tmp_path) is None  # no crash, nothing created
+
+
 def test_clear_todo_removes_plan_doc(tmp_path):
     todomod.save_todo(tmp_path, "g", [{"id": "1", "text": "do", "status": "in_progress"}])
     todomod.save_plan(tmp_path, "# Plan\n")

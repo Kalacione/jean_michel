@@ -142,7 +142,15 @@ export const useConvStore = defineStore('conversations', () => {
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
     plan.value = pl // rich plan markdown survives reload (rendered in the Approve bar / editor)
-    planPending.value = !!(st?.plan_mode && td?.items?.length) // Approve/Refine bar survives reload
+    // Approve/Refine bar = plan still awaiting approval. Source of truth: the persisted
+    // plan status (proposed → pending) ; legacy todos without a status fall back to the
+    // old heuristic. Decoupled from the (sticky) planMode selector + state.plan_mode.
+    planPending.value = td?.status
+      ? td.status === 'proposed'
+      : !!(st?.plan_mode && td?.items?.length)
+    // An already-accepted plan → default the selector to Edit so a continuation message
+    // executes/continues instead of silently re-planning (the reload re-arm bug).
+    if (td?.status === 'accepted') planMode.value = false
     pendingMemory.value = pend // memory suggestions survive reload/switch (loaded from disk)
     openWs(id)
     fetchWsFiles()

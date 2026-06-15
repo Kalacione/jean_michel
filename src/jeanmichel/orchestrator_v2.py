@@ -70,7 +70,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import load_todo
+from .todo import load_todo, reconcile_plan_status_on_turn
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -1019,6 +1019,8 @@ def run_main_loop(
     messages.append(user_msg)
 
     state = ConversationState(depth_current=0, plan_mode=plan_mode)
+    # An EDIT turn launched on a still-'proposed' plan = the human accepted it → execute.
+    reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=True)
     hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
     )
@@ -1054,6 +1056,9 @@ def run_main_loop(
         event_emitter=event_emitter,
         cancel_event=cancel_event,
     )
+
+    # A PLAN turn that produced a todo (re)proposes it → the Approve bar shows.
+    reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=False)
 
     if outcome.kind == "final_answer":
         return outcome.content
