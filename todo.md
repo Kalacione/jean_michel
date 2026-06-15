@@ -51,3 +51,16 @@
 
 ## Idées
 - Plein de micro-LLM prédisant le prochain token sur le même contexte → triplets de précogs.
+
+
+## Modeles a tester
+
+Sources: https://www.morphllm.com/best-ollama-models
+
+- orchestrator: `deepseek-r1:32b`   => `ollama run deepseek-r1:32b`
+- code: `qwen2.5-coder:32b` (22Go VRAM at Q4_K_M) => `ollama run qwen2.5-coder:32b`
+- new math and stem specialist: Phi-4 14B
+
+## Source a recuperer pour ecriture doc
+
+https://www.sitepoint.com/the-complete-stack-for-local-autonomous-agents--from-ggml-to-orchestration/
