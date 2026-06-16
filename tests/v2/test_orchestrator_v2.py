@@ -1103,16 +1103,16 @@ def test_run_main_loop_clears_todo_from_referent_on_conclusion(tmp_path: Path):
     assert st.active_todo_id is None and st.todos == {}  # soldé + retiré du référent
 
 
-def test_reconcile_plan_approval_on_referent():
+def test_reconcile_plan_approval_on_referent(tmp_path: Path):
     """Phase 1.3b : l'acceptation vit dans state.plans[id].approved (plus de sidecar)."""
     from jeanmichel.orchestrator_v2 import _reconcile_plan_approval
     s = ConversationState(active_plan_id="p1", plans={"p1": {"approved": False}})
-    _reconcile_plan_approval(s, plan_mode=False, at_start=True)   # EDIT start sur non-approuvé
+    _reconcile_plan_approval(tmp_path, s, plan_mode=False, at_start=True)   # EDIT start sur non-approuvé
     assert s.plans["p1"]["approved"] is True                     # → accepté
-    _reconcile_plan_approval(s, plan_mode=True, at_start=False)   # fin de tour PLAN (re-plan)
+    _reconcile_plan_approval(tmp_path, s, plan_mode=True, at_start=False)   # fin de tour PLAN (re-plan)
     assert s.plans["p1"]["approved"] is False                    # → ré-attente d'approbation
     s2 = ConversationState()                                     # pas de plan actif → no-op
-    _reconcile_plan_approval(s2, plan_mode=False, at_start=True)
+    _reconcile_plan_approval(tmp_path, s2, plan_mode=False, at_start=True)
     assert s2.active_plan_id is None
 
 
@@ -1139,10 +1139,10 @@ def test_plan_then_edit_acceptance_via_referent(tmp_path: Path):
 def test_add_file_dedup_by_path(tmp_path: Path):
     from jeanmichel.orchestrator_v2 import _add_file
     s = ConversationState()
-    _add_file(s, "x.py", layer="workspace", produced_by="r1")
-    _add_file(s, "x.py", layer="worktree", produced_by="r2")  # même path → maj, pas de doublon
+    _add_file(tmp_path, s, "x.py", layer="workspace", produced_by="r1")
+    _add_file(tmp_path, s, "x.py", layer="worktree", produced_by="r2")  # même path → maj, pas de doublon
     assert len(s.files) == 1 and s.files[0]["layer"] == "worktree" and s.files[0]["produced_by"] == "r2"
-    _add_file(s, "", layer="workspace", produced_by="r1")  # path vide → no-op
+    _add_file(tmp_path, s, "", layer="workspace", produced_by="r1")  # path vide → no-op
     assert len(s.files) == 1
 
 
@@ -1159,6 +1159,11 @@ def test_inscribe_subagent_and_its_files(tmp_path: Path):
     assert [f["path"] for f in s.files] == ["a.py", "b.md"]
     assert all(f["produced_by"] == "sub_1" and f["plan_id"] == "p1" and f["layer"] == "workspace"
                for f in s.files)  # pas de worktree → workspace
+    # Filet (Phase 1.6) : SubagentInscribed + FileProduced reconstruisent subagents/files.
+    from jeanmichel import persistence
+    rebuilt = persistence.rebuild_from_events(persistence.load_events(tmp_path))
+    assert rebuilt.subagents == s.subagents
+    assert rebuilt.files == s.files
 
 
 def test_run_main_loop_inscribes_workspace_file(tmp_path: Path):
@@ -1176,6 +1181,64 @@ def test_run_main_loop_inscribes_workspace_file(tmp_path: Path):
     st = ConversationState.from_dict(persistence.load_state(tmp_path))
     entry = next((f for f in st.files if f["path"] == "out.md"), None)
     assert entry is not None and entry["layer"] == "workspace" and entry["produced_by"]
+
+
+def test_rebuild_from_events_matches_maintained_referent(tmp_path: Path):
+    """Phase 1.6 — le FILET anti-drift : l'état organisationnel MAINTENU (state.json) est
+    EXACTEMENT reconstructible depuis le journal d'events (rebuild_from_events). C'est le test
+    qui garantit qu'aucun site d'inscription n'a oublié d'émettre son event domaine. Couvre
+    Request{Opened,Closed} · Plan{Inscribed,ApprovalChanged} · Todo{Inscribed,Cleared} · FileProduced."""
+    from jeanmichel import persistence
+    from jeanmichel.tools import plan_write as plan_write_mod
+    from jeanmichel.tools import todo_write as todo_write_mod
+    from jeanmichel.tools import workspace_create_file as wcf
+
+    org_keys = ("phase", "active_plan_id", "active_todo_id", "plans", "todos",
+                "requests", "subagents", "files")
+
+    def org(state: ConversationState) -> dict:
+        return {k: getattr(state, k) for k in org_keys}
+
+    # Turn 1 (PLAN) : plan_write → halt (awaiting approval).
+    run_main_loop(
+        conv_folder=tmp_path,
+        agent=make_agent("jean-michel", role="router", tool_grants={"plan_write"}),
+        tools_registry={"plan_write": plan_write_mod.make_spec(tmp_path)},
+        user_text="planifie", plan_mode=True,
+        llm_client=MockClient(script=[assistant_response(
+            "", tool_calls=[tool_call("plan_write", markdown="# Plan\n## Context\nx")])]),
+    )
+    # Turn 2 (EDIT) : human approved → todo_write + workspace file → conclude (clears the todo).
+    run_main_loop(
+        conv_folder=tmp_path,
+        agent=make_agent("jean-michel", role="router",
+                         tool_grants={"todo_write", "workspace_create_file"}),
+        tools_registry={"todo_write": todo_write_mod.make_spec(tmp_path),
+                        "workspace_create_file": wcf.make_spec(tmp_path, has_write_grant=True)},
+        user_text="Approved — execute", plan_mode=False,
+        llm_client=MockClient(script=[
+            assistant_response("", tool_calls=[tool_call("todo_write", goal="g", items=[
+                {"id": "1", "text": "a", "status": "done"},
+                {"id": "2", "text": "b", "status": "in_progress"},
+            ])]),
+            assistant_response("", tool_calls=[tool_call(
+                "workspace_create_file", path="out.md", content="hi")]),
+            assistant_response("Fini."),
+        ]),
+    )
+
+    maintained = ConversationState.from_dict(persistence.load_state(tmp_path))
+    events = persistence.load_events(tmp_path)
+    rebuilt = persistence.rebuild_from_events(events)
+    assert org(rebuilt) == org(maintained)             # ★ maintenu == reconstruit
+    # The net actually reconstructs a non-trivial structure (guards a both-empty pass) :
+    assert maintained.phase == "answered"
+    assert maintained.plans["p1"]["approved"] is True  # approuvé au tour 2
+    assert maintained.active_todo_id is None and maintained.todos == {}  # todo soldé
+    assert any(f["path"] == "out.md" for f in maintained.files)
+    assert [r["outcome"] for r in maintained.requests] == ["halted", "answered"]
+    # rebuild is idempotent (pure fold) :
+    assert org(persistence.rebuild_from_events(events)) == org(rebuilt)
 
 
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):

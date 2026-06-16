@@ -212,6 +212,122 @@ class AgentTokenStreamed:
         return _event_to_dict(self)
 
 
+# ---- Referent domain events (Phase 1.6) ----------------------------------
+#
+# A persist-only journal (append_event, NOT _emit) of every mutation to the
+# organizational referent (state.json). They are 1:1 with the inscription sites
+# and feed `persistence.rebuild_from_events` — the anti-drift SAFETY NET (if a
+# site mutates the referent without emitting here, the "maintained == reconstructed"
+# test fails). The UI reads the referent via /state, so these are HIDDEN from the
+# live trace. All domain fields are REQUIRED (callers pass explicit values incl.
+# None) so the event mirrors exactly what was written to the state.
+
+
+@dataclass(frozen=True)
+class RequestOpened:
+    """A human turn's entry opened in the referent's turn log (state.requests)."""
+    request_id: str
+    mode: str            # "plan" | "edit"
+    plan_id: str | None
+    started: str
+    summary: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class RequestClosed:
+    """A turn's entry closed with its outcome (post-loop)."""
+    request_id: str
+    outcome: str | None  # "answered" | "halted" | "aborted"
+    summary: str
+    ended: str
+    last_iteration_utc: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class PlanInscribed:
+    """A plan's metadata mirrored into the referent (state.plans[id])."""
+    plan_id: str
+    plan_file: str
+    status: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class PlanApprovalChanged:
+    """The human-acceptance flag of a plan flipped (state.plans[id].approved)."""
+    plan_id: str
+    approved: bool
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class TodoInscribed:
+    """A todo tracker's progression mirrored into the referent (state.todos[id])."""
+    todo_id: str
+    plan_id: str | None
+    owner: str
+    done: int
+    total: int
+    current_step: str | None
+    file: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class TodoCleared:
+    """A todo tracker dropped from the referent (solved / cleared)."""
+    todo_id: str
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class FileProduced:
+    """A produced file recorded in the referent (state.files), dedup by path."""
+    path: str
+    layer: str           # "workspace" | "worktree"
+    produced_by: str | None
+    plan_id: str | None
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
+@dataclass(frozen=True)
+class SubagentInscribed:
+    """A returned subagent recorded in the referent (state.subagents)."""
+    request_id: str
+    agent: str
+    parent_request: str | None
+    plan_id: str | None
+    confidence: str
+    files_produced: list[str]
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
 # ---- Registry for deserialization ----------------------------------------
 
 EVENT_CLASSES: dict[str, type] = {
@@ -229,6 +345,15 @@ EVENT_CLASSES: dict[str, type] = {
     "AgentThinking": AgentThinking,
     "AgentTokenStreamed": AgentTokenStreamed,
     "MemoryConsolidationProposed": MemoryConsolidationProposed,
+    # Referent domain events (Phase 1.6)
+    "RequestOpened": RequestOpened,
+    "RequestClosed": RequestClosed,
+    "PlanInscribed": PlanInscribed,
+    "PlanApprovalChanged": PlanApprovalChanged,
+    "TodoInscribed": TodoInscribed,
+    "TodoCleared": TodoCleared,
+    "FileProduced": FileProduced,
+    "SubagentInscribed": SubagentInscribed,
 }
 
 

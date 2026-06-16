@@ -28,7 +28,7 @@ from jeanmichel.events import (
 # ---- 12 event types are registered ---------------------------------------
 
 
-def test_event_catalogue_has_fourteen_entries():
+def test_event_catalogue_has_all_entries():
     expected = {
         "RequestStarted",
         "LLMCallStarted",
@@ -44,9 +44,18 @@ def test_event_catalogue_has_fourteen_entries():
         "AgentThinking",
         "AgentTokenStreamed",
         "MemoryConsolidationProposed",
+        # Referent domain events (Phase 1.6) — the rebuild_from_events journal.
+        "RequestOpened",
+        "RequestClosed",
+        "PlanInscribed",
+        "PlanApprovalChanged",
+        "TodoInscribed",
+        "TodoCleared",
+        "FileProduced",
+        "SubagentInscribed",
     }
     assert set(EVENT_CLASSES.keys()) == expected
-    assert len(EVENT_CLASSES) == 14
+    assert len(EVENT_CLASSES) == 22
 
 
 # ---- Each event has utc auto-populated -----------------------------------

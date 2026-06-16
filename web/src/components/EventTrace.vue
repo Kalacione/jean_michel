@@ -92,7 +92,13 @@
   })
 
   // Unwrap the {type:'event', event:{…}} envelope ; LLM call markers stay quiet.
-  const HIDDEN = new Set(['LLMCallStarted', 'LLMCallCompleted'])
+  // The referent domain events (Phase 1.6) are a persist-only reconstruction journal —
+  // the UI shows the referent via /state, so they never clutter the trace.
+  const HIDDEN = new Set([
+    'LLMCallStarted', 'LLMCallCompleted',
+    'RequestOpened', 'RequestClosed', 'PlanInscribed', 'PlanApprovalChanged',
+    'TodoInscribed', 'TodoCleared', 'FileProduced', 'SubagentInscribed',
+  ])
   const rows = computed(() =>
     props.events.map(m => m.event).filter(e => e && !HIDDEN.has(e.type)),
   )

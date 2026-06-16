@@ -52,11 +52,19 @@ from .events import (
     AgentTokenStreamed,
     DelegationCompleted,
     DelegationStarted,
+    FileProduced,
     HookFired,
     LLMCallCompleted,
     LLMCallStarted,
+    PlanApprovalChanged,
+    PlanInscribed,
+    RequestClosed,
     RequestCompleted,
+    RequestOpened,
     RequestStarted,
+    SubagentInscribed,
+    TodoCleared,
+    TodoInscribed,
     ToolCallCompleted,
     ToolCallStarted,
     WorkingBudgetUpdate,
@@ -415,9 +423,13 @@ def _sync_plan_todo_referent(conv_folder: Path, state: ConversationState) -> Non
     if load_plan(conv_folder) is not None:
         pid = state.active_plan_id or "p1"
         state.active_plan_id = pid
-        state.plans.setdefault(
+        existed = pid in state.plans
+        entry = state.plans.setdefault(
             pid, {"plan_file": "plan.md", "status": "in_progress", "approved": False}
         )
+        if not existed:  # emit when we WRITE the entry (creation) — journal for the filet
+            append_event(conv_folder, PlanInscribed(
+                plan_id=pid, plan_file=entry["plan_file"], status=entry["status"]))
     todo = load_todo(conv_folder)
     if todo is not None:
         tid = state.active_todo_id or "t1"
@@ -429,39 +441,55 @@ def _sync_plan_todo_referent(conv_folder: Path, state: ConversationState) -> Non
             "plan_id": state.active_plan_id, "owner": "orchestrator", "file": "todo.json",
             "done": done, "total": len(items), "current_step": cur,
         }
-    elif state.active_todo_id is not None:  # todo cleared (all-done) → drop the tracker
-        state.todos.pop(state.active_todo_id, None)
+        append_event(conv_folder, TodoInscribed(  # progression snapshot
+            todo_id=tid, plan_id=state.active_plan_id, owner="orchestrator", file="todo.json",
+            done=done, total=len(items), current_step=cur))
+    elif state.active_todo_id is not None:  # todo cleared (all-done / conclusion) → drop the tracker
+        cleared = state.active_todo_id
+        state.todos.pop(cleared, None)
         state.active_todo_id = None
+        append_event(conv_folder, TodoCleared(todo_id=cleared))
 
 
-def _reconcile_plan_approval(state: ConversationState, *, plan_mode: bool, at_start: bool) -> None:
+def _reconcile_plan_approval(
+    conv_folder: Path, state: ConversationState, *, plan_mode: bool, at_start: bool
+) -> None:
     """Plan acceptance lifecycle on the REFERENT (replaces the plan_status.json sidecar). [Phase 1.3b]
     - START of an EDIT turn on an unapproved active plan → approved=True (the human approved by
       executing) ;
     - END of a PLAN turn with an active plan → approved=False (a (re)plan awaits approval — also
-      resets a previously approved plan on a re-plan)."""
+      resets a previously approved plan on a re-plan).
+    Emits PlanApprovalChanged on an actual flip (the filet journal)."""
     pid = state.active_plan_id
     if not pid or pid not in state.plans:
         return
     if at_start and not plan_mode and not state.plans[pid].get("approved"):
         state.plans[pid]["approved"] = True
-    elif not at_start and plan_mode:
+        append_event(conv_folder, PlanApprovalChanged(plan_id=pid, approved=True))
+    elif not at_start and plan_mode and state.plans[pid].get("approved"):
         state.plans[pid]["approved"] = False
+        append_event(conv_folder, PlanApprovalChanged(plan_id=pid, approved=False))
 
 
 _FILE_WRITE_TOOLS = frozenset({"workspace_create_file", "workspace_append", "workspace_str_replace"})
 
 
-def _add_file(state: ConversationState, path: str, *, layer: str, produced_by: str | None) -> None:
-    """Add/refresh a produced-file entry in the referent (dedup by path). [Phase 1.4]"""
+def _add_file(
+    conv_folder: Path, state: ConversationState, path: str, *, layer: str, produced_by: str | None
+) -> None:
+    """Add/refresh a produced-file entry in the referent (dedup by path). [Phase 1.4]
+    Emits FileProduced (the filet journal — mirror of `persistence._apply_file`)."""
     if not path:
         return
     for f in state.files:
         if f.get("path") == path:
             f.update({"layer": layer, "produced_by": produced_by, "plan_id": state.active_plan_id})
-            return
-    state.files.append({"path": path, "layer": layer, "produced_by": produced_by,
-                        "plan_id": state.active_plan_id})
+            break
+    else:
+        state.files.append({"path": path, "layer": layer, "produced_by": produced_by,
+                            "plan_id": state.active_plan_id})
+    append_event(conv_folder, FileProduced(
+        path=path, layer=layer, produced_by=produced_by, plan_id=state.active_plan_id))
 
 
 def _inscribe_subagent(
@@ -475,9 +503,13 @@ def _inscribe_subagent(
         "plan_id": state.active_plan_id, "confidence": sub_result.confidence,
         "files_produced": list(sub_result.files_produced),
     })
+    append_event(conv_folder, SubagentInscribed(
+        request_id=sub_result.request_id, agent=agent_code, parent_request=parent,
+        plan_id=state.active_plan_id, confidence=sub_result.confidence,
+        files_produced=list(sub_result.files_produced)))
     layer = "worktree" if _repo.worktree_root(conv_folder) is not None else "workspace"
     for path in sub_result.files_produced:
-        _add_file(state, path, layer=layer, produced_by=sub_result.request_id)
+        _add_file(conv_folder, state, path, layer=layer, produced_by=sub_result.request_id)
 
 
 def _run_agent_loop(
@@ -741,7 +773,7 @@ def _run_agent_loop(
                 _sync_plan_todo_referent(conv_folder, state)
             # Mirror a main-agent workspace file write into the referent. [Phase 1.4]
             if is_main_agent and call.name in _FILE_WRITE_TOOLS:
-                _add_file(state, call.arguments.get("path", ""), layer="workspace",
+                _add_file(conv_folder, state, call.arguments.get("path", ""), layer="workspace",
                           produced_by=(state.requests[-1]["id"] if state.requests else None))
 
         _persist()
@@ -1148,15 +1180,19 @@ def run_main_loop(
     # Open this turn's entry in the referent's turn log + set the entry phase. [Phase 1]
     request_id = uuid.uuid4().hex[:12]
     state.phase = "planning" if plan_mode else "executing"
-    state.requests.append({
+    _req_entry = {
         "id": request_id,
         "mode": "plan" if plan_mode else "edit",
         "plan_id": state.active_plan_id,
         "started": datetime.now(UTC).isoformat(),
         "ended": None, "outcome": None, "summary": user_text[:200],
-    })
+    }
+    state.requests.append(_req_entry)
+    append_event(conv_folder, RequestOpened(
+        request_id=_req_entry["id"], mode=_req_entry["mode"], plan_id=_req_entry["plan_id"],
+        started=_req_entry["started"], summary=_req_entry["summary"]))
     # An EDIT turn launched on a still-unapproved active plan = the human accepted it → execute.
-    _reconcile_plan_approval(state, plan_mode=plan_mode, at_start=True)
+    _reconcile_plan_approval(conv_folder, state, plan_mode=plan_mode, at_start=True)
     hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
     )
@@ -1194,7 +1230,7 @@ def run_main_loop(
     )
 
     # A PLAN turn (re)proposes its plan (approved=False) → the Approve bar shows.
-    _reconcile_plan_approval(state, plan_mode=plan_mode, at_start=False)
+    _reconcile_plan_approval(conv_folder, state, plan_mode=plan_mode, at_start=False)
 
     # Close this turn's request entry + set the terminal phase, then persist the referent. [Phase 1]
     # (The loop's _persist saved the state mid-turn ; this records the OUTCOME, post-loop.)
@@ -1209,6 +1245,9 @@ def run_main_loop(
             last["summary"] = (outcome.content or last.get("summary", ""))[:200]
         elif outcome.kind == "aborted":
             last["outcome"] = "aborted"  # phase left as set at turn start (turn didn't complete)
+        append_event(conv_folder, RequestClosed(
+            request_id=last["id"], outcome=last["outcome"], summary=last["summary"],
+            ended=last["ended"], last_iteration_utc=last["last_iteration_utc"]))
     save_state(conv_folder, state)
 
     if outcome.kind == "final_answer":

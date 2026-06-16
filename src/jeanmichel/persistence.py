@@ -298,3 +298,92 @@ def load_events(conv_folder: Path) -> list[dict[str, Any]]:
             continue
         out.append(json.loads(line))
     return out
+
+
+# ---- Anti-drift safety net : rebuild the referent from the event journal ----
+# cf. docs/20260616_meaningful_state (Phase 1.6). The organizational state.json is
+# MAINTAINED live by the orchestrator ; this reconstructs the SAME organizational
+# fields by folding the referent domain events (the journal). The test
+# "maintained == reconstructed" proves no inscription site was forgotten. Pure +
+# idempotent. The per-turn EPHEMERAL fields (budget/counters/round-trip) and
+# `lineage` are NOT journaled → left at defaults (compare only the organizational subset).
+
+
+def _apply_file(state: Any, path: str, layer: str, produced_by: str | None, plan_id: str | None) -> None:
+    """Mirror of orchestrator `_add_file`'s dedup-by-path (last write wins)."""
+    if not path:
+        return
+    for f in state.files:
+        if f.get("path") == path:
+            f.update({"layer": layer, "produced_by": produced_by, "plan_id": plan_id})
+            return
+    state.files.append({"path": path, "layer": layer, "produced_by": produced_by, "plan_id": plan_id})
+
+
+def _derive_phase(state: Any) -> str:
+    """Same rule as the live loop : start phase from the last turn's mode, terminal
+    phase from its outcome (answered→answered, halted→awaiting_approval, aborted/open
+    → the start phase). No requests yet → idle."""
+    if not state.requests:
+        return "idle"
+    last = state.requests[-1]
+    start_phase = "planning" if last.get("mode") == "plan" else "executing"
+    outcome = last.get("outcome")
+    if outcome == "answered":
+        return "answered"
+    if outcome == "halted":
+        return "awaiting_approval"
+    return start_phase  # aborted, or still open (crash mid-turn)
+
+
+def rebuild_from_events(events: list[dict[str, Any]]) -> Any:
+    """Reconstruct the organizational referent (a ConversationState with only the
+    organizational fields populated) by folding the referent domain events."""
+    from .models import ConversationState
+
+    state = ConversationState()
+    for e in events:
+        t = e.get("type")
+        if t == "RequestOpened":
+            state.requests.append({
+                "id": e["request_id"], "mode": e["mode"], "plan_id": e["plan_id"],
+                "started": e["started"], "ended": None, "outcome": None, "summary": e["summary"],
+            })
+        elif t == "RequestClosed":
+            for r in reversed(state.requests):
+                if r["id"] == e["request_id"]:
+                    r["ended"] = e["ended"]
+                    r["outcome"] = e["outcome"]
+                    r["summary"] = e["summary"]
+                    r["last_iteration_utc"] = e["last_iteration_utc"]
+                    break
+        elif t == "PlanInscribed":
+            pid = e["plan_id"]
+            state.active_plan_id = pid
+            entry = state.plans.setdefault(pid, {"plan_file": e["plan_file"], "status": e["status"], "approved": False})
+            entry["plan_file"] = e["plan_file"]
+            entry["status"] = e["status"]
+        elif t == "PlanApprovalChanged":
+            if e["plan_id"] in state.plans:
+                state.plans[e["plan_id"]]["approved"] = e["approved"]
+        elif t == "TodoInscribed":
+            tid = e["todo_id"]
+            state.active_todo_id = tid
+            state.todos[tid] = {
+                "plan_id": e["plan_id"], "owner": e["owner"], "file": e["file"],
+                "done": e["done"], "total": e["total"], "current_step": e["current_step"],
+            }
+        elif t == "TodoCleared":
+            state.todos.pop(e["todo_id"], None)
+            if state.active_todo_id == e["todo_id"]:
+                state.active_todo_id = None
+        elif t == "FileProduced":
+            _apply_file(state, e["path"], e["layer"], e["produced_by"], e["plan_id"])
+        elif t == "SubagentInscribed":
+            state.subagents.append({
+                "request_id": e["request_id"], "agent": e["agent"],
+                "parent_request": e["parent_request"], "plan_id": e["plan_id"],
+                "confidence": e["confidence"], "files_produced": list(e["files_produced"]),
+            })
+    state.phase = _derive_phase(state)
+    return state
