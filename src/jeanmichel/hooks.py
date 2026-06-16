@@ -523,8 +523,10 @@ def _refresh_plan_nudge(
     # todo is created at execution, not at plan time). With a todo but no plan → work the
     # tracker. With neither → answer/delegate directly, optionally self-tracking a
     # multi-step task, and never invent a plan-approval flow (convs 15-43 / 15-51).
-    has_plan = load_plan(conv_folder) is not None
-    has_todo = load_todo(conv_folder) is not None
+    # Read the REFERENT, not the files (Phase 1.5) : existence comes from state.plans/state.todos
+    # (maintained each turn). The file CONTENT is still read by _refresh_plan_doc / _refresh_todo_recap.
+    has_plan = bool(state.active_plan_id and state.active_plan_id in state.plans)
+    has_todo = bool(state.active_todo_id and state.active_todo_id in state.todos)
     if has_plan:
         parts = [
             f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) EDIT mode: EXECUTE the "

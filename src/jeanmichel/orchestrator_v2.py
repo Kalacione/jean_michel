@@ -673,6 +673,8 @@ def _run_agent_loop(
                 # state. EDIT mode only — a PLAN turn carries no todo.
                 if not state.plan_mode:
                     clear_todo(conv_folder)
+                    if is_main_agent:  # keep the referent in sync (todo gone → drop it) [Phase 1.5]
+                        _sync_plan_todo_referent(conv_folder, state)
                 _emit(
                     event_emitter,
                     conv_folder,

@@ -1082,8 +1082,10 @@ def test_sync_plan_todo_referent_inscribes_and_clears(tmp_path: Path):
     assert s.active_todo_id is None and "t1" not in s.todos
 
 
-def test_run_main_loop_inscribes_todo_into_referent(tmp_path: Path):
-    """Phase 1.3a (câblage) : un todo_write dans la boucle peuple state.todos (additif)."""
+def test_run_main_loop_clears_todo_from_referent_on_conclusion(tmp_path: Path):
+    """Phase 1.5 : todo_write inscrit le tracker (mid-turn) ; à la conclusion (réponse finale),
+    le todo est soldé ET retiré du RÉFÉRENT — pas de todo fantôme (sinon has_todo lu depuis le
+    state divergerait du fichier)."""
     from jeanmichel import persistence
     from jeanmichel.tools import todo_write as todo_write_mod
     agent = make_agent("jean-michel", role="router", tool_grants={"todo_write"})
@@ -1092,16 +1094,13 @@ def test_run_main_loop_inscribes_todo_into_referent(tmp_path: Path):
         assistant_response("", tool_calls=[tool_call("todo_write", goal="g", items=[
             {"id": "1", "text": "a", "status": "done"},
             {"id": "2", "text": "b", "status": "in_progress"},
-            {"id": "3", "text": "c", "status": "pending"},
         ])]),
         assistant_response("Fini."),
     ])
     run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry=registry,
                   llm_client=mock, user_text="go", plan_mode=False)
     st = ConversationState.from_dict(persistence.load_state(tmp_path))
-    assert st.active_todo_id == "t1"
-    assert st.todos["t1"]["done"] == 1 and st.todos["t1"]["total"] == 3
-    assert st.todos["t1"]["current_step"] == "2" and st.todos["t1"]["plan_id"] is None
+    assert st.active_todo_id is None and st.todos == {}  # soldé + retiré du référent
 
 
 def test_reconcile_plan_approval_on_referent():

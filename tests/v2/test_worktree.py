@@ -275,11 +275,10 @@ def test_router_stocktake_nudge(conv_folder):
     nudge fires for BOTH routers (chat + code) telling the router to analyse what was
     produced before re-delegating, with an ask_human escalation exit. Code mode folds
     in TODO discipline. Gated on stocktake_due ; idempotent."""
-    from jeanmichel import todo as todo_mod
     from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
 
-    state = ConversationState()
+    state = ConversationState()  # has_todo now read from the REFERENT (state), not files
 
     def delegations(n):
         return [{"role": "tool", "tool_name": "delegate_to", "content": "{}"} for _ in range(n)]
@@ -304,35 +303,34 @@ def test_router_stocktake_nudge(conv_folder):
     assert len(nudges(msgs)) == 1
     content = nudges(msgs)[0]["content"]
     assert "ask_human" in content and "workspace_view" in content
-    assert "todo_write" not in content  # chat mode, no plan yet, <2 delegations: no plan wording
+    assert "todo_write" not in content  # chat mode, no todo yet, <2 delegations: no plan wording
 
-    # Chat router (no worktree) WITH a plan → the stock-take now folds in TODO
-    # progression. Regression fix: this discipline used to be code-mode only, so
-    # analyse-mode plans never advanced (a step finished but stayed pending).
-    items_chat, _ = todo_mod.normalize_items([{"text": "research", "status": "in_progress"}])
-    todo_mod.save_todo(conv_folder, "answer the question", items_chat)
+    # Chat router WITH a todo IN THE REFERENT → the stock-take folds in todo_update progression.
+    state.active_todo_id = "t1"
+    state.todos = {"t1": {"plan_id": None, "done": 0, "total": 1}}
     msgs = [*delegations(1)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
-    todo_mod.clear_todo(conv_folder)  # reset for the code-mode cases below
+    state.active_todo_id = None
+    state.todos = {}  # reset for the code-mode cases below
 
     worktree.worktree_path_for(conv_folder).mkdir(parents=True)  # → code mode
 
-    # Code mode, no plan yet, ≥2 delegations → stock-take folds in "decompose" todo.
+    # Code mode, no todo yet, ≥2 delegations → stock-take folds in "create a tracker" todo_write.
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert len(nudges(msgs)) == 1
     assert "todo_write" in nudges(msgs)[0]["content"]
 
-    # Code mode, a plan exists → stock-take folds in "update" todo wording.
-    items, _ = todo_mod.normalize_items([{"text": "step 1", "status": "in_progress"}])
-    todo_mod.save_todo(conv_folder, "do the thing", items)
+    # Code mode, a todo exists in the referent → stock-take folds in "update" wording.
+    state.active_todo_id = "t1"
+    state.todos = {"t1": {"done": 0, "total": 1}}
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert len(nudges(msgs)) == 1
     assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
 
-    # Router acted (todo_write cleared stocktake_due) → MODE banner only, no stock-take.
+    # Router acted (stocktake_due cleared) → MODE banner only, no stock-take.
     state.stocktake_due = False
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
@@ -344,11 +342,10 @@ def test_edit_banner_branches_on_plan_and_todo(conv_folder):
     """EDIT-mode banner is DECOUPLED (plan vs todo): an approved PLAN (plan.md) → 'EXECUTE
     the approved plan' + build the tracker FROM it ; a todo alone (self-initiated) → 'work
     your TODO' ; neither → the anti-hallucination wording (never claim/await an approval)."""
-    from jeanmichel import todo as todo_mod
     from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
 
-    state = ConversationState()  # plan_mode False = EDIT
+    state = ConversationState()  # plan_mode False = EDIT ; existence read from the REFERENT
 
     def banner(ms):
         return next(m["content"] for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER))
@@ -359,16 +356,18 @@ def test_edit_banner_branches_on_plan_and_todo(conv_folder):
     assert "NO plan to execute" in banner(msgs)
 
     # A todo alone (self-initiated tracker, no plan) → work the TODO, not "approved plan".
-    items, _ = todo_mod.normalize_items([{"text": "step 1", "status": "in_progress"}])
-    todo_mod.save_todo(conv_folder, "do the thing", items)
+    state.active_todo_id = "t1"
+    state.todos = {"t1": {"plan_id": None, "done": 0, "total": 1}}
     msgs = [{"role": "user", "content": "go"}]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert "work your TODO" in banner(msgs)
     assert "EXECUTE the approved plan" not in banner(msgs)
 
-    # An approved plan (plan.md) → execute-the-plan wording + build the tracker FROM it.
-    todo_mod.clear_todo(conv_folder)
-    todo_mod.save_plan(conv_folder, "# Plan\n\n## Steps\n1. do\n")
+    # An approved plan → execute-the-plan wording + build the tracker FROM it.
+    state.active_todo_id = None
+    state.todos = {}
+    state.active_plan_id = "p1"
+    state.plans = {"p1": {"approved": True}}
     msgs = [{"role": "user", "content": "Approved — execute the plan above."}]
     _refresh_plan_nudge(msgs, conv_folder, state)
     b = banner(msgs)
