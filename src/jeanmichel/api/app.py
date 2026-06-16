@@ -810,14 +810,27 @@ def _setup_logging() -> None:
 
     from .. import config
 
+    class _RenameUvicornError(logging.Filter):
+        """uvicorn routes its lifecycle logs (startup/shutdown) through a logger named
+        'uvicorn.error' — even at INFO. That reads like an error when it isn't ; display
+        it as 'uvicorn' (the levelname already carries the real severity)."""
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.name == "uvicorn.error":
+                record.name = "uvicorn"
+            return True
+
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+    rename_uvicorn = _RenameUvicornError()
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     file_h = RotatingFileHandler(
         config.LOG_DIR / "jean-michel.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8"
     )
     file_h.setFormatter(fmt)
+    file_h.addFilter(rename_uvicorn)
     stream_h = logging.StreamHandler()
     stream_h.setFormatter(fmt)
+    stream_h.addFilter(rename_uvicorn)
     logging.basicConfig(
         level=getattr(logging, config.LOG_LEVEL, logging.INFO),
         handlers=[file_h, stream_h],
