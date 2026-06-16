@@ -1137,6 +1137,48 @@ def test_plan_then_edit_acceptance_via_referent(tmp_path: Path):
     assert st2.plans["p1"]["approved"] is True  # accepté via le référent (pas de sidecar)
 
 
+def test_add_file_dedup_by_path(tmp_path: Path):
+    from jeanmichel.orchestrator_v2 import _add_file
+    s = ConversationState()
+    _add_file(s, "x.py", layer="workspace", produced_by="r1")
+    _add_file(s, "x.py", layer="worktree", produced_by="r2")  # même path → maj, pas de doublon
+    assert len(s.files) == 1 and s.files[0]["layer"] == "worktree" and s.files[0]["produced_by"] == "r2"
+    _add_file(s, "", layer="workspace", produced_by="r1")  # path vide → no-op
+    assert len(s.files) == 1
+
+
+def test_inscribe_subagent_and_its_files(tmp_path: Path):
+    from jeanmichel.orchestrator_v2 import SubResult, _inscribe_subagent
+    s = ConversationState(active_plan_id="p1", plans={"p1": {}}, requests=[{"id": "req_top"}])
+    sr = SubResult(agent="code-runner", summary="done", confidence="high",
+                   files_produced=["a.py", "b.md"], request_id="sub_1")
+    _inscribe_subagent(s, tmp_path, "code-runner", sr)
+    assert s.subagents == [{
+        "request_id": "sub_1", "agent": "code-runner", "parent_request": "req_top",
+        "plan_id": "p1", "confidence": "high", "files_produced": ["a.py", "b.md"],
+    }]
+    assert [f["path"] for f in s.files] == ["a.py", "b.md"]
+    assert all(f["produced_by"] == "sub_1" and f["plan_id"] == "p1" and f["layer"] == "workspace"
+               for f in s.files)  # pas de worktree → workspace
+
+
+def test_run_main_loop_inscribes_workspace_file(tmp_path: Path):
+    """Phase 1.4 (câblage) : une écriture workspace du main agent peuple state.files."""
+    from jeanmichel import persistence
+    from jeanmichel.tools import workspace_create_file as wcf
+    agent = make_agent("jean-michel", role="router", tool_grants={"workspace_create_file"})
+    registry = {"workspace_create_file": wcf.make_spec(tmp_path, has_write_grant=True)}
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("workspace_create_file", path="out.md", content="hi")]),
+        assistant_response("Fini."),
+    ])
+    run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry=registry,
+                  llm_client=mock, user_text="go", plan_mode=False)
+    st = ConversationState.from_dict(persistence.load_state(tmp_path))
+    entry = next((f for f in st.files if f["path"] == "out.md"), None)
+    assert entry is not None and entry["layer"] == "workspace" and entry["produced_by"]
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")

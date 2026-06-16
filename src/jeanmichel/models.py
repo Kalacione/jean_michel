@@ -99,9 +99,13 @@ class ConversationState:
     phase: str = "idle"                  # idle | planning | awaiting_approval | executing | answered
     active_plan_id: str | None = None    # which plan is current ("id1"…) ; ≠ plan_mode
     active_todo_id: str | None = None    # current tracker ("t1"…) ; MAY be plan-less
-    plans: dict[str, Any] = field(default_factory=dict)    # id → {status, approved, plan_file, todo_id, files[], subagents[], …}
+    plans: dict[str, Any] = field(default_factory=dict)    # id → {status, approved, plan_file, todo_id, created_at_request}
     todos: dict[str, Any] = field(default_factory=dict)    # id → {plan_id|null, owner, status, done, total, current_step, file}
     requests: list[dict[str, Any]] = field(default_factory=list)  # turn log : {id, mode, plan_id, outcome, …}
+    # subagents & files : TOP-LEVEL (linked by plan_id/request, nullable) rather than nested under
+    # plans[id] — uniform with todos (decoupled) and handles plan-less work (a chat delegation).
+    subagents: list[dict[str, Any]] = field(default_factory=list)  # {request_id, agent, parent_request, plan_id, confidence, files_produced}
+    files: list[dict[str, Any]] = field(default_factory=list)       # {path, layer, produced_by, plan_id}
     lineage: dict[str, Any] = field(default_factory=lambda: {"parent_conv_id": None, "parent_commit": None})
 
     @classmethod

@@ -449,6 +449,37 @@ def _reconcile_plan_approval(state: ConversationState, *, plan_mode: bool, at_st
         state.plans[pid]["approved"] = False
 
 
+_FILE_WRITE_TOOLS = frozenset({"workspace_create_file", "workspace_append", "workspace_str_replace"})
+
+
+def _add_file(state: ConversationState, path: str, *, layer: str, produced_by: str | None) -> None:
+    """Add/refresh a produced-file entry in the referent (dedup by path). [Phase 1.4]"""
+    if not path:
+        return
+    for f in state.files:
+        if f.get("path") == path:
+            f.update({"layer": layer, "produced_by": produced_by, "plan_id": state.active_plan_id})
+            return
+    state.files.append({"path": path, "layer": layer, "produced_by": produced_by,
+                        "plan_id": state.active_plan_id})
+
+
+def _inscribe_subagent(
+    state: ConversationState, conv_folder: Path, agent_code: str, sub_result: SubResult
+) -> None:
+    """Inscribe a returned subagent + the files it produced into the referent. [Phase 1.4]
+    parent_request = the current turn's request id ; layer = worktree in code mode else workspace."""
+    parent = state.requests[-1]["id"] if state.requests else None
+    state.subagents.append({
+        "request_id": sub_result.request_id, "agent": agent_code, "parent_request": parent,
+        "plan_id": state.active_plan_id, "confidence": sub_result.confidence,
+        "files_produced": list(sub_result.files_produced),
+    })
+    layer = "worktree" if _repo.worktree_root(conv_folder) is not None else "workspace"
+    for path in sub_result.files_produced:
+        _add_file(state, path, layer=layer, produced_by=sub_result.request_id)
+
+
 def _run_agent_loop(
     *,
     conv_folder: Path,
@@ -706,6 +737,10 @@ def _run_agent_loop(
             # Mirror plan/todo writes into the referent (main agent owns state). [Phase 1.3]
             if is_main_agent and call.name in ("plan_write", "todo_write", "todo_update"):
                 _sync_plan_todo_referent(conv_folder, state)
+            # Mirror a main-agent workspace file write into the referent. [Phase 1.4]
+            if is_main_agent and call.name in _FILE_WRITE_TOOLS:
+                _add_file(state, call.arguments.get("path", ""), layer="workspace",
+                          produced_by=(state.requests[-1]["id"] if state.requests else None))
 
         _persist()
 
@@ -1026,6 +1061,8 @@ def _handle_tool_call(
         hooks.post_tool_use(
             call, result_payload, messages, state, dedup_cache, agent.code
         )
+        if is_main_agent:  # inscribe the subagent + its files into the referent [Phase 1.4]
+            _inscribe_subagent(state, conv_folder, target_code, sub_result)
         _append_tool_message(messages, "delegate_to", result_payload)
         return None
 
