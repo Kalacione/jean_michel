@@ -305,24 +305,24 @@ def test_post_tool_use_workspace_write_resets_persist_counter():
     assert s.search_calls_since_last_persist == 0
 
 
-def test_post_tool_use_clears_reeval_pending_on_todo_update():
+def test_post_tool_use_clears_stocktake_due_on_todo_update():
     # The ACT nudge tells the router to mark a step done with todo_update — clearing
-    # reeval_pending on todo_update (not only todo_write) stops the nudge re-firing.
+    # stocktake_due on todo_update (not only todo_write) stops the nudge re-firing.
     hook = PostToolUse()
     s = _state()
-    s.reeval_pending = True
+    s.stocktake_due = True
     hook(ToolCall(name="todo_update", arguments={"item_id": "1", "status": "done"}),
          {"summary": "ok"}, [], s, dedup_cache={})
-    assert s.reeval_pending is False
+    assert s.stocktake_due is False
 
 
-def test_post_tool_use_clears_reeval_pending_on_todo_write():
+def test_post_tool_use_clears_stocktake_due_on_todo_write():
     hook = PostToolUse()
     s = _state()
-    s.reeval_pending = True
+    s.stocktake_due = True
     hook(ToolCall(name="todo_write", arguments={"goal": "g", "items": []}),
          {"summary": "ok"}, [], s, dedup_cache={})
-    assert s.reeval_pending is False
+    assert s.stocktake_due is False
 
 
 def test_post_tool_use_caches_result_for_dedup():

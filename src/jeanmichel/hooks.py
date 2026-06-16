@@ -297,7 +297,7 @@ class PostToolUse:
         elif call.name in _WORKSPACE_WRITE_TOOLS:
             state.search_calls_since_last_persist = 0
         if call.name in ("todo_write", "todo_update"):
-            state.reeval_pending = False  # plan (re-)evaluated → clear the ACT nudge
+            state.stocktake_due = False  # plan (re-)evaluated → clear the ACT nudge
 
         # 2. Cache the result for future dedup
         fp = _fingerprint(call.name, call.arguments)
@@ -357,7 +357,7 @@ class OnDelegateReturn:
         state.active_subagent = None
         # A specialist just returned → the router owes a TODO re-evaluation (ACT)
         # before its next delegation (enforced by the plan nudge in PreLLMCall).
-        state.reeval_pending = True
+        state.stocktake_due = True
 
 
 # ---- Utilities ------------------------------------------------------------
@@ -480,7 +480,7 @@ def _refresh_plan_nudge(
     """Deterministic router discipline — fires for the MAIN agent only, i.e. for
     the jean-michel router (chat/analyse/research) AND the code-router (code mode).
 
-    F4 stock-take : after ANY specialist returns (``state.reeval_pending``), inject
+    F4 stock-take : after ANY specialist returns (``state.stocktake_due``), inject
     a reminder BEFORE the router re-delegates — analyse what the specialists already
     produced (their files_produced + summaries ; the worktree diff in code mode),
     re-delegate ONLY on a real remaining gap, otherwise synthesize the answer or
@@ -548,7 +548,7 @@ def _refresh_plan_nudge(
             "synthesize the answer. You have NO plan to execute or to get approved — planning-for-approval "
             "is PLAN mode only ; never ask the user to approve a plan here."
         ]
-    if state.reeval_pending:
+    if state.stocktake_due:
         parts.append(
             "A specialist just returned : take stock first — open their files_produced with "
             "workspace_view and re-read their summaries."

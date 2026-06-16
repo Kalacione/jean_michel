@@ -79,7 +79,7 @@ class ConversationState:
     depth_current: int = 0
     search_calls_total: int = 0
     search_calls_since_last_persist: int = 0
-    reeval_pending: bool = False  # a specialist returned ; the router owes a todo re-eval (code mode)
+    stocktake_due: bool = False  # a specialist returned ; the router owes a todo re-eval (code mode)
     active_subagent: str | None = None
     last_iteration_at_utc: str = ""
     plan_mode: bool = False  # PLAN turn : produce a plan, no mutation (gate in PreToolUse) ; propagated to subagents

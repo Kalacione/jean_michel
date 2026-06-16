@@ -271,10 +271,10 @@ def test_router_repo_notice_when_worktree_exists(conv_folder):
 
 
 def test_router_stocktake_nudge(conv_folder):
-    """F4 router discipline: after a specialist returns (reeval_pending), a STOCKTAKE
+    """F4 router discipline: after a specialist returns (stocktake_due), a STOCKTAKE
     nudge fires for BOTH routers (chat + code) telling the router to analyse what was
     produced before re-delegating, with an ask_human escalation exit. Code mode folds
-    in TODO discipline. Gated on reeval_pending ; idempotent."""
+    in TODO discipline. Gated on stocktake_due ; idempotent."""
     from jeanmichel import todo as todo_mod
     from jeanmichel.hooks import _MODE_NUDGE_MARKER, _refresh_plan_nudge
     from jeanmichel.models import ConversationState
@@ -287,7 +287,7 @@ def test_router_stocktake_nudge(conv_folder):
     def nudges(ms):
         return [m for m in ms if (m.get("content") or "").startswith(_MODE_NUDGE_MARKER)]
 
-    # EDIT mode, no specialist pending (reeval_pending False) → the MODE banner fires
+    # EDIT mode, no specialist pending (stocktake_due False) → the MODE banner fires
     # (execute & answer directly) but WITHOUT the stock-take (no specialist returned).
     msgs = [{"role": "user", "content": "go"}, *delegations(3)]
     _refresh_plan_nudge(msgs, conv_folder, state)
@@ -297,7 +297,7 @@ def test_router_stocktake_nudge(conv_folder):
 
     # Chat router (no worktree), a specialist just returned → stock-take nudge fires
     # (both routers), with the ask_human escalation ; idempotent ; no TODO wording.
-    state.reeval_pending = True
+    state.stocktake_due = True
     msgs = [*delegations(1)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     _refresh_plan_nudge(msgs, conv_folder, state)
@@ -332,8 +332,8 @@ def test_router_stocktake_nudge(conv_folder):
     assert len(nudges(msgs)) == 1
     assert "todo_update(item_id, 'done')" in nudges(msgs)[0]["content"]
 
-    # Router acted (todo_write cleared reeval_pending) → MODE banner only, no stock-take.
-    state.reeval_pending = False
+    # Router acted (todo_write cleared stocktake_due) → MODE banner only, no stock-take.
+    state.stocktake_due = False
     msgs = [*delegations(2)]
     _refresh_plan_nudge(msgs, conv_folder, state)
     assert len(nudges(msgs)) == 1
