@@ -36,6 +36,7 @@ export const useConvStore = defineStore('conversations', () => {
   const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
+  const convState = ref(null) // the organizational REFERENT (state.json) : phase, plans, todos, files, subagents
   // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
   const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
 
@@ -118,6 +119,7 @@ export const useConvStore = defineStore('conversations', () => {
     planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
     planPending.value = false
     plan.value = null
+    convState.value = null
     streamingMsg = null
     liveThinking.value = ''
     trace.value = []
@@ -141,6 +143,7 @@ export const useConvStore = defineStore('conversations', () => {
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
     plan.value = pl.plan || null // rich plan markdown survives reload (Approve bar / editor)
+    convState.value = st // the referent (phase/plans/todos/files/subagents) for the UI summary strip
     // Approve/Refine bar = a plan still awaiting approval. Source of truth: the plan-level
     // status (proposed → pending), DECOUPLED from the todo and from the (sticky) planMode
     // selector + state.plan_mode. Legacy convs (no status sidecar) fall back to the old heuristic.
@@ -210,6 +213,9 @@ export const useConvStore = defineStore('conversations', () => {
           plan.value = r.plan || null
           planPending.value = r.status === 'proposed'
         }).catch(() => { planPending.value = false })
+        // Refresh the organizational referent so the summary strip reflects the turn just done
+        // (phase moved, plan accepted, todo progressed, files/subagents produced).
+        api.state(id).then(r => { convState.value = r.state || null }).catch(() => {})
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
@@ -337,6 +343,7 @@ export const useConvStore = defineStore('conversations', () => {
     trace.value = []
     busy.value = false
     askHuman.value = null
+    convState.value = null
   }
 
   function dismissMemory (candidate) {
@@ -356,7 +363,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, planPending, plan, planEditorOpen,
+    currentMode, planMode, planAvailable, planPending, plan, planEditorOpen, convState,
     refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,

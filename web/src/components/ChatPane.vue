@@ -132,6 +132,34 @@
 
     <v-divider />
 
+    <!-- Organizational referent (state.json) : phase + active plan/todo + produced files/subagents.
+         Read straight from the maintained state — the "on ne s'y perd plus" strip. -->
+    <div v-if="referent" class="px-3 pt-2 d-flex align-center flex-wrap ga-2">
+      <v-chip :color="phaseMeta.color" label size="x-small" variant="flat">
+        <v-icon :icon="phaseMeta.icon" size="13" start /> {{ phaseMeta.label }}
+      </v-chip>
+      <v-chip
+        v-if="activePlan"
+        :color="activePlan.approved ? 'success' : 'warning'"
+        label
+        size="x-small"
+        variant="tonal"
+      >
+        <v-icon icon="mdi-clipboard-text-outline" size="13" start />
+        Plan {{ activePlan.approved ? 'approuvé' : 'à valider' }}
+      </v-chip>
+      <v-chip v-if="activeTodo && activeTodo.total" label size="x-small" variant="tonal">
+        <v-icon icon="mdi-checkbox-marked-outline" size="13" start />
+        {{ activeTodo.done }}/{{ activeTodo.total }}
+      </v-chip>
+      <v-chip v-if="fileCount" label size="x-small" variant="text">
+        <v-icon icon="mdi-file-outline" size="13" start /> {{ fileCount }}
+      </v-chip>
+      <v-chip v-if="subCount" label size="x-small" variant="text">
+        <v-icon icon="mdi-account-multiple-outline" size="13" start /> {{ subCount }}
+      </v-chip>
+    </div>
+
     <!-- Plan presented → approve (execute in a fresh Edit turn) or type feedback to refine. -->
     <div v-if="conv.planPending" class="px-3 pt-2">
       <div class="d-flex align-center ga-2">
@@ -303,6 +331,34 @@
     get: () => (conv.planMode ? 'plan' : 'edit'),
     set: v => { conv.planMode = v === 'plan' },
   })
+
+  // ---- organizational referent strip (state.json) ------------------------
+  const PHASE_META = {
+    idle: { label: 'Au repos', icon: 'mdi-sleep', color: 'surface-light' },
+    planning: { label: 'Planification', icon: 'mdi-clipboard-edit-outline', color: 'info' },
+    awaiting_approval: { label: 'Plan à valider', icon: 'mdi-clipboard-alert-outline', color: 'warning' },
+    executing: { label: 'Exécution', icon: 'mdi-cog-play-outline', color: 'primary' },
+    answered: { label: 'Répondu', icon: 'mdi-check-circle-outline', color: 'success' },
+  }
+  // Show the strip only when there's something organizational to show (not a fresh idle conv).
+  const referent = computed(() => {
+    const s = conv.convState
+    if (!s) return null
+    const empty = (s.phase || 'idle') === 'idle' && !s.active_plan_id && !s.active_todo_id
+      && !(s.files?.length) && !(s.subagents?.length)
+    return empty ? null : s
+  })
+  const phaseMeta = computed(() => PHASE_META[conv.convState?.phase] || PHASE_META.idle)
+  const activePlan = computed(() => {
+    const s = conv.convState
+    return s?.active_plan_id ? s.plans?.[s.active_plan_id] || null : null
+  })
+  const activeTodo = computed(() => {
+    const s = conv.convState
+    return s?.active_todo_id ? s.todos?.[s.active_todo_id] || null : null
+  })
+  const fileCount = computed(() => conv.convState?.files?.length || 0)
+  const subCount = computed(() => conv.convState?.subagents?.length || 0)
   const attachments = ref([]) // workspace paths attached to the next message
   const scroller = ref(null)
   const fileInput = ref(null)
