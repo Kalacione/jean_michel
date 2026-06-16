@@ -111,3 +111,19 @@ class ConversationState:
         referent at turn start ; the caller then recomputes the per-turn ephemeral fields."""
         known = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in (data or {}).items() if k in known})
+
+    def reset_ephemeral(self, *, plan_mode: bool) -> None:
+        """Reset the PER-TURN ephemeral fields at the start of a turn (the organizational
+        fields above PERSIST). The budget (system/output/working_budget) is recomputed
+        separately by the loop's `_initialize_state` ; here we only zero the per-turn
+        counters/flags + take the turn's plan_mode. cf. docs/20260616_meaningful_state (le split)."""
+        self.depth_current = 0
+        self.plan_mode = plan_mode
+        self.working_tokens_used = 0
+        self.search_calls_total = 0
+        self.search_calls_since_last_persist = 0
+        self.stocktake_due = False
+        self.active_subagent = None
+        self.blocked_subagent_code = None
+        self.blocked_subagent_request_id = None
+        self.pending_human_answer = None

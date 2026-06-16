@@ -41,3 +41,29 @@ def test_from_dict_handles_empty_or_none():
     # load_state returns {} when absent → from_dict must give a clean default state.
     assert ConversationState.from_dict({}) == ConversationState()
     assert ConversationState.from_dict(None) == ConversationState()
+
+
+def test_reset_ephemeral_keeps_organizational_resets_per_turn():
+    """Le split : reset_ephemeral garde l'organisationnel, remet à zéro le par-tour."""
+    s = ConversationState(
+        # organisationnel → DOIT survivre
+        phase="executing", active_plan_id="id1", active_todo_id="t1",
+        plans={"id1": {"status": "in_progress"}}, todos={"t1": {"done": 2}},
+        requests=[{"id": "r1"}], lineage={"parent_conv_id": "c0", "parent_commit": "x"},
+        # éphémère → DOIT être remis à zéro
+        depth_current=3, search_calls_total=9, search_calls_since_last_persist=4,
+        stocktake_due=True, active_subagent="code-runner", working_tokens_used=500,
+        blocked_subagent_code="x", blocked_subagent_request_id="r", pending_human_answer="yes",
+        plan_mode=False,
+    )
+    s.reset_ephemeral(plan_mode=True)
+    # organisationnel préservé
+    assert (s.phase, s.active_plan_id, s.active_todo_id) == ("executing", "id1", "t1")
+    assert s.plans == {"id1": {"status": "in_progress"}} and s.todos == {"t1": {"done": 2}}
+    assert s.requests == [{"id": "r1"}] and s.lineage["parent_conv_id"] == "c0"
+    # éphémère remis à zéro
+    assert s.depth_current == 0 and s.plan_mode is True and s.working_tokens_used == 0
+    assert s.search_calls_total == 0 and s.search_calls_since_last_persist == 0
+    assert s.stocktake_due is False and s.active_subagent is None
+    assert s.blocked_subagent_code is None and s.blocked_subagent_request_id is None
+    assert s.pending_human_answer is None

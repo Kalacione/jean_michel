@@ -35,6 +35,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ from .llm import LLMCancelledError
 from .models import ConversationState, LLMResponse, ToolCall
 from .persistence import (
     append_event,
+    load_state,
     load_sub_messages,
     save_messages,
     save_state,
@@ -448,6 +450,7 @@ def _run_agent_loop(
             save_state(conv_folder, state)
 
     for _iteration in range(max_iterations):
+        state.last_iteration_at_utc = datetime.now(UTC).isoformat()  # alimenté (était mort)
         # User pressed Stop : abort cleanly between iterations (no new LLM/tool work).
         if cancel_event is not None and cancel_event.is_set():
             return _LoopOutcome(kind="aborted", reason="user_cancelled")
@@ -1053,7 +1056,11 @@ def run_main_loop(
         user_msg["images"] = images  # transient vision input ; stripped on save
     messages.append(user_msg)
 
-    state = ConversationState(depth_current=0, plan_mode=plan_mode)
+    # RELOAD the referent (the organizational fields persist across turns — c'est le fix de
+    # fond : avant, le state était recréé from scratch chaque tour), puis RESET l'éphémère
+    # par-tour (le budget est recalculé juste après par _initialize_state). cf. le split.
+    state = ConversationState.from_dict(load_state(conv_folder))
+    state.reset_ephemeral(plan_mode=plan_mode)
     # An EDIT turn launched on a still-'proposed' plan = the human accepted it → execute.
     reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=True)
     hooks = build_hook_registry(

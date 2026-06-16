@@ -1020,6 +1020,26 @@ def test_edit_conclusion_clears_todo(tmp_path: Path):
     assert todomod.load_todo(tmp_path) is None  # cleared on conclusion — no lingering pending item
 
 
+def test_run_main_loop_reloads_persisted_state(tmp_path: Path):
+    """Phase 0c : le référent organisationnel PERSISTE d'un tour à l'autre (rechargé en début
+    de tour) tandis que l'éphémère par-tour est remis à zéro. (Avant : state recréé from scratch.)"""
+    from jeanmichel import persistence
+    persistence.save_state(tmp_path, ConversationState(
+        plans={"id1": {"status": "in_progress", "approved": True}},
+        active_plan_id="id1", phase="executing",
+        search_calls_total=99,  # éphémère obsolète → doit être reset
+    ))
+    agent = make_agent("jean-michel", role="router")
+    mock = MockClient(script=[assistant_response("Done.")])
+    run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry={},
+                  llm_client=mock, user_text="hi", plan_mode=False)
+    after = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert after.plans == {"id1": {"status": "in_progress", "approved": True}}  # persisté
+    assert after.active_plan_id == "id1" and after.phase == "executing"
+    assert after.search_calls_total == 0  # éphémère reset (pas 99)
+    assert after.last_iteration_at_utc  # alimenté (était mort)
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")
