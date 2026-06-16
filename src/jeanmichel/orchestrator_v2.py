@@ -1061,6 +1061,16 @@ def run_main_loop(
     # par-tour (le budget est recalculé juste après par _initialize_state). cf. le split.
     state = ConversationState.from_dict(load_state(conv_folder))
     state.reset_ephemeral(plan_mode=plan_mode)
+    # Open this turn's entry in the referent's turn log + set the entry phase. [Phase 1]
+    request_id = uuid.uuid4().hex[:12]
+    state.phase = "planning" if plan_mode else "executing"
+    state.requests.append({
+        "id": request_id,
+        "mode": "plan" if plan_mode else "edit",
+        "plan_id": state.active_plan_id,
+        "started": datetime.now(UTC).isoformat(),
+        "ended": None, "outcome": None, "summary": user_text[:200],
+    })
     # An EDIT turn launched on a still-'proposed' plan = the human accepted it → execute.
     reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=True)
     hooks = build_hook_registry(
@@ -1101,6 +1111,21 @@ def run_main_loop(
 
     # A PLAN turn that produced a todo (re)proposes it → the Approve bar shows.
     reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=False)
+
+    # Close this turn's request entry + set the terminal phase, then persist the referent. [Phase 1]
+    # (The loop's _persist saved the state mid-turn ; this records the OUTCOME, post-loop.)
+    if state.requests:
+        last = state.requests[-1]
+        last["ended"] = datetime.now(UTC).isoformat()
+        last["last_iteration_utc"] = state.last_iteration_at_utc
+        if outcome.kind == "final_answer":
+            answered = not plan_mode  # a PLAN turn concludes via the halt → awaiting approval
+            last["outcome"] = "answered" if answered else "halted"
+            state.phase = "answered" if answered else "awaiting_approval"
+            last["summary"] = (outcome.content or last.get("summary", ""))[:200]
+        elif outcome.kind == "aborted":
+            last["outcome"] = "aborted"  # phase left as set at turn start (turn didn't complete)
+    save_state(conv_folder, state)
 
     if outcome.kind == "final_answer":
         return outcome.content

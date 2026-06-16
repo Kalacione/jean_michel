@@ -1035,9 +1035,30 @@ def test_run_main_loop_reloads_persisted_state(tmp_path: Path):
                   llm_client=mock, user_text="hi", plan_mode=False)
     after = ConversationState.from_dict(persistence.load_state(tmp_path))
     assert after.plans == {"id1": {"status": "in_progress", "approved": True}}  # persisté
-    assert after.active_plan_id == "id1" and after.phase == "executing"
+    assert after.active_plan_id == "id1"          # organisationnel persiste
+    assert after.phase == "answered"              # phase activement gérée (tour EDIT conclu)
     assert after.search_calls_total == 0  # éphémère reset (pas 99)
     assert after.last_iteration_at_utc  # alimenté (était mort)
+
+
+def test_run_main_loop_inscribes_request_log_and_phase(tmp_path: Path):
+    """Phase 1 : chaque tour ouvre/ferme une entrée dans requests[] (id, mode, outcome) et pose
+    la phase. Le log s'accumule + persiste (le référent)."""
+    from jeanmichel import persistence
+    agent = make_agent("jean-michel", role="router")
+    run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry={},
+                  llm_client=MockClient(script=[assistant_response("Voilà.")]),
+                  user_text="salut", plan_mode=False)
+    st = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert st.phase == "answered" and len(st.requests) == 1
+    r = st.requests[0]
+    assert r["mode"] == "edit" and r["outcome"] == "answered" and r["ended"] and r["id"]
+    # 2e tour → le log s'accumule (requests persiste d'un tour à l'autre).
+    run_main_loop(conv_folder=tmp_path, agent=make_agent("jean-michel", role="router"),
+                  tools_registry={}, llm_client=MockClient(script=[assistant_response("Encore.")]),
+                  user_text="rebelote", plan_mode=False)
+    st2 = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert len(st2.requests) == 2 and st2.requests[1]["mode"] == "edit"
 
 
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
