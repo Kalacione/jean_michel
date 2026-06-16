@@ -923,12 +923,14 @@ def test_subagent_empty_turn_still_aborts(tmp_path: Path):
     assert "neither a tool_call nor any content" in result.low_confidence_reason
 
 
-# Section 7 : PLAN mode — the plan must be recorded via todo_write
+# Section 7 : PLAN mode — the plan must be authored via plan_write (NOT todo_write)
 
 
-def test_plan_mode_forces_todo_before_concluding(tmp_path: Path):
-    """A PLAN turn must record the plan via todo_write before it may conclude.
-    A prose-only conclusion is refused (bounded retries) and re-nudged."""
+def test_plan_mode_forces_plan_write_before_concluding(tmp_path: Path):
+    """A PLAN turn must author the plan via plan_write before it may conclude. A prose-only
+    conclusion is refused (bounded retries), re-nudged toward plan_write (NOT todo_write —
+    the todo is built later, at execution), and the premature prose is dropped so it never
+    shows up as a duplicate 'plan' bubble."""
     agent = make_agent("jean-michel", role="router")
     mock = MockClient(script=[
         assistant_response("Here is my plan, in prose."),
@@ -950,7 +952,10 @@ def test_plan_mode_forces_todo_before_concluding(tmp_path: Path):
         m for m in last_msgs
         if m.get("role") == "user" and "without recording the plan" in (m.get("content") or "")
     ]
-    assert correctives, "a prose-only PLAN conclusion must be nudged toward todo_write"
+    assert correctives, "a prose-only PLAN conclusion must be nudged toward plan_write"
+    assert all("plan_write" in m["content"] for m in correctives)  # the new tool, not todo_write
+    # The premature prose plans were DROPPED (not left as duplicate assistant bubbles).
+    assert not [m for m in last_msgs if m.get("role") == "assistant"]
 
 
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
