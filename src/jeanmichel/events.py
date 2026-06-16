@@ -328,6 +328,18 @@ class SubagentInscribed:
         return _event_to_dict(self)
 
 
+@dataclass(frozen=True)
+class PlanSuperseded:
+    """An approved plan was replaced by a re-plan (Phase 2) : the old plan is archived
+    (state.plans[old].status='superseded', superseded_by=<new>, plan_file='plan_<old>.md')."""
+    plan_id: str          # the OLD plan being superseded
+    superseded_by: str    # the NEW plan id
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
 # ---- Registry for deserialization ----------------------------------------
 
 EVENT_CLASSES: dict[str, type] = {
@@ -354,6 +366,8 @@ EVENT_CLASSES: dict[str, type] = {
     "TodoCleared": TodoCleared,
     "FileProduced": FileProduced,
     "SubagentInscribed": SubagentInscribed,
+    # Phase 2 : plan multiplicity
+    "PlanSuperseded": PlanSuperseded,
 }
 
 

@@ -53,9 +53,11 @@ def test_event_catalogue_has_all_entries():
         "TodoCleared",
         "FileProduced",
         "SubagentInscribed",
+        # Phase 2 : plan multiplicity
+        "PlanSuperseded",
     }
     assert set(EVENT_CLASSES.keys()) == expected
-    assert len(EVENT_CLASSES) == 22
+    assert len(EVENT_CLASSES) == 23
 
 
 # ---- Each event has utc auto-populated -----------------------------------

@@ -36,26 +36,53 @@ def todo_path(conv_folder: Path) -> Path:
 PLAN_FILENAME = "plan.md"
 
 
-def plan_path(conv_folder: Path) -> Path:
-    return conv_folder / PLAN_FILENAME
+def plan_file_for(plan_id: str) -> str:
+    """Archive filename of a plan by id. The ACTIVE plan stays ``plan.md`` ; a plan is only
+    written to ``plan_<id>.md`` once SUPERSEDED (Phase 2). cf. orchestrator `_assign_plan_id_for_write`."""
+    return f"plan_{plan_id}.md"
 
 
-def load_plan(conv_folder: Path) -> str | None:
-    """Return the stored rich plan markdown, or None when absent/empty/unreadable."""
+def plan_path(conv_folder: Path, filename: str = PLAN_FILENAME) -> Path:
+    return conv_folder / filename
+
+
+# ---- by-filename plan I/O (active = plan.md ; archived superseded = plan_<id>.md) --------
+
+
+def load_plan_file(conv_folder: Path, filename: str) -> str | None:
+    """Return the markdown of the plan stored in ``filename``, or None when absent/empty/unreadable."""
     try:
-        raw = plan_path(conv_folder).read_text(encoding="utf-8").strip()
+        raw = (conv_folder / filename).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return None
     return raw or None
 
 
-def save_plan(conv_folder: Path, markdown: str) -> None:
-    """Atomically write the rich plan document (tmp + replace)."""
+def save_plan_file(conv_folder: Path, filename: str, markdown: str) -> None:
+    """Atomically write a plan document to ``filename`` (tmp + replace)."""
     conv_folder.mkdir(parents=True, exist_ok=True)
-    p = plan_path(conv_folder)
+    p = conv_folder / filename
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(markdown, encoding="utf-8")
     tmp.replace(p)
+
+
+def clear_plan_file(conv_folder: Path, filename: str) -> None:
+    """Remove a specific plan file."""
+    (conv_folder / filename).unlink(missing_ok=True)
+
+
+# ---- active-plan wrappers (plan.md) : ALL existing call sites stay unchanged --------------
+
+
+def load_plan(conv_folder: Path) -> str | None:
+    """Return the ACTIVE plan markdown (plan.md), or None when absent/empty/unreadable."""
+    return load_plan_file(conv_folder, PLAN_FILENAME)
+
+
+def save_plan(conv_folder: Path, markdown: str) -> None:
+    """Atomically write the ACTIVE plan document (plan.md)."""
+    save_plan_file(conv_folder, PLAN_FILENAME, markdown)
 
 
 def load_todo(conv_folder: Path) -> dict[str, Any] | None:
@@ -102,8 +129,9 @@ def clear_todo(conv_folder: Path) -> None:
 
 
 def clear_plan(conv_folder: Path) -> None:
-    """Remove the plan document (the todo + the referent entry are cleared by the caller)."""
-    plan_path(conv_folder).unlink(missing_ok=True)
+    """Remove the ACTIVE plan document (plan.md). The todo + the referent entry are cleared
+    by the caller."""
+    clear_plan_file(conv_folder, PLAN_FILENAME)
 
 
 def normalize_items(items: Any) -> tuple[list[dict[str, Any]] | None, str | None]:

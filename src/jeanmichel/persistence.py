@@ -366,6 +366,12 @@ def rebuild_from_events(events: list[dict[str, Any]]) -> Any:
         elif t == "PlanApprovalChanged":
             if e["plan_id"] in state.plans:
                 state.plans[e["plan_id"]]["approved"] = e["approved"]
+        elif t == "PlanSuperseded":
+            old = e["plan_id"]
+            if old in state.plans:  # only mutates the OLD plan ; the new one is (re)pointed by its PlanInscribed
+                state.plans[old]["status"] = "superseded"
+                state.plans[old]["superseded_by"] = e["superseded_by"]
+                state.plans[old]["plan_file"] = f"plan_{old}.md"  # archive convention (cf. todo.plan_file_for)
         elif t == "TodoInscribed":
             tid = e["todo_id"]
             state.active_todo_id = tid

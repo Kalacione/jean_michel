@@ -101,7 +101,7 @@ class ConversationState:
     phase: str = "idle"                  # idle | planning | awaiting_approval | executing | answered
     active_plan_id: str | None = None    # which plan is current ("id1"…) ; ≠ plan_mode
     active_todo_id: str | None = None    # current tracker ("t1"…) ; MAY be plan-less
-    plans: dict[str, Any] = field(default_factory=dict)    # id → {status, approved, plan_file, todo_id, created_at_request}
+    plans: dict[str, Any] = field(default_factory=dict)    # id → {plan_file, status, approved, superseded_by} ; status ∈ pending|in_progress|superseded|completed
     todos: dict[str, Any] = field(default_factory=dict)    # id → {plan_id|null, owner, status, done, total, current_step, file}
     requests: list[dict[str, Any]] = field(default_factory=list)  # turn log : {id, mode, plan_id, outcome, …}
     # subagents & files : TOP-LEVEL (linked by plan_id/request, nullable) rather than nested under

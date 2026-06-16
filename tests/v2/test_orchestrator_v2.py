@@ -1241,6 +1241,23 @@ def test_rebuild_from_events_matches_maintained_referent(tmp_path: Path):
     assert org(persistence.rebuild_from_events(events)) == org(rebuilt)
 
 
+def test_rebuild_folds_plan_superseded():
+    """Phase 2 (B.2) : le filet reconstruit le supersede — ancien plan archivé, nouveau actif."""
+    from jeanmichel import persistence
+    events = [
+        {"type": "PlanInscribed", "plan_id": "p1", "plan_file": "plan.md", "status": "pending"},
+        {"type": "PlanApprovalChanged", "plan_id": "p1", "approved": True},
+        {"type": "PlanSuperseded", "plan_id": "p1", "superseded_by": "p2"},
+        {"type": "PlanInscribed", "plan_id": "p2", "plan_file": "plan.md", "status": "pending"},
+    ]
+    st = persistence.rebuild_from_events(events)
+    assert st.active_plan_id == "p2"
+    assert st.plans["p1"] == {
+        "plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
+    assert st.plans["p2"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
+    assert persistence.rebuild_from_events(events).plans == st.plans  # idempotent
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")
