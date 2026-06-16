@@ -70,7 +70,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import load_todo, reconcile_plan_status_on_turn
+from .todo import load_plan, reconcile_plan_status_on_turn
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -431,7 +431,7 @@ def _run_agent_loop(
     # emits an empty content turn — we nudge it once or twice before
     # giving up.
     empty_main_turns = 0
-    plan_no_todo_turns = 0  # PLAN mode : tried to conclude without writing the plan
+    plan_unwritten_turns = 0  # PLAN mode : tried to conclude without authoring plan.md
     no_tool_call_turns = 0  # subagent : emitted prose instead of a report_back tool_call
 
     def _persist() -> None:
@@ -564,18 +564,23 @@ def _run_agent_loop(
                     _persist()
                     return _LoopOutcome(kind="final_answer", content=fallback)
 
-                # PLAN mode : the plan must be the structured todo.json (the
-                # artifact the editor + the execute turn consume), not just prose.
-                # Refuse to conclude until todo_write has been called this turn.
-                if state.plan_mode and load_todo(conv_folder) is None and plan_no_todo_turns < 2:
-                    plan_no_todo_turns += 1
+                # PLAN mode : the plan is the plan.md document authored via plan_write (the
+                # artifact the editor + the execute turn consume), NOT prose in the reply
+                # and NOT a todo (the todo is built later, at execution). Refuse to conclude
+                # until plan_write has run, and DROP the premature prose so it doesn't show
+                # up as a duplicate "plan" bubble in the chat.
+                if state.plan_mode and load_plan(conv_folder) is None and plan_unwritten_turns < 2:
+                    plan_unwritten_turns += 1
+                    if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
+                        messages.pop()  # the prose plan is not the deliverable — don't surface it
                     # Distinct prefix (still transient) so the PLAN nudge refresher
                     # in PreLLMCall doesn't strip it as its own nudge.
                     messages.append({"role": "user", "content": (
                         "[ORCHESTRATOR] (orchestrator control — not the human user) You tried to "
-                        "conclude the PLAN turn without recording the "
-                        "plan. Call todo_write(goal, items) with as many scoped steps as the task needs "
-                        "(no minimum, no cap) BEFORE your summary — a prose plan is not usable for review or execution."
+                        "conclude the PLAN turn without recording the plan. Author it with "
+                        "plan_write(markdown) — a substantive document (Context/analysis, the steps WITH "
+                        "detail and rationale, verification). Do NOT write the plan in your reply (your reply "
+                        "is just a one-line pointer) and do NOT create a todo (that is built later, at execution)."
                     )})
                     _persist()
                     continue
