@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 
@@ -90,3 +90,24 @@ class ConversationState:
     blocked_subagent_code: str | None = None
     blocked_subagent_request_id: str | None = None
     pending_human_answer: str | None = None  # set by ask_human, consumed by the matching re-delegation
+
+    # ---- Organizational referent (cf. docs/20260616_meaningful_state) ----------------
+    # These fields PERSIST across turns (reloaded at turn start) — the state IS the ledger :
+    # index + statuses + progression + links + pointers, maintained by the orchestrator
+    # (deterministic), read directly (no derivation). Everything ABOVE is per-turn ephemeral
+    # (budget recomputed ; counters/stocktake/round-trip reset each turn).
+    phase: str = "idle"                  # idle | planning | awaiting_approval | executing | answered
+    active_plan_id: str | None = None    # which plan is current ("id1"…) ; ≠ plan_mode
+    active_todo_id: str | None = None    # current tracker ("t1"…) ; MAY be plan-less
+    plans: dict[str, Any] = field(default_factory=dict)    # id → {status, approved, plan_file, todo_id, files[], subagents[], …}
+    todos: dict[str, Any] = field(default_factory=dict)    # id → {plan_id|null, owner, status, done, total, current_step, file}
+    requests: list[dict[str, Any]] = field(default_factory=list)  # turn log : {id, mode, plan_id, outcome, …}
+    lineage: dict[str, Any] = field(default_factory=lambda: {"parent_conv_id": None, "parent_commit": None})
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ConversationState:
+        """Rebuild from a persisted ``state.json`` dict — tolerant of MISSING keys (legacy /
+        partial → defaults) and IGNORES unknown keys (forward-compat). Used to RELOAD the
+        referent at turn start ; the caller then recomputes the per-turn ephemeral fields."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in (data or {}).items() if k in known})
