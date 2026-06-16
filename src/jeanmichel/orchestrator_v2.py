@@ -72,7 +72,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import clear_todo, load_plan, load_todo, reconcile_plan_status_on_turn
+from .todo import clear_todo, load_plan, load_todo
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -432,6 +432,21 @@ def _sync_plan_todo_referent(conv_folder: Path, state: ConversationState) -> Non
     elif state.active_todo_id is not None:  # todo cleared (all-done) → drop the tracker
         state.todos.pop(state.active_todo_id, None)
         state.active_todo_id = None
+
+
+def _reconcile_plan_approval(state: ConversationState, *, plan_mode: bool, at_start: bool) -> None:
+    """Plan acceptance lifecycle on the REFERENT (replaces the plan_status.json sidecar). [Phase 1.3b]
+    - START of an EDIT turn on an unapproved active plan → approved=True (the human approved by
+      executing) ;
+    - END of a PLAN turn with an active plan → approved=False (a (re)plan awaits approval — also
+      resets a previously approved plan on a re-plan)."""
+    pid = state.active_plan_id
+    if not pid or pid not in state.plans:
+        return
+    if at_start and not plan_mode and not state.plans[pid].get("approved"):
+        state.plans[pid]["approved"] = True
+    elif not at_start and plan_mode:
+        state.plans[pid]["approved"] = False
 
 
 def _run_agent_loop(
@@ -1101,8 +1116,8 @@ def run_main_loop(
         "started": datetime.now(UTC).isoformat(),
         "ended": None, "outcome": None, "summary": user_text[:200],
     })
-    # An EDIT turn launched on a still-'proposed' plan = the human accepted it → execute.
-    reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=True)
+    # An EDIT turn launched on a still-unapproved active plan = the human accepted it → execute.
+    _reconcile_plan_approval(state, plan_mode=plan_mode, at_start=True)
     hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
     )
@@ -1139,8 +1154,8 @@ def run_main_loop(
         cancel_event=cancel_event,
     )
 
-    # A PLAN turn that produced a todo (re)proposes it → the Approve bar shows.
-    reconcile_plan_status_on_turn(conv_folder, plan_mode=plan_mode, at_start=False)
+    # A PLAN turn (re)proposes its plan (approved=False) → the Approve bar shows.
+    _reconcile_plan_approval(state, plan_mode=plan_mode, at_start=False)
 
     # Close this turn's request entry + set the terminal phase, then persist the referent. [Phase 1]
     # (The loop's _persist saved the state mid-turn ; this records the OUTCOME, post-loop.)

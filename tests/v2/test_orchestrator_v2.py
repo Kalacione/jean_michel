@@ -1104,6 +1104,39 @@ def test_run_main_loop_inscribes_todo_into_referent(tmp_path: Path):
     assert st.todos["t1"]["current_step"] == "2" and st.todos["t1"]["plan_id"] is None
 
 
+def test_reconcile_plan_approval_on_referent():
+    """Phase 1.3b : l'acceptation vit dans state.plans[id].approved (plus de sidecar)."""
+    from jeanmichel.orchestrator_v2 import _reconcile_plan_approval
+    s = ConversationState(active_plan_id="p1", plans={"p1": {"approved": False}})
+    _reconcile_plan_approval(s, plan_mode=False, at_start=True)   # EDIT start sur non-approuvé
+    assert s.plans["p1"]["approved"] is True                     # → accepté
+    _reconcile_plan_approval(s, plan_mode=True, at_start=False)   # fin de tour PLAN (re-plan)
+    assert s.plans["p1"]["approved"] is False                    # → ré-attente d'approbation
+    s2 = ConversationState()                                     # pas de plan actif → no-op
+    _reconcile_plan_approval(s2, plan_mode=False, at_start=True)
+    assert s2.active_plan_id is None
+
+
+def test_plan_then_edit_acceptance_via_referent(tmp_path: Path):
+    """Phase 1.3b (bout en bout) : tour PLAN → plans[p1].approved=False ; tour EDIT → approved=True.
+    Migration de l'acceptation du sidecar vers le référent."""
+    from jeanmichel import persistence
+    from jeanmichel.tools import plan_write as plan_write_mod
+    registry = {"plan_write": plan_write_mod.make_spec(tmp_path)}
+    run_main_loop(conv_folder=tmp_path,
+                  agent=make_agent("jean-michel", role="router", tool_grants={"plan_write"}),
+                  tools_registry=registry, user_text="planifie", plan_mode=True,
+                  llm_client=MockClient(script=[assistant_response(
+                      "", tool_calls=[tool_call("plan_write", markdown="# Plan\n## Context\nx")])]))
+    st1 = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert st1.active_plan_id == "p1" and st1.plans["p1"]["approved"] is False  # proposé
+    run_main_loop(conv_folder=tmp_path, agent=make_agent("jean-michel", role="router"),
+                  tools_registry={}, user_text="Approved — execute", plan_mode=False,
+                  llm_client=MockClient(script=[assistant_response("Exécuté.")]))
+    st2 = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert st2.plans["p1"]["approved"] is True  # accepté via le référent (pas de sidecar)
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")

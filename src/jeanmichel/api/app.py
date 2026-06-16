@@ -73,6 +73,7 @@ def create_app() -> Any:
     from .. import config, db, mcp_client, persistence, snapshot
     from .. import todo as todo_mod
     from ..config import UserProfile
+    from ..models import ConversationState
     from ..service import consolidation as consolidation_svc
     from ..service import conversation as conversation_svc
     from ..service import memory as memory_svc
@@ -320,10 +321,19 @@ def create_app() -> Any:
 
     # ---- rich plan document (plan.md) — read + human edit (markdown) -------
 
+    def _plan_status(folder: Path) -> str | None:
+        """Acceptance status DERIVED from the referent : state.plans[active_plan_id].approved
+        → 'accepted' / 'proposed' (None if no active plan). No more plan_status.json sidecar."""
+        st = ConversationState.from_dict(persistence.load_state(folder))
+        entry = st.plans.get(st.active_plan_id) if st.active_plan_id else None
+        if not entry:
+            return None
+        return "accepted" if entry.get("approved") else "proposed"
+
     @app.get("/api/conversations/{conversation_id}/plan")
     def get_plan(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         folder = Path(conv["folder_path"])
-        return {"plan": todo_mod.load_plan(folder), "status": todo_mod.load_plan_status(folder)}
+        return {"plan": todo_mod.load_plan(folder), "status": _plan_status(folder)}
 
     @app.put("/api/conversations/{conversation_id}/plan")
     def put_plan(
@@ -336,9 +346,14 @@ def create_app() -> Any:
         md = body.markdown.strip()
         if md:
             todo_mod.save_plan(folder, md)
-        else:  # emptied → remove the plan document + its status sidecar
+        else:  # emptied → remove the plan doc + drop it from the referent
             todo_mod.clear_plan(folder)
-        return {"plan": todo_mod.load_plan(folder), "status": todo_mod.load_plan_status(folder)}
+            st = ConversationState.from_dict(persistence.load_state(folder))
+            if st.active_plan_id and st.active_plan_id in st.plans:
+                st.plans.pop(st.active_plan_id, None)
+                st.active_plan_id = None
+                persistence.save_state(folder, st)
+        return {"plan": todo_mod.load_plan(folder), "status": _plan_status(folder)}
 
     # ---- conversation snapshots (git per conversation) -------------------
 
