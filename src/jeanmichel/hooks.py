@@ -53,10 +53,11 @@ _WORKSPACE_WRITE_TOOLS: frozenset[str] = frozenset({
     "workspace_str_replace",
 })
 
-# PLAN mode : tools that MUTATE the repo, the workspace, or run arbitrary commands.
-# Denied while state.plan_mode is set (router + delegated specialists) so a plan turn
-# stays read-only — reads, repo_test, web_search, delegate_to and todo_write stay
-# allowed for exploration + plan drafting. Execution happens in a separate (Edit) turn.
+# PLAN mode : in a plan turn the ONLY thing that may be written is the plan itself
+# (plan_write). Every other write — repo, workspace, AND the todo (an execution artifact,
+# built later from the approved plan) — is denied (router + delegated specialists). Reads,
+# repo_test, web_search and delegate_to stay allowed for exploration. Execution happens in a
+# separate Edit turn after the human approves.
 _PLAN_MODE_BLOCKED: frozenset[str] = frozenset({
     "repo_edit",
     "repo_write",
@@ -67,6 +68,8 @@ _PLAN_MODE_BLOCKED: frozenset[str] = frozenset({
     "workspace_create_dir",
     "workspace_delete_file",
     "workspace_delete_dir",
+    "todo_write",
+    "todo_update",
 })
 
 # Threshold above which PostToolUse injects a force-persist nudge.
@@ -199,10 +202,11 @@ class PreToolUse:
             return Decision(
                 deny=True,
                 reason=(
-                    f"PLAN mode: '{ctx.call.name}' mutates and is disabled while planning. "
-                    "Produce the plan with todo_write and conclude with a summary — execution "
-                    "runs in a separate Edit turn after the human approves. You may still read "
-                    "(repo_read/grep/glob/git), test, search, and delegate for exploration."
+                    f"PLAN mode: '{ctx.call.name}' writes, and the ONLY thing you may write now "
+                    "is the plan itself — author it with plan_write. Every other tool (todo, "
+                    "workspace, repo) runs in the separate Edit turn after the human approves. "
+                    "You may still read (repo_read/grep/glob/git), test, search, and delegate for "
+                    "exploration."
                 ),
             )
 
@@ -504,14 +508,14 @@ def _refresh_plan_nudge(
     if state.plan_mode:
         messages.append({"role": "user", "content": (
             f"{_MODE_NUDGE_MARKER} (orchestrator control — not the human user) You are in PLAN "
-            "mode. Explore read-only — you may read "
-            "(repo_read/grep/glob/git, workspace_view), run repo_test, search, and delegate FOR "
-            "EXPLORATION — but nothing writes, runs, or implements. Produce a SUBSTANTIVE plan with "
-            "plan_write(markdown): a '## Context' section (the problem + your analysis and chosen "
-            "approach), the concrete steps WITH detail and rationale (how each will be done and why), "
-            "risks or open questions, and a '## Verification' section. Do NOT create a todo and do NOT "
-            "implement — the execution tracker is built later, in the separate Edit turn that runs once "
-            "the human approves. CONCLUDE with a one-line pointer for the human to approve."
+            "mode: write NOTHING but the plan. Explore read-only — read (repo_read/grep/glob/git, "
+            "workspace_view), run repo_test, search, and delegate FOR EXPLORATION — then author the "
+            "plan with plan_write(markdown): a '## Context' section (the problem + your analysis and "
+            "chosen approach), the concrete steps WITH detail and rationale (how each will be done and "
+            "why), risks or open questions, and a '## Verification' section. EVERY other tool — todo, "
+            "workspace, repo — runs in the separate Edit turn after the human approves ; do NOT create a "
+            "todo and do NOT implement here. CONCLUDE with a one-line pointer for the human to approve "
+            "or request changes."
         )})
         return
     # EDIT mode : execute directly. Plan and todo are DECOUPLED — the banner branches on

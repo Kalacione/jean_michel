@@ -240,19 +240,21 @@ def test_pre_tool_use_dedup_normalizes_string_args():
 
 
 def test_plan_mode_denies_mutating_tools():
-    """In plan_mode, repo/workspace mutators + repo_exec are denied with a PLAN reason."""
+    """In plan_mode, the ONLY writable thing is the plan : repo/workspace mutators, repo_exec
+    AND the todo tools (todo is an execution artifact, built later) are denied."""
     hook = PreToolUse()
     s = _state(plan_mode=True)
     for tool in ("repo_edit", "repo_write", "repo_exec", "workspace_create_file",
-                 "workspace_str_replace", "workspace_delete_dir"):
+                 "workspace_str_replace", "workspace_delete_dir", "todo_write", "todo_update"):
         ctx = _ctx(tool, args={}, grants={tool})
         d = hook(ctx, s, dedup_cache={})
         assert d.deny is True, tool
         assert "PLAN mode" in (d.reason or ""), tool
 
 
-def test_plan_mode_allows_reads_search_delegate_and_todo():
-    """In plan_mode, read/exploration/plan tools stay available."""
+def test_plan_mode_allows_reads_search_delegate_and_plan_write():
+    """In plan_mode, read/exploration tools stay available — and plan_write is the ONE write
+    allowed (authoring the plan itself)."""
     hook = PreToolUse()
     s = _state(plan_mode=True)
     for tool, grants in (
@@ -262,7 +264,7 @@ def test_plan_mode_allows_reads_search_delegate_and_todo():
         ("repo_test", {"repo_test"}),
         ("workspace_view", {"workspace_view"}),
         ("web_search", {"web_search"}),
-        ("todo_write", {"todo_write"}),
+        ("plan_write", {"plan_write"}),
         ("delegate_to", {"delegate_to"}),
     ):
         args = {"agent_code": "code-runner", "briefing": "explore"} if tool == "delegate_to" else {}

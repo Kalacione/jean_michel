@@ -958,6 +958,50 @@ def test_plan_mode_forces_plan_write_before_concluding(tmp_path: Path):
     assert not [m for m in last_msgs if m.get("role") == "assistant"]
 
 
+def test_plan_mode_halts_after_plan_write(tmp_path: Path):
+    """A PLAN turn STOPS the moment plan_write has run — it must NOT chain into todo/execution
+    /answering (gemma4 planned+executed+answered in one turn, conv 00-17). Deterministic."""
+    from jeanmichel.todo import load_plan, load_todo
+    from jeanmichel.tools import plan_write as plan_write_mod
+
+    agent = make_agent("jean-michel", role="router", tool_grants={"plan_write"})
+    registry = {"plan_write": plan_write_mod.make_spec(tmp_path)}
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("plan_write", markdown="# Plan\n## Context\nx\n")]),
+        assistant_response("", tool_calls=[tool_call("todo_write", goal="g", items=[])]),  # must NEVER run
+    ])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry=registry, llm_client=mock,
+        user_text="estimate grains", plan_mode=True,
+    )
+    assert "Plan prêt" in result            # the halt message
+    assert len(mock.calls_v2) == 1          # stopped right after plan_write — no second turn
+    assert load_plan(tmp_path) is not None  # the plan was authored
+    assert load_todo(tmp_path) is None      # NO execution / todo built in the plan turn
+
+
+def test_plan_mode_refinement_does_not_halt_before_rewrite(tmp_path: Path):
+    """On a REFINEMENT turn plan.md already exists — the turn must NOT halt until plan_write is
+    called AGAIN (the model may explore first). Halt fires only on the fresh plan_write."""
+    from jeanmichel import todo as todomod
+    from jeanmichel.tools import plan_write as plan_write_mod
+
+    todomod.save_plan(tmp_path, "# Old plan\n")  # a plan already exists (from a prior turn)
+    agent = make_agent("jean-michel", role="router", tool_grants={"plan_write", "echo"})
+    registry = {"plan_write": plan_write_mod.make_spec(tmp_path), "echo": make_echo_tool()}
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("echo", text="exploring")]),  # no plan_write → no halt
+        assistant_response("", tool_calls=[tool_call("plan_write", markdown="# Revised plan\n")]),  # → halt
+    ])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry=registry, llm_client=mock,
+        user_text="add a sensitivity analysis", plan_mode=True,
+    )
+    assert "Plan prêt" in result
+    assert len(mock.calls_v2) == 2  # the exploration turn was NOT cut short
+    assert "Revised" in todomod.load_plan(tmp_path)  # the plan was actually revised
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")

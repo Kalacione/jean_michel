@@ -400,6 +400,11 @@ class _LoopOutcome:
     reason: str = ""                # for "aborted"
 
 
+# Concludes a PLAN turn once the plan is written : the plan turn produces the plan and STOPS,
+# awaiting validation OR refinement (the human approves to execute, or writes a retour to revise).
+_PLAN_READY_MSG = "📋 Plan prêt — approuve pour lancer l'exécution, ou écris-moi ce qu'il faut affiner."
+
+
 def _run_agent_loop(
     *,
     conv_folder: Path,
@@ -648,6 +653,24 @@ def _run_agent_loop(
                 report_back_outcome = outcome
 
         _persist()
+
+        # PLAN mode : produce the plan and STOP. The moment plan_write has run THIS turn
+        # (and plan.md exists → the write succeeded), conclude — whatever the model wants to
+        # chain next (some barrel on into todo_write + answering ; conv 00-17). Execution
+        # happens in the Edit turn after approval OR after a refinement. The "called this
+        # turn" guard (not just "plan.md exists") keeps a REFINEMENT turn — where plan.md
+        # already exists — from halting before the model has revised it.
+        if (is_main_agent and state.plan_mode
+                and any(c.name == "plan_write" for c in resp.tool_calls)
+                and load_plan(conv_folder) is not None):
+            messages.append({"role": "assistant", "content": _PLAN_READY_MSG})
+            _emit(
+                event_emitter,
+                conv_folder,
+                RequestCompleted(agent=agent.code, final_content_summary=_PLAN_READY_MSG),
+            )
+            _persist()
+            return _LoopOutcome(kind="final_answer", content=_PLAN_READY_MSG)
 
         if report_back_outcome is not None:
             return report_back_outcome
