@@ -59,9 +59,6 @@
 ## Idées
 - Plein de micro-LLM prédisant le prochain token sur le même contexte → triplets de précogs.
 
-## C'est nuuul
-
-`conversations/2026-06-15_21-50_4459ffc8a18b46b9a857af6786113cd2/llm_streams/20260615T215024_221425_jean-michel.txt` vide parceque pas de streaming, mais on dum meme pas la reponse dedans en fin de tour ...  du coup debug impossible
 
 ## Evolutions ambitieuses
 
