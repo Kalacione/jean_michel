@@ -1061,6 +1061,49 @@ def test_run_main_loop_inscribes_request_log_and_phase(tmp_path: Path):
     assert len(st2.requests) == 2 and st2.requests[1]["mode"] == "edit"
 
 
+def test_sync_plan_todo_referent_inscribes_and_clears(tmp_path: Path):
+    """Phase 1.3a : _sync_plan_todo_referent reflète plan.md/todo.json dans le state (progression
+    inscrite) et lâche le tracker quand le todo est vidé."""
+    from jeanmichel import todo as todomod
+    from jeanmichel.orchestrator_v2 import _sync_plan_todo_referent
+    todomod.save_plan(tmp_path, "# Plan\n## Context\nx")
+    todomod.save_todo(tmp_path, "g", [
+        {"id": "1", "text": "a", "status": "done"},
+        {"id": "2", "text": "b", "status": "in_progress"},
+    ])
+    s = ConversationState()
+    _sync_plan_todo_referent(tmp_path, s)
+    assert s.active_plan_id == "p1" and s.plans["p1"]["plan_file"] == "plan.md"
+    assert s.active_todo_id == "t1"
+    assert s.todos["t1"] == {"plan_id": "p1", "owner": "orchestrator", "file": "todo.json",
+                             "done": 1, "total": 2, "current_step": "2"}
+    todomod.clear_todo(tmp_path)  # all-done / conclusion → todo.json supprimé
+    _sync_plan_todo_referent(tmp_path, s)
+    assert s.active_todo_id is None and "t1" not in s.todos
+
+
+def test_run_main_loop_inscribes_todo_into_referent(tmp_path: Path):
+    """Phase 1.3a (câblage) : un todo_write dans la boucle peuple state.todos (additif)."""
+    from jeanmichel import persistence
+    from jeanmichel.tools import todo_write as todo_write_mod
+    agent = make_agent("jean-michel", role="router", tool_grants={"todo_write"})
+    registry = {"todo_write": todo_write_mod.make_spec(tmp_path)}
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("todo_write", goal="g", items=[
+            {"id": "1", "text": "a", "status": "done"},
+            {"id": "2", "text": "b", "status": "in_progress"},
+            {"id": "3", "text": "c", "status": "pending"},
+        ])]),
+        assistant_response("Fini."),
+    ])
+    run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry=registry,
+                  llm_client=mock, user_text="go", plan_mode=False)
+    st = ConversationState.from_dict(persistence.load_state(tmp_path))
+    assert st.active_todo_id == "t1"
+    assert st.todos["t1"]["done"] == 1 and st.todos["t1"]["total"] == 3
+    assert st.todos["t1"]["current_step"] == "2" and st.todos["t1"]["plan_id"] is None
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")

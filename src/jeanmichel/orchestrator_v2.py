@@ -72,7 +72,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import clear_todo, load_plan, reconcile_plan_status_on_turn
+from .todo import clear_todo, load_plan, load_todo, reconcile_plan_status_on_turn
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -407,6 +407,33 @@ class _LoopOutcome:
 _PLAN_READY_MSG = "📋 Plan prêt — approuve pour lancer l'exécution, ou écris-moi ce qu'il faut affiner."
 
 
+def _sync_plan_todo_referent(conv_folder: Path, state: ConversationState) -> None:
+    """Inscribe the current plan/todo files into the referent (``state.plans`` / ``state.todos``)
+    after a plan_write/todo_write/todo_update. [Phase 1.3] Additive bridge : the tools still
+    write the files ; we mirror their metadata into the state so it becomes the read source
+    (Phase 1.5) without re-deriving at read-time. Single plan/todo for now (Phase 2 = multiple ids)."""
+    if load_plan(conv_folder) is not None:
+        pid = state.active_plan_id or "p1"
+        state.active_plan_id = pid
+        state.plans.setdefault(
+            pid, {"plan_file": "plan.md", "status": "in_progress", "approved": False}
+        )
+    todo = load_todo(conv_folder)
+    if todo is not None:
+        tid = state.active_todo_id or "t1"
+        state.active_todo_id = tid
+        items = todo.get("items") or []
+        done = sum(1 for it in items if it.get("status") == "done")
+        cur = next((it.get("id") for it in items if it.get("status") == "in_progress"), None)
+        state.todos[tid] = {
+            "plan_id": state.active_plan_id, "owner": "orchestrator", "file": "todo.json",
+            "done": done, "total": len(items), "current_step": cur,
+        }
+    elif state.active_todo_id is not None:  # todo cleared (all-done) → drop the tracker
+        state.todos.pop(state.active_todo_id, None)
+        state.active_todo_id = None
+
+
 def _run_agent_loop(
     *,
     conv_folder: Path,
@@ -661,6 +688,9 @@ def _run_agent_loop(
             if outcome is not None:
                 # Only `report_back` produces an outcome inside the per-call loop.
                 report_back_outcome = outcome
+            # Mirror plan/todo writes into the referent (main agent owns state). [Phase 1.3]
+            if is_main_agent and call.name in ("plan_write", "todo_write", "todo_update"):
+                _sync_plan_todo_referent(conv_folder, state)
 
         _persist()
 
