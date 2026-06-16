@@ -1002,6 +1002,24 @@ def test_plan_mode_refinement_does_not_halt_before_rewrite(tmp_path: Path):
     assert "Revised" in todomod.load_plan(tmp_path)  # the plan was actually revised
 
 
+def test_edit_conclusion_clears_todo(tmp_path: Path):
+    """Delivering the final answer completes the plan → the execution todo is cleared, even if
+    the last step (the synthesis itself) was never marked done (conv 01-44 left it pending)."""
+    from jeanmichel import todo as todomod
+    todomod.save_todo(tmp_path, "g", [
+        {"id": "1", "text": "research", "status": "done"},
+        {"id": "2", "text": "synthesize the answer", "status": "in_progress"},  # never marked done
+    ])
+    agent = make_agent("jean-michel", role="router")
+    mock = MockClient(script=[assistant_response("Voici la réponse finale.")])
+    result = run_main_loop(
+        conv_folder=tmp_path, agent=agent, tools_registry={}, llm_client=mock,
+        user_text="finish it", plan_mode=False,
+    )
+    assert result == "Voici la réponse finale."
+    assert todomod.load_todo(tmp_path) is None  # cleared on conclusion — no lingering pending item
+
+
 def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     """Without plan_mode, the router concludes in prose immediately (no todo gate)."""
     agent = make_agent("jean-michel", role="router")

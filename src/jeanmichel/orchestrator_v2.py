@@ -70,7 +70,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import load_plan, reconcile_plan_status_on_turn
+from .todo import clear_todo, load_plan, reconcile_plan_status_on_turn
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -590,6 +590,13 @@ def _run_agent_loop(
                     _persist()
                     continue
 
+                # Delivering the final answer = the plan is executed → clear the execution
+                # todo. The last step (the synthesis) IS this conclusion, so the model can't
+                # mark it done first ; without this it lingers 'pending' forever (conv 01-44).
+                # Deterministic, matches the existing all-items-done → clear_todo terminal
+                # state. EDIT mode only — a PLAN turn carries no todo.
+                if not state.plan_mode:
+                    clear_todo(conv_folder)
                 _emit(
                     event_emitter,
                     conv_folder,
