@@ -2,16 +2,16 @@
   <v-dialog max-width="900" :model-value="conv.planEditorOpen" @update:model-value="close">
     <v-card>
       <v-card-title class="d-flex align-center ga-2">
-        <v-icon color="primary" icon="mdi-clipboard-edit-outline" /> Modifier le plan
+        <v-icon color="primary" icon="mdi-clipboard-edit-outline" /> Plan &amp; suivi
       </v-card-title>
       <v-tabs v-model="tab" density="compact">
         <v-tab value="plan">Plan (markdown)</v-tab>
         <v-tab value="preview">Aperçu</v-tab>
-        <v-tab value="steps">Étapes (suivi)</v-tab>
+        <v-tab value="steps">Suivi</v-tab>
       </v-tabs>
       <v-card-text style="max-height: 60vh; overflow-y: auto;">
         <v-window v-model="tab">
-          <!-- Rich plan document : the reasoning the human reviews/edits -->
+          <!-- Rich plan document : the reasoning the human reviews/edits (markdown). -->
           <v-window-item value="plan">
             <v-textarea
               v-model="planMd"
@@ -24,80 +24,45 @@
           </v-window-item>
           <!-- Rendered preview -->
           <v-window-item value="preview">
-            <div v-if="planMd.trim()" class="markdown-body" v-html="rendered" />
+            <div v-if="planMd.trim()" class="md" v-html="rendered" />
             <p v-else class="text-medium-emphasis">Aucun plan rédigé.</p>
           </v-window-item>
-          <!-- Terse tracker (todo.json) : progress only -->
+          <!-- Terse tracker (todo.json) : READ-ONLY. Editing here would shift the item ids
+               and desync the orchestrator's todo_update(item_id, …) — so it is view-only. -->
           <v-window-item value="steps">
-            <v-text-field
-              v-model="goal"
-              class="mb-2"
-              density="compact"
-              hide-details
-              label="Objectif"
-              variant="outlined"
-            />
-            <p class="text-caption text-medium-emphasis mb-1">
-              Étapes — suivi d’avancement (au plus une « en cours ») :
+            <p v-if="goal" class="text-body-2 mb-2"><strong>Objectif :</strong> {{ goal }}</p>
+            <p class="text-caption text-medium-emphasis mb-2">
+              Suivi d’avancement — lecture seule (la todo est maintenue par l’orchestrateur).
             </p>
-            <div v-for="(it, i) in items" :key="i" class="d-flex align-center ga-1 mb-1">
-              <v-text-field
-                v-model="it.text"
-                density="compact"
-                hide-details
-                :placeholder="`Étape ${i + 1}`"
-                variant="outlined"
-              />
-              <v-select
-                v-model="it.status"
-                density="compact"
-                hide-details
-                :items="STATUSES"
-                style="max-width: 130px"
-                variant="outlined"
-              />
-              <v-btn
-                density="comfortable"
-                :disabled="i === 0"
-                icon="mdi-arrow-up"
-                size="x-small"
-                variant="text"
-                @click="move(i, -1)"
-              />
-              <v-btn
-                density="comfortable"
-                :disabled="i === items.length - 1"
-                icon="mdi-arrow-down"
-                size="x-small"
-                variant="text"
-                @click="move(i, 1)"
-              />
-              <v-btn
-                color="error"
-                density="comfortable"
-                icon="mdi-delete-outline"
-                size="x-small"
-                variant="text"
-                @click="items.splice(i, 1)"
-              />
-            </div>
-            <v-btn
-              class="mt-1"
-              prepend-icon="mdi-plus"
-              size="small"
-              variant="text"
-              @click="items.push({ id: '', text: '', status: 'pending' })"
-            >
-              Ajouter une étape
-            </v-btn>
+            <v-list v-if="items.length" class="py-0" density="compact">
+              <v-list-item v-for="(it, i) in items" :key="i" class="px-0">
+                <template #prepend>
+                  <v-icon
+                    class="me-2"
+                    :color="statusMeta(it.status).color"
+                    :icon="statusMeta(it.status).icon"
+                    size="20"
+                  />
+                </template>
+                <v-list-item-title
+                  :class="it.status === 'done' ? 'text-decoration-line-through text-medium-emphasis' : ''"
+                  style="white-space: normal;"
+                >
+                  {{ it.id }}. {{ it.text }}
+                </v-list-item-title>
+              </v-list-item>
+            </v-list>
+            <p v-else class="text-medium-emphasis">
+              Aucune todo pour l’instant — elle est créée à l’exécution, à partir du plan.
+            </p>
           </v-window-item>
         </v-window>
         <v-alert v-if="err" class="mt-2" density="compact" :text="err" type="error" />
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="close">Annuler</v-btn>
-        <v-btn color="primary" :loading="saving" variant="flat" @click="save">Enregistrer</v-btn>
+        <v-btn variant="text" @click="close">Fermer</v-btn>
+        <v-btn color="primary" :loading="saving" variant="flat" @click="save">Enregistrer le plan</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -109,12 +74,6 @@
   import { renderMarkdown } from '@/markdown'
   import { useConvStore } from '@/stores/conversations'
 
-  const STATUSES = [
-    { title: 'À faire', value: 'pending' },
-    { title: 'En cours', value: 'in_progress' },
-    { title: 'Fait', value: 'done' },
-  ]
-
   const conv = useConvStore()
   const tab = ref('plan')
   const planMd = ref('')
@@ -124,7 +83,14 @@
   const saving = ref(false)
   const rendered = computed(() => renderMarkdown(planMd.value))
 
-  // Load the rich plan + the terse tracker when the editor opens.
+  const STATUS_META = {
+    done: { icon: 'mdi-check-circle', color: 'success' },
+    in_progress: { icon: 'mdi-progress-clock', color: 'primary' },
+    pending: { icon: 'mdi-circle-outline', color: 'grey' },
+  }
+  const statusMeta = s => STATUS_META[s] || STATUS_META.pending
+
+  // Load the rich plan (editable) + the terse tracker (read-only) when the editor opens.
   watch(() => conv.planEditorOpen, async open => {
     if (!open) return
     err.value = ''
@@ -144,31 +110,17 @@
     }
   })
 
-  function move (i, delta) {
-    const j = i + delta
-    if (j < 0 || j >= items.value.length) return
-    const [it] = items.value.splice(i, 1)
-    items.value.splice(j, 0, it)
-  }
-
   function close () {
     conv.planEditorOpen = false
   }
 
+  // Only the plan markdown is persisted — the todo is read-only here (editing it would
+  // shift item ids and break the orchestrator's todo_update).
   async function save () {
-    const cleanItems = items.value
-      .map(it => ({ ...it, text: (it.text || '').trim() }))
-      .filter(it => it.text)
-    if (!planMd.value.trim() && !cleanItems.length) {
-      err.value = 'Le plan doit contenir du texte ou au moins une étape.'
-      return
-    }
     saving.value = true
     err.value = ''
     try {
       await api.putPlan(conv.currentId, planMd.value)
-      // The tracker is optional ; only persist it when there are steps.
-      if (cleanItems.length) await api.putTodo(conv.currentId, goal.value.trim(), cleanItems)
       conv.plan = planMd.value.trim() || null
       close()
     } catch (e) {
