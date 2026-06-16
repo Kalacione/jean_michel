@@ -305,8 +305,8 @@ def load_events(conv_folder: Path) -> list[dict[str, Any]]:
 # MAINTAINED live by the orchestrator ; this reconstructs the SAME organizational
 # fields by folding the referent domain events (the journal). The test
 # "maintained == reconstructed" proves no inscription site was forgotten. Pure +
-# idempotent. The per-turn EPHEMERAL fields (budget/counters/round-trip) and
-# `lineage` are NOT journaled → left at defaults (compare only the organizational subset).
+# idempotent. The per-turn EPHEMERAL fields (budget/counters/round-trip) are NOT
+# journaled → left at defaults (compare only the organizational subset).
 
 
 def _apply_file(state: Any, path: str, layer: str, produced_by: str | None, plan_id: str | None) -> None:

@@ -142,17 +142,21 @@ def load_delegation_targets(conn: sqlite3.Connection, agent_id: int) -> set[str]
 def create_conversation(conn: sqlite3.Connection, conv_id: str, folder_path: str,
                         user_language: str | None, mode: str = "analyse",
                         title: str | None = None,
-                        project_id: int | None = None) -> Conversation:
+                        project_id: int | None = None,
+                        parent_conv_id: str | None = None,
+                        parent_commit: str | None = None) -> Conversation:
     now = _now()
     conn.execute(
         "INSERT INTO conversations (id, title, folder_path, user_language, status, mode, "
-        "project_id, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
-        (conv_id, title, folder_path, user_language, mode, project_id, now, now),
+        "project_id, parent_conv_id, parent_commit, created_at, modified_at) "
+        "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+        (conv_id, title, folder_path, user_language, mode, project_id,
+         parent_conv_id, parent_commit, now, now),
     )
     return Conversation(id=conv_id, folder_path=folder_path,
                         user_language=user_language, title=title, mode=mode,
-                        project_id=project_id)
+                        project_id=project_id, parent_conv_id=parent_conv_id,
+                        parent_commit=parent_commit)
 
 
 def update_conversation_language(conn: sqlite3.Connection, conv_id: str, language: str) -> None:
@@ -190,7 +194,8 @@ def list_active_conversations(conn: sqlite3.Connection, limit: int = 20) -> list
 
 def get_conversation(conn: sqlite3.Connection, conv_id_or_prefix: str) -> sqlite3.Row | None:
     """Look up a conversation by exact id or by id prefix."""
-    cols = "id, folder_path, mode, user_language, status, title, project_id, created_at, modified_at"
+    cols = ("id, folder_path, mode, user_language, status, title, project_id, "
+            "parent_conv_id, parent_commit, created_at, modified_at")
     row = conn.execute(
         f"SELECT {cols} FROM conversations WHERE id=?",
         (conv_id_or_prefix,),
@@ -316,7 +321,7 @@ def list_conversations_for_user(
     """
     return conn.execute(
         "SELECT c.id, c.title, c.mode, c.status, c.user_language, c.project_id, "
-        "c.created_at, c.modified_at "
+        "c.parent_conv_id, c.parent_commit, c.created_at, c.modified_at "
         "FROM conversations c "
         "JOIN conversation_users cu ON cu.conversation_id = c.id "
         "WHERE cu.user_id = ? "

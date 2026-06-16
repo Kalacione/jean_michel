@@ -93,6 +93,8 @@ def fork_conversation(src_conv_id: str, commit: str) -> tuple[str, Path]:
             folder_path=str(dst),
             user_language=src["user_language"],
             mode=src["mode"],
+            parent_conv_id=src_conv_id,  # fork lineage (Phase 2 A.3)
+            parent_commit=commit,
         )
     return new_id, dst
 

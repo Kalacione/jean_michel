@@ -101,8 +101,12 @@ def test_fork_creates_owned_conversation(client, alice_conv):
     assert new_id != conv_id
     # The fork is owned by Alice (shows up in her list) and carries the content.
     listed = client.get("/api/conversations", headers=_auth(token)).json()["conversations"]
-    assert any(c["id"] == new_id for c in listed)
+    forked = next((c for c in listed if c["id"] == new_id), None)
+    assert forked is not None
     assert (_conv_folder(new_id) / "workspace" / "tri.py").exists()
+    # Fork lineage (Phase 2 A) : the fork records where it came from.
+    assert forked["parent_conv_id"] == conv_id
+    assert forked["parent_commit"] == commit
 
 
 def test_revert_rewinds_messages(client, alice_conv):

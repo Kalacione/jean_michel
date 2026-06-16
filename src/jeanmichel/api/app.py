@@ -234,6 +234,8 @@ def create_app() -> Any:
             "status": conv["status"],
             "user_language": conv["user_language"],
             "project_id": conv["project_id"],
+            "parent_conv_id": conv["parent_conv_id"],
+            "parent_commit": conv["parent_commit"],
             "created_at": conv["created_at"],
             "modified_at": conv["modified_at"],
         }

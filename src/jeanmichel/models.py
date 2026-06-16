@@ -38,6 +38,8 @@ class Conversation:
     title: str | None = None
     mode: str = "analyse"
     project_id: int | None = None  # migrate_124, nullable (0 or 1 project)
+    parent_conv_id: str | None = None  # migrate_151, fork lineage : source conv id
+    parent_commit: str | None = None   # migrate_151, fork lineage : source git commit
 
 
 @dataclass
@@ -106,7 +108,8 @@ class ConversationState:
     # plans[id] — uniform with todos (decoupled) and handles plan-less work (a chat delegation).
     subagents: list[dict[str, Any]] = field(default_factory=list)  # {request_id, agent, parent_request, plan_id, confidence, files_produced}
     files: list[dict[str, Any]] = field(default_factory=list)       # {path, layer, produced_by, plan_id}
-    lineage: dict[str, Any] = field(default_factory=lambda: {"parent_conv_id": None, "parent_commit": None})
+    # NB : la lignée de fork (parent_conv_id/parent_commit) vit dans la table DB `conversations`
+    # (migrate_151), PAS ici : relation cross-conversation posée une fois au fork, hors boucle/filet.
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConversationState:

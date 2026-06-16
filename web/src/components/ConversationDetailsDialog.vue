@@ -17,6 +17,11 @@
         />
         <div class="text-caption text-medium-emphasis">
           <div>Mode : {{ item.mode }} · Statut : {{ item.status }}</div>
+          <div v-if="parent">
+            <v-icon icon="mdi-source-fork" size="13" /> Forké de
+            <a class="parent-link" @click="openParent">{{ parent.title }}</a>
+            <span v-if="parent.commit"> @ {{ parent.commit }}</span>
+          </div>
           <div>Créée : {{ fmt(item.created_at) }}</div>
           <div>Dernière activité : {{ fmt(item.modified_at) }}</div>
           <div class="text-truncate">ID : {{ item.id }}</div>
@@ -61,6 +66,19 @@
     const t = title.value.trim()
     return !!t && t !== (props.item?.title || '')
   })
+
+  // Fork lineage : resolve the parent conv's title from the loaded list (fallback = short id).
+  const parent = computed(() => {
+    const pid = props.item?.parent_conv_id
+    if (!pid) return null
+    const p = conv.list.find(c => c.id === pid)
+    return { id: pid, title: p?.title || pid.slice(0, 8), commit: (props.item.parent_commit || '').slice(0, 8) }
+  })
+  function openParent () {
+    if (!parent.value) return
+    open.value = false
+    conv.select(parent.value.id)
+  }
 
   function fmt (s) {
     return s ? s.replace('T', ' ').replace('Z', '').slice(0, 16) : '—'
@@ -107,3 +125,11 @@
     }
   })
 </script>
+
+<style scoped>
+  .parent-link {
+    color: rgb(var(--v-theme-primary));
+    cursor: pointer;
+    text-decoration: underline;
+  }
+</style>

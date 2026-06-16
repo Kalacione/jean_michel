@@ -17,7 +17,8 @@ def test_state_roundtrip_preserves_organizational_fields():
         plans={"id1": {"status": "in_progress", "approved": True, "todo_id": "t1"}},
         todos={"t1": {"plan_id": "id1", "owner": "orchestrator", "done": 2, "total": 5}},
         requests=[{"id": "req_1", "mode": "edit", "plan_id": "id1", "outcome": "answered"}],
-        lineage={"parent_conv_id": "c0", "parent_commit": "abc123"},
+        subagents=[{"request_id": "sub_1", "agent": "code-runner"}],
+        files=[{"path": "a.md", "layer": "workspace"}],
     )
     back = ConversationState.from_dict(dataclasses.asdict(s))
     assert back == s
@@ -28,7 +29,7 @@ def test_from_dict_fills_missing_with_defaults():
     s = ConversationState.from_dict({"working_budget": 100, "plan_mode": True})
     assert s.working_budget == 100 and s.plan_mode is True
     assert s.phase == "idle" and s.plans == {} and s.active_plan_id is None
-    assert s.lineage == {"parent_conv_id": None, "parent_commit": None}
+    assert s.subagents == [] and s.files == []
 
 
 def test_from_dict_ignores_unknown_keys():
@@ -49,7 +50,7 @@ def test_reset_ephemeral_keeps_organizational_resets_per_turn():
         # organisationnel → DOIT survivre
         phase="executing", active_plan_id="id1", active_todo_id="t1",
         plans={"id1": {"status": "in_progress"}}, todos={"t1": {"done": 2}},
-        requests=[{"id": "r1"}], lineage={"parent_conv_id": "c0", "parent_commit": "x"},
+        requests=[{"id": "r1"}],
         # éphémère → DOIT être remis à zéro
         depth_current=3, search_calls_total=9, search_calls_since_last_persist=4,
         stocktake_due=True, active_subagent="code-runner", working_tokens_used=500,
@@ -60,7 +61,7 @@ def test_reset_ephemeral_keeps_organizational_resets_per_turn():
     # organisationnel préservé
     assert (s.phase, s.active_plan_id, s.active_todo_id) == ("executing", "id1", "t1")
     assert s.plans == {"id1": {"status": "in_progress"}} and s.todos == {"t1": {"done": 2}}
-    assert s.requests == [{"id": "r1"}] and s.lineage["parent_conv_id"] == "c0"
+    assert s.requests == [{"id": "r1"}]
     # éphémère remis à zéro
     assert s.depth_current == 0 and s.plan_mode is True and s.working_tokens_used == 0
     assert s.search_calls_total == 0 and s.search_calls_since_last_persist == 0
