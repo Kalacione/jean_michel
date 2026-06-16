@@ -862,6 +862,8 @@ CREATE TABLE conversations (
   task_class     TEXT,                        -- 'single_fact' | 'medium_task' | 'deep_research'
   current_phase  TEXT,                        -- NULL | 'planner_done' | 'gather_done' | 'critic_done' | 'build_done'
   project_id     INTEGER REFERENCES projects(id) ON DELETE SET NULL,  -- migrate_124, nullable
+  parent_conv_id TEXT,                        -- migrate_151, fork lineage : source conv id (nullable, no FK)
+  parent_commit  TEXT,                        -- migrate_151, fork lineage : source git commit
   created_at     TEXT NOT NULL,
   modified_at    TEXT NOT NULL
 );
