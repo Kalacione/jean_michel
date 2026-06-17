@@ -1364,6 +1364,36 @@ def test_no_progress_backstop_concludes(tmp_path: Path):
     assert len(mock.calls_v2) == 1 + _MAX_STUCK_ITERATIONS
 
 
+def test_cancel_during_tool_calls_aborts_before_executing(tmp_path: Path):
+    """R5.2 : un Stop posé PENDANT une réponse à tool calls interrompt avant d'exécuter le tool
+    (checkpoint per-call), pas seulement entre itérations."""
+    from jeanmichel.tools._base import ToolSpec
+    from jeanmichel.tools._errors import tool_ok
+    ran: list[int] = []
+
+    def _spy(**_kw: object) -> str:
+        ran.append(1)
+        return tool_ok("ok")
+
+    spy = ToolSpec(name="spy", description="SIGNATURE: spy()",
+                   parameters={"type": "object", "properties": {}}, handler=_spy)
+
+    class _CancelAfter:  # is_set() : False at the iteration-top check, True at the per-call check
+        def __init__(self) -> None:
+            self.n = 0
+
+        def is_set(self) -> bool:
+            self.n += 1
+            return self.n > 1
+
+    agent = make_agent("jean-michel", role="router", tool_grants={"spy"})
+    mock = MockClient(script=[assistant_response("", tool_calls=[tool_call("spy")])])
+    result = run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry={"spy": spy},
+                           llm_client=mock, user_text="go", plan_mode=False, cancel_event=_CancelAfter())
+    assert result == "⏹ Tour arrêté."  # aborted (user_cancelled)
+    assert ran == []  # the tool was NOT executed — cancel hit at the per-call checkpoint
+
+
 def test_plan_mode_propagates_to_subagent(tmp_path: Path):
     """plan_mode reaches a delegated specialist (fresh sub_state) : its mutating
     tools are denied just like the router's."""

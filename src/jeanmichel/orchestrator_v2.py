@@ -647,7 +647,8 @@ def _run_agent_loop(
                 cancel_check=(cancel_event.is_set if cancel_event is not None else None),
             )
         except LLMCancelledError:
-            # Stop pressed mid-generation : the client already requested an unload.
+            # Stop pressed mid-generation : the client already closed the connection + unloaded.
+            _log.info("loop cancel hit @LLM-stream (agent=%s, kill_inflight)", agent.code)
             return _LoopOutcome(kind="aborted", reason="user_cancelled")
         except Exception as exc:  # noqa: BLE001
             _log.warning("LLM call failed in %s: %s", agent.code, exc)
@@ -792,6 +793,12 @@ def _run_agent_loop(
         # Process each tool_call sequentially.
         report_back_outcome: _LoopOutcome | None = None
         for call in resp.tool_calls:
+            # R5.2 : honour Stop DURING a multi-tool-call response, not only between iterations (594).
+            # A turn that emits several tool calls (or a re-plan that chains them) becomes interruptible
+            # promptly instead of running the whole batch first.
+            if cancel_event is not None and cancel_event.is_set():
+                _log.info("loop cancel hit @per-call (agent=%s, before %s)", agent.code, call.name)
+                return _LoopOutcome(kind="aborted", reason="user_cancelled")
             # The deterministic orchestrator owns the plan id : assign it (+ supersede the old
             # approved plan) BEFORE plan_write runs, so the (dumb) tool just writes its file. [Phase 2]
             # ONLY in PLAN mode — plan_write is denied in EDIT (PreToolUse, R5.3) ; gating _assign too
