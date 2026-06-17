@@ -219,6 +219,19 @@ class PreToolUse:
                 ),
             )
 
+        # 1c. EDIT mode : deny plan_write (it's a PLAN-mode tool). Improvising a plan DURING
+        # execution created a phantom 'proposed' plan + a stale "approve" bar on already-done work
+        # (live 2026-06-17 : a forgot-to-switch-to-Plan turn). Re-planning is a PLAN-mode action.
+        if not state.plan_mode and ctx.call.name == "plan_write":
+            return Decision(
+                deny=True,
+                reason=(
+                    "You are in EDIT mode — execute the approved plan or answer the user directly. "
+                    "plan_write authors a NEW plan and is reserved for PLAN mode: to (re)plan, the human "
+                    "switches to Plan mode. To adjust the execution tracker, use todo_write / todo_update."
+                ),
+            )
+
         # 2. Delegation depth + whitelist
         if ctx.call.name == "delegate_to":
             target = ctx.call.arguments.get("agent_code", "")

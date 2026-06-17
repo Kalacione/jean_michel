@@ -285,6 +285,16 @@ def test_plan_mode_allows_reads_search_delegate_and_plan_write():
         assert hook(ctx, s, dedup_cache={}).deny is False, tool
 
 
+def test_plan_write_denied_in_edit_mode():
+    """R5.3 : plan_write is a PLAN-mode tool. In EDIT mode it's denied (improvising a plan during
+    execution left a phantom 'proposed' plan + a stale approve bar). Allowed in PLAN mode."""
+    hook = PreToolUse()
+    ctx = _ctx("plan_write", args={"markdown": "# Plan"}, grants={"plan_write"})
+    edit = hook(ctx, _state(plan_mode=False), dedup_cache={})
+    assert edit.deny is True and "EDIT mode" in (edit.reason or "")
+    assert hook(ctx, _state(plan_mode=True), dedup_cache={}).deny is False  # PLAN mode : allowed
+
+
 def test_mutating_tools_allowed_outside_plan_mode():
     """Without plan_mode, the mutating tools are not gated by the plan rule."""
     hook = PreToolUse()

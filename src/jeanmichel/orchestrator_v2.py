@@ -786,8 +786,10 @@ def _run_agent_loop(
         report_back_outcome: _LoopOutcome | None = None
         for call in resp.tool_calls:
             # The deterministic orchestrator owns the plan id : assign it (+ supersede the old
-            # approved plan) BEFORE plan_write runs, so the (dumb) tool just writes plan.md. [Phase 2]
-            if is_main_agent and call.name == "plan_write":
+            # approved plan) BEFORE plan_write runs, so the (dumb) tool just writes its file. [Phase 2]
+            # ONLY in PLAN mode — plan_write is denied in EDIT (PreToolUse, R5.3) ; gating _assign too
+            # avoids mutating the referent (supersede!) for a call that's about to be refused.
+            if is_main_agent and call.name == "plan_write" and state.plan_mode:
                 _assign_plan_id_for_write(conv_folder, state)
             outcome = _handle_tool_call(
                 call=call,
