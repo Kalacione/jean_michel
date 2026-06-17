@@ -357,6 +357,36 @@ def create_app() -> Any:
                 persistence.save_state(folder, st)
         return {"plan": todo_mod.load_plan(folder), "status": _plan_status(folder)}
 
+    @app.get("/api/conversations/{conversation_id}/plans")
+    def list_plans(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
+        """Lightweight index of ALL plans (active + superseded) from the referent — no markdown.
+        The history affordance reads this. [Phase 2]"""
+        st = ConversationState.from_dict(persistence.load_state(Path(conv["folder_path"])))
+        plans = [
+            {"plan_id": pid, "status": entry.get("status"), "approved": bool(entry.get("approved")),
+             "superseded_by": entry.get("superseded_by"), "is_active": pid == st.active_plan_id}
+            for pid, entry in st.plans.items()
+        ]
+        return {"plans": plans, "active_plan_id": st.active_plan_id}
+
+    @app.get("/api/conversations/{conversation_id}/plans/{plan_id}")
+    def get_plan_by_id(
+        plan_id: str, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        """Markdown of a specific plan (incl. superseded). Path-traversal safe : plan_id is
+        validated against the referent and the filename is read from state.plans (never built
+        from the URL). 404 on unknown id. [Phase 2]"""
+        folder = Path(conv["folder_path"])
+        st = ConversationState.from_dict(persistence.load_state(folder))
+        entry = st.plans.get(plan_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="unknown plan id")
+        return {
+            "plan": todo_mod.load_plan_file(folder, entry["plan_file"]),
+            "status": entry.get("status"),
+            "approved": bool(entry.get("approved")),
+        }
+
     # ---- conversation snapshots (git per conversation) -------------------
 
     @app.get("/api/conversations/{conversation_id}/snapshots")

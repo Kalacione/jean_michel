@@ -84,3 +84,36 @@ def test_plan_owner_scoped(client, alice):
         f"/api/conversations/{conv_id}/plan", json={"markdown": "# x"}, headers=_auth(bob)
     )
     assert resp.status_code in (403, 404)
+
+
+def test_list_plans_and_get_by_id(client, alice):
+    """Phase 2 (B.4) : l'historique — GET /plans (index) + GET /plans/{id} (contenu archivé)."""
+    from pathlib import Path
+
+    from jeanmichel import persistence
+    from jeanmichel import todo as todo_mod
+    from jeanmichel.models import ConversationState
+    token, conv_id = alice
+    with db_connect() as conn:
+        folder = Path(db.get_conversation(conn, conv_id)["folder_path"])
+    # p1 superseded (archivé en plan_p1.md), p2 actif (plan.md).
+    todo_mod.save_plan_file(folder, "plan_p1.md", "# Plan v1")
+    todo_mod.save_plan(folder, "# Plan v2")
+    persistence.save_state(folder, ConversationState(
+        active_plan_id="p2",
+        plans={
+            "p1": {"plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"},
+            "p2": {"plan_file": "plan.md", "status": "pending", "approved": False},
+        },
+    ))
+    body = client.get(f"/api/conversations/{conv_id}/plans", headers=_auth(token)).json()
+    assert body["active_plan_id"] == "p2"
+    by_id = {p["plan_id"]: p for p in body["plans"]}
+    assert by_id["p1"]["status"] == "superseded" and by_id["p1"]["is_active"] is False
+    assert by_id["p2"]["is_active"] is True
+    p1 = client.get(f"/api/conversations/{conv_id}/plans/p1", headers=_auth(token)).json()
+    assert p1["plan"] == "# Plan v1" and p1["status"] == "superseded"
+    p2 = client.get(f"/api/conversations/{conv_id}/plans/p2", headers=_auth(token))
+    assert p2.json()["plan"] == "# Plan v2"
+    # unknown id → 404 (path-traversal safe : the id is validated against the referent)
+    assert client.get(f"/api/conversations/{conv_id}/plans/p9", headers=_auth(token)).status_code == 404
