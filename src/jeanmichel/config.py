@@ -377,7 +377,9 @@ OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
 
 # Where the streamed LLM output ("slop") is dumped, one .jsonl per call, for debug
 # and post-mortem analysis of slow/looping generations. Empty/"none" disables it.
-LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "llm_streams"))
+# Under debug/ : it's a debug artifact, not runtime data — keeps the repo root clean.
+# (Per-conversation streams live in conversations/<id>/llm_streams/, see llm.py.)
+LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "debug" / "llm_streams"))
 
 # Daemon logging : rotating file (+ stderr) configured at `run()`. The daemon used
 # to log nowhere persistent (terminal only) → silent hangs were undiagnosable.
