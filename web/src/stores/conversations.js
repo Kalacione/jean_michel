@@ -258,6 +258,10 @@ export const useConvStore = defineStore('conversations', () => {
     dispatch.value = null
     error.value = ''
     planPending.value = false // a new turn supersedes any pending choice bar
+    // Optimistic phase so the referent strip reflects THIS turn immediately (the authoritative
+    // phase is refetched at `final`) : a new plan turn resets stale "Répondu", an execute turn
+    // shows "En cours" right away instead of the previous turn's phase.
+    if (convState.value) convState.value.phase = isPlan ? 'planning' : 'executing'
     busy.value = true
     turnWs.sendTurn(clean, files, isPlan)
   }
@@ -275,6 +279,10 @@ export const useConvStore = defineStore('conversations', () => {
   // selector flips to Edit (sticky) so subsequent turns keep executing.
   function approveAndExecute () {
     planMode.value = false
+    // Optimistic : the human just approved → flip the active plan chip to "approuvé" immediately
+    // (the authoritative state is refetched at `final`). sendTurn then sets phase → "En cours".
+    const s = convState.value
+    if (s?.active_plan_id && s.plans?.[s.active_plan_id]) s.plans[s.active_plan_id].approved = true
     sendTurn('Approved — execute the plan above.', [], false)
   }
 

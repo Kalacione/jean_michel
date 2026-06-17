@@ -375,12 +375,16 @@
   })
 
   // ---- organizational referent strip (state.json) ------------------------
+  // The phase chip (left) describes WHERE the turn is ; the plan chip (right) carries approval
+  // ("à valider"/"approuvé"). Labels must NOT collide — hence "Plan proposé" (not "Plan à valider").
   const PHASE_META = {
     idle: { label: 'Au repos', icon: 'mdi-sleep', color: 'surface-light' },
     planning: { label: 'Planification', icon: 'mdi-clipboard-edit-outline', color: 'info' },
-    awaiting_approval: { label: 'Plan à valider', icon: 'mdi-clipboard-alert-outline', color: 'warning' },
-    executing: { label: 'Exécution', icon: 'mdi-cog-play-outline', color: 'primary' },
+    awaiting_approval: { label: 'Plan proposé', icon: 'mdi-clipboard-alert-outline', color: 'warning' },
+    executing: { label: 'En cours', icon: 'mdi-cog-play-outline', color: 'primary' },
     answered: { label: 'Répondu', icon: 'mdi-check-circle-outline', color: 'success' },
+    blocked: { label: 'En attente (humain)', icon: 'mdi-account-question-outline', color: 'warning' },
+    error: { label: 'Erreur', icon: 'mdi-alert-circle-outline', color: 'error' },
   }
   // Show the strip only when there's something organizational to show (not a fresh idle conv).
   const referent = computed(() => {
@@ -390,7 +394,13 @@
       && !(s.files?.length) && !(s.subagents?.length)
     return empty ? null : s
   })
-  const phaseMeta = computed(() => PHASE_META[conv.convState?.phase] || PHASE_META.idle)
+  // blocked / error are derived from the live front state (no backend phase needed) ; otherwise
+  // the maintained phase. "Répondu" only shows when the turn truly concluded (phase=answered).
+  const phaseMeta = computed(() => {
+    if (conv.askHuman) return PHASE_META.blocked
+    if (conv.error) return PHASE_META.error
+    return PHASE_META[conv.convState?.phase] || PHASE_META.idle
+  })
   const activePlan = computed(() => {
     const s = conv.convState
     return s?.active_plan_id ? s.plans?.[s.active_plan_id] || null : null
