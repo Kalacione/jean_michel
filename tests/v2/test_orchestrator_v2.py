@@ -1061,25 +1061,46 @@ def test_run_main_loop_inscribes_request_log_and_phase(tmp_path: Path):
     assert len(st2.requests) == 2 and st2.requests[1]["mode"] == "edit"
 
 
-def test_sync_plan_todo_referent_inscribes_and_clears(tmp_path: Path):
-    """Phase 1.3a : _sync_plan_todo_referent reflète plan.md/todo.json dans le state (progression
-    inscrite) et lâche le tracker quand le todo est vidé."""
+def test_sync_todo_referent_inscribes_and_clears(tmp_path: Path):
+    """Phase 2 : _sync_todo_referent reflète todo.json dans le state (progression) et lâche le
+    tracker quand il est vidé. (Le plan est inscrit par _assign_plan_id_for_write, plus ici.)"""
     from jeanmichel import todo as todomod
-    from jeanmichel.orchestrator_v2 import _sync_plan_todo_referent
-    todomod.save_plan(tmp_path, "# Plan\n## Context\nx")
+    from jeanmichel.orchestrator_v2 import _sync_todo_referent
     todomod.save_todo(tmp_path, "g", [
         {"id": "1", "text": "a", "status": "done"},
         {"id": "2", "text": "b", "status": "in_progress"},
     ])
     s = ConversationState()
-    _sync_plan_todo_referent(tmp_path, s)
-    assert s.active_plan_id == "p1" and s.plans["p1"]["plan_file"] == "plan.md"
+    _sync_todo_referent(tmp_path, s)
     assert s.active_todo_id == "t1"
-    assert s.todos["t1"] == {"plan_id": "p1", "owner": "orchestrator", "file": "todo.json",
+    assert s.todos["t1"] == {"plan_id": None, "owner": "orchestrator", "file": "todo.json",
                              "done": 1, "total": 2, "current_step": "2"}
     todomod.clear_todo(tmp_path)  # all-done / conclusion → todo.json supprimé
-    _sync_plan_todo_referent(tmp_path, s)
+    _sync_todo_referent(tmp_path, s)
     assert s.active_todo_id is None and "t1" not in s.todos
+
+
+def test_assign_plan_id_for_write_cases(tmp_path: Path):
+    """Phase 2 : _assign_plan_id_for_write — premier plan / raffinement / supersede d'un plan approuvé."""
+    from jeanmichel import todo as todomod
+    from jeanmichel.orchestrator_v2 import _assign_plan_id_for_write
+    s = ConversationState()
+    # CAS 1 — premier plan : nouvel id p1, flag posé.
+    todomod.save_plan(tmp_path, "# Plan v1")
+    _assign_plan_id_for_write(tmp_path, s)
+    assert s.active_plan_id == "p1" and s.plan_written_this_turn is True
+    assert s.plans["p1"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
+    # CAS 2 — raffinement d'un plan NON approuvé : même id, pas de supersede.
+    _assign_plan_id_for_write(tmp_path, s)
+    assert s.active_plan_id == "p1" and list(s.plans) == ["p1"]
+    # CAS 3 — re-plan d'un plan APPROUVÉ : p2 actif, p1 superseded + archivé en plan_p1.md.
+    s.plans["p1"]["approved"] = True
+    _assign_plan_id_for_write(tmp_path, s)
+    assert s.active_plan_id == "p2"
+    assert s.plans["p1"]["status"] == "superseded" and s.plans["p1"]["superseded_by"] == "p2"
+    assert s.plans["p1"]["plan_file"] == "plan_p1.md"
+    assert todomod.load_plan_file(tmp_path, "plan_p1.md") == "# Plan v1"  # ancien contenu archivé
+    assert s.plans["p2"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
 
 
 def test_run_main_loop_clears_todo_from_referent_on_conclusion(tmp_path: Path):

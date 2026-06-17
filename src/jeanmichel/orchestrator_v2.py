@@ -58,6 +58,7 @@ from .events import (
     LLMCallStarted,
     PlanApprovalChanged,
     PlanInscribed,
+    PlanSuperseded,
     RequestClosed,
     RequestCompleted,
     RequestOpened,
@@ -80,7 +81,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import clear_todo, load_plan, load_todo
+from .todo import clear_todo, load_plan, load_todo, plan_file_for, save_plan_file
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -415,21 +416,48 @@ class _LoopOutcome:
 _PLAN_READY_MSG = "📋 Plan prêt — approuve pour lancer l'exécution, ou écris-moi ce qu'il faut affiner."
 
 
-def _sync_plan_todo_referent(conv_folder: Path, state: ConversationState) -> None:
-    """Inscribe the current plan/todo files into the referent (``state.plans`` / ``state.todos``)
-    after a plan_write/todo_write/todo_update. [Phase 1.3] Additive bridge : the tools still
-    write the files ; we mirror their metadata into the state so it becomes the read source
-    (Phase 1.5) without re-deriving at read-time. Single plan/todo for now (Phase 2 = multiple ids)."""
-    if load_plan(conv_folder) is not None:
-        pid = state.active_plan_id or "p1"
-        state.active_plan_id = pid
-        existed = pid in state.plans
-        entry = state.plans.setdefault(
-            pid, {"plan_file": "plan.md", "status": "in_progress", "approved": False}
-        )
-        if not existed:  # emit when we WRITE the entry (creation) — journal for the filet
-            append_event(conv_folder, PlanInscribed(
-                plan_id=pid, plan_file=entry["plan_file"], status=entry["status"]))
+def _next_plan_id(state: ConversationState) -> str:
+    """Deterministic next plan id : p{1+max(<N>)} over existing ``p<N>`` keys. NOT len()+1 :
+    superseded plans stay in ``state.plans`` (Phase 2), so a count would collide."""
+    nums = [int(k[1:]) for k in state.plans if k.startswith("p") and k[1:].isdigit()]
+    return f"p{(max(nums) + 1) if nums else 1}"
+
+
+def _assign_plan_id_for_write(conv_folder: Path, state: ConversationState) -> None:
+    """Own the active plan id BEFORE plan_write runs (the deterministic orchestrator owns ids ;
+    the tool stays dumb and writes ``plan.md``). [Phase 2] Supersede rule :
+    - no active plan → new id (first plan) ;
+    - active plan NOT approved → keep it (refinement ; the tool overwrites plan.md in place) ;
+    - active plan APPROVED (= executed) → SUPERSEDE : archive plan.md→plan_<old>.md, mark the old
+      ``superseded`` (+ superseded_by + PlanSuperseded), mint a new id.
+    Sets ``plan_written_this_turn`` (the PLAN gate reads this flag, NOT file existence — re-plan safe).
+    Emits PlanInscribed at CREATION (not in _sync : the entry already exists by the time _sync runs)."""
+    state.plan_written_this_turn = True
+    ap = state.active_plan_id
+    entry = state.plans.get(ap) if ap else None
+    if entry is not None and not entry.get("approved"):
+        return  # refinement of the still-unapproved active plan : same id, plan.md rewritten by the tool
+    if entry is not None and entry.get("approved"):  # genuine re-plan → archive + supersede the old
+        new_pid = _next_plan_id(state)
+        old_md = load_plan(conv_folder)  # the OLD plan content (the tool hasn't written the new one yet)
+        if old_md is not None:
+            save_plan_file(conv_folder, plan_file_for(ap), old_md)
+        entry["status"] = "superseded"
+        entry["superseded_by"] = new_pid
+        entry["plan_file"] = plan_file_for(ap)
+        append_event(conv_folder, PlanSuperseded(plan_id=ap, superseded_by=new_pid))
+        pid = new_pid
+    else:  # no active plan → the first plan
+        pid = _next_plan_id(state)
+    state.active_plan_id = pid
+    state.plans[pid] = {"plan_file": "plan.md", "status": "pending", "approved": False}
+    append_event(conv_folder, PlanInscribed(plan_id=pid, plan_file="plan.md", status="pending"))
+
+
+def _sync_todo_referent(conv_folder: Path, state: ConversationState) -> None:
+    """Mirror the active TODO file into the referent (``state.todos``) after a todo_write/update,
+    or drop it when cleared (all-done / conclusion). [Phase 2 : plan inscription moved to
+    ``_assign_plan_id_for_write`` ; this is todo-only.] Emits TodoInscribed/TodoCleared (filet journal)."""
     todo = load_todo(conv_folder)
     if todo is not None:
         tid = state.active_todo_id or "t1"
@@ -682,7 +710,9 @@ def _run_agent_loop(
                 # and NOT a todo (the todo is built later, at execution). Refuse to conclude
                 # until plan_write has run, and DROP the premature prose so it doesn't show
                 # up as a duplicate "plan" bubble in the chat.
-                if state.plan_mode and load_plan(conv_folder) is None and plan_unwritten_turns < 2:
+                # "written this turn", NOT "plan.md exists" : on a re-plan the OLD approved plan's
+                # plan.md is still present, which would falsely satisfy the gate (Phase 2 piège #1).
+                if state.plan_mode and not state.plan_written_this_turn and plan_unwritten_turns < 2:
                     plan_unwritten_turns += 1
                     if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
                         messages.pop()  # the prose plan is not the deliverable — don't surface it
@@ -706,7 +736,7 @@ def _run_agent_loop(
                 if not state.plan_mode:
                     clear_todo(conv_folder)
                     if is_main_agent:  # keep the referent in sync (todo gone → drop it) [Phase 1.5]
-                        _sync_plan_todo_referent(conv_folder, state)
+                        _sync_todo_referent(conv_folder, state)
                 _emit(
                     event_emitter,
                     conv_folder,
@@ -749,6 +779,10 @@ def _run_agent_loop(
         # Process each tool_call sequentially.
         report_back_outcome: _LoopOutcome | None = None
         for call in resp.tool_calls:
+            # The deterministic orchestrator owns the plan id : assign it (+ supersede the old
+            # approved plan) BEFORE plan_write runs, so the (dumb) tool just writes plan.md. [Phase 2]
+            if is_main_agent and call.name == "plan_write":
+                _assign_plan_id_for_write(conv_folder, state)
             outcome = _handle_tool_call(
                 call=call,
                 conv_folder=conv_folder,
@@ -768,9 +802,9 @@ def _run_agent_loop(
             if outcome is not None:
                 # Only `report_back` produces an outcome inside the per-call loop.
                 report_back_outcome = outcome
-            # Mirror plan/todo writes into the referent (main agent owns state). [Phase 1.3]
-            if is_main_agent and call.name in ("plan_write", "todo_write", "todo_update"):
-                _sync_plan_todo_referent(conv_folder, state)
+            # Mirror todo writes into the referent (plan inscription happens in _assign, above). [Phase 2]
+            if is_main_agent and call.name in ("todo_write", "todo_update"):
+                _sync_todo_referent(conv_folder, state)
             # Mirror a main-agent workspace file write into the referent. [Phase 1.4]
             if is_main_agent and call.name in _FILE_WRITE_TOOLS:
                 _add_file(conv_folder, state, call.arguments.get("path", ""), layer="workspace",
@@ -785,7 +819,7 @@ def _run_agent_loop(
         # turn" guard (not just "plan.md exists") keeps a REFINEMENT turn — where plan.md
         # already exists — from halting before the model has revised it.
         if (is_main_agent and state.plan_mode
-                and any(c.name == "plan_write" for c in resp.tool_calls)
+                and state.plan_written_this_turn
                 and load_plan(conv_folder) is not None):
             messages.append({"role": "assistant", "content": _PLAN_READY_MSG})
             _emit(

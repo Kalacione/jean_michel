@@ -85,6 +85,7 @@ class ConversationState:
     active_subagent: str | None = None
     last_iteration_at_utc: str = ""
     plan_mode: bool = False  # PLAN turn : produce a plan, no mutation (gate in PreToolUse) ; propagated to subagents
+    plan_written_this_turn: bool = False  # a plan_write was assigned/written THIS turn (PLAN gate reads this, not file existence — re-plan safe)
     # Resumable-subagent round-trip (ask_human) : a specialist that blocked on a human
     # question returned low + "HUMAN INPUT NEEDED:". We remember WHICH subagent (code +
     # its saved trace id) so that, once the router relays the human's answer, we RESUME
@@ -126,6 +127,7 @@ class ConversationState:
         counters/flags + take the turn's plan_mode. cf. docs/20260616_meaningful_state (le split)."""
         self.depth_current = 0
         self.plan_mode = plan_mode
+        self.plan_written_this_turn = False
         self.working_tokens_used = 0
         self.search_calls_total = 0
         self.search_calls_since_last_persist = 0
