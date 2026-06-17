@@ -14,6 +14,7 @@ import { registerPlugins } from '@/plugins'
 import App from './App.vue'
 
 // Styles
+import 'katex/dist/katex.min.css'  // KaTeX glyphs/spacing for rendered LaTeX in chat bubbles
 import 'unfonts.css'
 
 const app = createApp(App)
