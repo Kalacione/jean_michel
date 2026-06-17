@@ -496,9 +496,10 @@ imbriqués ne polluent pas le repo principal.
 
 ## Événements typés
 
-L'orchestrateur émet 23 types d'events (catalogue dans
-`src/jeanmichel/events.py`) consommés par le CLI live et persistés dans
-`events.jsonl`. L'arbre des délégations se reconstruit en filtrant les
+L'orchestrateur émet 24 types d'events (catalogue dans
+`src/jeanmichel/events.py`) consommés par le CLI/UI live et persistés dans
+`events.jsonl` (sauf les flux WS-only `AgentTokenStreamed` et `ReferentSnapshot`,
+jamais écrits). L'arbre des délégations se reconstruit en filtrant les
 `DelegationStarted` / `DelegationCompleted` ; les events d'**inscription au
 référent** (`*Inscribed`, `Plan*`, `Todo*`…) alimentent le filet
 `rebuild_from_events`.
@@ -516,6 +517,7 @@ référent** (`*Inscribed`, `Plan*`, `Todo*`…) alimentent le filet
 | `MemoryNearCapacity` / `MemoryConsolidationProposed` | mémoire pleine / candidat shadow |
 | `PlanInscribed` / `PlanApprovalChanged` / `PlanSuperseded` | référent : plan écrit / approuvé / remplacé |
 | `TodoInscribed` / `TodoCleared` · `FileProduced` · `SubagentInscribed` | référent : todo / fichier / subagent |
+| `ReferentSnapshot`          | snapshot live du référent poussé à l'UI (WS-only, non persisté) |
 
 ## Workspace per-conversation
 
@@ -887,7 +889,7 @@ jeanmichel/
 │   ├── dispatcher.py         # Tier 0 (granite)
 │   ├── hooks.py              # 4 hooks Python
 │   ├── compaction.py         # 4-level escalade
-│   ├── events.py             # 23 dataclasses typées
+│   ├── events.py             # 24 dataclasses typées
 │   ├── tokens.py             # estimation contexte
 │   ├── llm.py                # OllamaClient + MockClient (chat_messages)
 │   ├── persistence.py        # messages.json + state.json + events.jsonl

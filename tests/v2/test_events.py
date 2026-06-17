@@ -43,6 +43,7 @@ def test_event_catalogue_has_all_entries():
         "RequestCompleted",
         "AgentThinking",
         "AgentTokenStreamed",
+        "ReferentSnapshot",  # WS-only live referent push (never persisted, like AgentTokenStreamed)
         "MemoryConsolidationProposed",
         # Referent domain events (Phase 1.6) — the rebuild_from_events journal.
         "RequestOpened",
@@ -57,7 +58,7 @@ def test_event_catalogue_has_all_entries():
         "PlanSuperseded",
     }
     assert set(EVENT_CLASSES.keys()) == expected
-    assert len(EVENT_CLASSES) == 23
+    assert len(EVENT_CLASSES) == 24
 
 
 # ---- Each event has utc auto-populated -----------------------------------

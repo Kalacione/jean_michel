@@ -176,6 +176,10 @@ export const useConvStore = defineStore('conversations', () => {
           }
           return
         }
+        // Live referent snapshot (state.json) → replace the summary-strip source WHOLESALE.
+        // Authoritative : the backend pushes this after every persist, so the chips reflect the
+        // maintained referent live (no optimistic guess, no stale best-effort refetch).
+        if (ev?.type === 'ReferentSnapshot') { convState.value = ev.state; return }
         // A tool/delegation means any streamed content so far was intermediate
         // narration (not the final answer) → discard the half-built bubble.
         if (ev?.type === 'ToolCallStarted' || ev?.type === 'DelegationStarted') {
@@ -213,14 +217,13 @@ export const useConvStore = defineStore('conversations', () => {
           plan.value = r.plan || null
           planPending.value = r.status === 'proposed'
         }).catch(() => { planPending.value = false })
-        // Refresh the organizational referent so the summary strip reflects the turn just done
-        // (phase moved, plan accepted, todo progressed, files/subagents produced).
-        api.state(id).then(r => { convState.value = r.state || null }).catch(() => {})
+        // convState is already up to date : the orchestrator pushed an authoritative end-of-turn
+        // ReferentSnapshot over the WS just before {final} (no separate best-effort GET needed).
         refresh() // re-order the list (last interaction first) + pick up auto-title
         fetchWsFiles() // surface files the agent just created as message links
         if (vocal.value) speak(m.answer)
       },
-      error: m => { busy.value = false; stopping.value = false; queued.value = false; stopStreaming(); error.value = m.detail || 'Erreur orchestrateur.' },
+      error: m => { busy.value = false; stopping.value = false; queued.value = false; stopStreaming(); error.value = m.detail || 'Erreur orchestrateur.'; api.state(id).then(r => { convState.value = r.state || null }).catch(() => {}) },
       close: () => { busy.value = false; stopping.value = false; stopStreaming() },
     })
   }
@@ -279,10 +282,8 @@ export const useConvStore = defineStore('conversations', () => {
   // selector flips to Edit (sticky) so subsequent turns keep executing.
   function approveAndExecute () {
     planMode.value = false
-    // Optimistic : the human just approved → flip the active plan chip to "approuvé" immediately
-    // (the authoritative state is refetched at `final`). sendTurn then sets phase → "En cours".
-    const s = convState.value
-    if (s?.active_plan_id && s.plans?.[s.active_plan_id]) s.plans[s.active_plan_id].approved = true
+    // No optimistic `approved` flip : the backend pushes a ReferentSnapshot within ~1 iteration,
+    // so the chip flips authoritatively (the old guess sometimes showed "approuvé" wrongly).
     sendTurn('Approved — execute the plan above.', [], false)
   }
 
@@ -322,6 +323,8 @@ export const useConvStore = defineStore('conversations', () => {
     trace.value = []
     dispatch.value = null
     await fetchWsFiles()
+    // A revert rewrote state.json too (no WS frame for a revert) → re-pull the referent.
+    convState.value = await api.state(currentId.value).then(r => r.state || null).catch(() => null)
   }
 
   async function loadSnapshots () {

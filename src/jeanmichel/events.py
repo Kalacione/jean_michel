@@ -212,6 +212,21 @@ class AgentTokenStreamed:
         return _event_to_dict(self)
 
 
+@dataclass(frozen=True)
+class ReferentSnapshot:
+    """A full snapshot of the organizational referent (state.json), pushed LIVE to the UI
+    over the WebSocket after each in-turn persist so the summary strip (phase, plans, files,
+    subagents) is always authoritative — never an optimistic guess nor a single best-effort
+    refetch. Emitted WS-only (via `_emit(emitter, None, …)`, conv_folder=None) so it is NEVER
+    persisted to events.jsonl (it would bloat it and is not a domain event for the
+    rebuild_from_events safety net). `state` mirrors exactly what `/state` serves."""
+    state: dict[str, Any]
+    utc: str = field(default_factory=_utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _event_to_dict(self)
+
+
 # ---- Referent domain events (Phase 1.6) ----------------------------------
 #
 # A persist-only journal (append_event, NOT _emit) of every mutation to the
@@ -356,6 +371,7 @@ EVENT_CLASSES: dict[str, type] = {
     "RequestCompleted": RequestCompleted,
     "AgentThinking": AgentThinking,
     "AgentTokenStreamed": AgentTokenStreamed,
+    "ReferentSnapshot": ReferentSnapshot,  # WS-only (never persisted) ; registered for round-trip parity
     "MemoryConsolidationProposed": MemoryConsolidationProposed,
     # Referent domain events (Phase 1.6)
     "RequestOpened": RequestOpened,

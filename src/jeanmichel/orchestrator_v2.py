@@ -34,7 +34,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -59,6 +59,7 @@ from .events import (
     PlanApprovalChanged,
     PlanInscribed,
     PlanSuperseded,
+    ReferentSnapshot,
     RequestClosed,
     RequestCompleted,
     RequestOpened,
@@ -301,6 +302,15 @@ def _emit(emitter: EventEmitter | None, conv_folder: Path | None, event: Any) ->
             append_event(conv_folder, event)
         except Exception as exc:  # noqa: BLE001
             _log.warning("event persistence failed: %s", exc)
+
+
+def _emit_referent(emitter: EventEmitter | None, state: ConversationState) -> None:
+    """Push the full referent (state.json) to the live UI over the WS so the summary strip
+    is authoritative — WS-only (conv_folder=None, never persisted). No-op without an emitter
+    (CLI). `asdict(state)` mirrors exactly what `save_state` writes and `/state` serves."""
+    if emitter is None:
+        return
+    _emit(emitter, None, ReferentSnapshot(state=asdict(state)))
 
 
 def _execute_native_tool(call: ToolCall, registry: dict[str, Any]) -> dict[str, Any]:
@@ -592,6 +602,7 @@ def _run_agent_loop(
         if is_main_agent:
             save_messages(conv_folder, messages)
             save_state(conv_folder, state)
+            _emit_referent(event_emitter, state)  # push the live referent to the UI strip
 
     for _iteration in range(max_iterations):
         state.last_iteration_at_utc = datetime.now(UTC).isoformat()  # alimenté (était mort)
@@ -1331,6 +1342,7 @@ def run_main_loop(
             request_id=last["id"], outcome=last["outcome"], summary=last["summary"],
             ended=last["ended"], last_iteration_utc=last["last_iteration_utc"]))
     save_state(conv_folder, state)
+    _emit_referent(event_emitter, state)  # authoritative end-of-turn snapshot (terminal phase + outcome)
 
     if outcome.kind == "final_answer":
         return outcome.content
