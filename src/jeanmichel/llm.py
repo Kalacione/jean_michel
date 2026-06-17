@@ -235,6 +235,21 @@ class OllamaClient:
         except Exception as exc:  # noqa: BLE001
             _log.warning("ollama unload(%s) failed: %s", model, exc)
 
+    def _kill_inflight(self, model: str) -> None:
+        """Hard-abort an in-flight streamed call. CLOSING the underlying httpx connection is
+        what actually stops things : it unblocks the producer thread stuck in `iter_lines()`
+        AND makes Ollama see a client disconnect (recent Ollama then CANCELS the generation,
+        freeing the model). `unload()` alone does NOT — an in-flight generation keeps running
+        and the model stays resident until it finishes (the bug : Stop left Ollama 'moulinant'.)
+        Then recreate the client (the old httpx.Client is now closed) + best-effort unload.
+        Never raises."""
+        from ollama import Client
+        with contextlib.suppress(Exception):
+            self._client._client.close()  # noqa: SLF001 — close the httpx.Client transport
+        with contextlib.suppress(Exception):
+            self._client = Client(host=self.host)  # fresh client ; the old one is closed
+        self.unload(model)  # best-effort VRAM evict (already never raises)
+
     def chat(self, *, system: str, user: str, tools: list[dict[str, Any]],
              temperature: float, thinking: bool) -> LLMResponse:
         """v1 legacy path. Builds a 2-message array and forwards to chat_messages."""
@@ -267,10 +282,10 @@ class OllamaClient:
 
         Forwards `messages` verbatim to Ollama. We stream so that (a) we can detect a
         STALL (no token for LLM_STALL_TIMEOUT_SECONDS = the model is hung) without
-        guessing a total timeout, (b) we tee the raw output to a debug file, and (c) an
-        abandoned call frees OUR thread immediately (we stop pulling) even though Ollama
-        keeps generating (upstream bug : no cancel on disconnect). Per-call model
-        override + Ollama `format="json"` (Tier 0 dispatcher) supported.
+        guessing a total timeout, (b) we tee the raw output to a debug file, and (c) a
+        user Stop / stall / hard-cap can HARD-ABORT the call via `_kill_inflight` — which
+        CLOSES the httpx connection so Ollama sees a disconnect and stops generating (not
+        just freeing our thread). Per-call model override + `format="json"` supported.
         """
         eff_model = model or self.model
         # Single-model-in-VRAM : free the previous model when switching to a different
@@ -359,20 +374,20 @@ class OllamaClient:
         try:
             while True:
                 if cancel_check is not None and cancel_check():
-                    self.unload(eff_model)  # best-effort GPU free (Ollama may keep going)
+                    self._kill_inflight(eff_model)  # close the connection → Ollama stops generating
                     raise LLMCancelledError(f"cancelled by user (model {eff_model})")
                 try:
                     kind, payload = q.get(timeout=poll)
                 except queue.Empty:
                     now = time.monotonic()
                     if now - last > LLM_STALL_TIMEOUT_SECONDS:
-                        self.unload(eff_model)  # best-effort GPU free (Ollama may keep going)
+                        self._kill_inflight(eff_model)  # close the hung connection
                         raise LLMTimeoutError(
                             f"Ollama stalled: no token for {LLM_STALL_TIMEOUT_SECONDS}s "
-                            f"(model {eff_model}); aborted and requested unload."
+                            f"(model {eff_model}); aborted and closed the connection."
                         ) from None
                     if now - start > LLM_CALL_TIMEOUT_SECONDS:
-                        self.unload(eff_model)
+                        self._kill_inflight(eff_model)
                         raise LLMTimeoutError(
                             f"Ollama exceeded hard cap {LLM_CALL_TIMEOUT_SECONDS}s (model {eff_model})."
                         ) from None
@@ -397,7 +412,7 @@ class OllamaClient:
                         sink.write(thinking_delta + content_delta)
                         sink.flush()
                 if time.monotonic() - start > LLM_CALL_TIMEOUT_SECONDS:
-                    self.unload(eff_model)
+                    self._kill_inflight(eff_model)
                     raise LLMTimeoutError(
                         f"Ollama exceeded hard cap {LLM_CALL_TIMEOUT_SECONDS}s (model {eff_model})."
                     ) from None

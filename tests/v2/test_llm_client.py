@@ -138,6 +138,55 @@ def test_chat_messages_marks_corrupted_after_double_failure():
 # ---- v2 LLMResponse token usage fields ----------------------------------
 
 
+def test_consume_stream_cancel_closes_connection():
+    """R1.1 : un Stop (cancel_check) doit FERMER la connexion httpx sous-jacente — sinon le
+    producteur reste bloqué dans iter_lines() et Ollama continue de générer dans le vide
+    (le bug : il fallait tuer le daemon). _kill_inflight ferme + recrée le client + raise."""
+    import time
+
+    from jeanmichel.llm import LLMCancelledError, OllamaClient
+
+    class _FakeHttpx:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _FakeOllama:
+        def __init__(self) -> None:
+            self._client = _FakeHttpx()
+
+        def chat(self, **kwargs):
+            httpx_client = self._client
+
+            def gen():
+                while not httpx_client.closed:  # the producer stops once the connection is closed
+                    yield {"message": {"content": "x"}}
+                    time.sleep(0.005)
+
+            return gen()
+
+        def generate(self, **kwargs):  # unload() target — no-op here
+            pass
+
+    oc = OllamaClient(host="http://localhost:1")  # constructed lazily ; no connection yet
+    fake = _FakeOllama()
+    oc._client = fake
+
+    flips = {"n": 0}
+
+    def cancel() -> bool:
+        flips["n"] += 1
+        return flips["n"] > 2  # stream a couple chunks, then the user hits Stop
+
+    with pytest.raises(LLMCancelledError):
+        oc._consume_stream({"model": "m", "messages": []}, "m", None, None, cancel_check=cancel)
+
+    assert fake._client.closed is True   # the in-flight connection was actually closed
+    assert oc._client is not fake         # client recreated for subsequent calls
+
+
 def test_llm_response_has_token_usage_fields_defaulting_to_zero():
     resp = LLMResponse(thinking="", content="hi")
     assert resp.prompt_eval_count == 0
