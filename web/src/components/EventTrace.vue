@@ -97,7 +97,7 @@
   const HIDDEN = new Set([
     'LLMCallStarted', 'LLMCallCompleted',
     'RequestOpened', 'RequestClosed', 'PlanInscribed', 'PlanApprovalChanged',
-    'TodoInscribed', 'TodoCleared', 'FileProduced', 'SubagentInscribed',
+    'TodoInscribed', 'TodoCleared', 'FileProduced', 'SubagentInscribed', 'PlanSuperseded',
   ])
   const rows = computed(() =>
     props.events.map(m => m.event).filter(e => e && !HIDDEN.has(e.type)),

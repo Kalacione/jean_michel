@@ -158,7 +158,49 @@
       <v-chip v-if="subCount" label size="x-small" variant="text">
         <v-icon icon="mdi-account-multiple-outline" size="13" start /> {{ subCount }}
       </v-chip>
+      <v-chip
+        v-if="supersededPlans.length"
+        label
+        size="x-small"
+        variant="text"
+        @click="openHistory"
+      >
+        <v-icon icon="mdi-history" size="13" start />
+        {{ supersededPlans.length }} plan{{ supersededPlans.length > 1 ? 's' : '' }} précédent{{ supersededPlans.length > 1 ? 's' : '' }}
+      </v-chip>
     </div>
+
+    <!-- Plan history (superseded plans, read-only) — Phase 2. -->
+    <v-dialog v-model="history.open" max-width="720">
+      <v-card>
+        <v-card-title class="d-flex align-center ga-2">
+          <v-icon icon="mdi-history" /> Plans précédents
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" @click="history.open = false" />
+        </v-card-title>
+        <v-divider />
+        <div class="d-flex" style="min-height: 320px;">
+          <v-list class="py-0" density="compact" style="min-width: 160px; border-right: 1px solid rgba(var(--v-border-color), 0.12);">
+            <v-list-item
+              v-for="p in supersededPlans"
+              :key="p.plan_id"
+              :active="history.viewing === p.plan_id"
+              :title="p.plan_id"
+              @click="viewPlan(p.plan_id)"
+            >
+              <template #subtitle>superseded</template>
+            </v-list-item>
+          </v-list>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <v-sheet
+            class="md pa-3 flex-grow-1"
+            color="surface"
+            style="max-height: 60vh; overflow-y: auto;"
+            v-html="history.md ? renderMarkdown(history.md) : '<em>Sélectionne un plan…</em>'"
+          />
+        </div>
+      </v-card>
+    </v-dialog>
 
     <!-- Plan presented → approve (execute in a fresh Edit turn) or type feedback to refine. -->
     <div v-if="conv.planPending" class="px-3 pt-2">
@@ -359,6 +401,29 @@
   })
   const fileCount = computed(() => conv.convState?.files?.length || 0)
   const subCount = computed(() => conv.convState?.subagents?.length || 0)
+
+  // ---- plan history (superseded plans, Phase 2) --------------------------
+  const supersededPlans = computed(() => {
+    const plans = conv.convState?.plans || {}
+    return Object.entries(plans)
+      .filter(([, p]) => p.status === 'superseded')
+      .map(([plan_id, p]) => ({ plan_id, ...p }))
+  })
+  const history = ref({ open: false, viewing: null, md: '' })
+  function openHistory () {
+    history.value = { open: true, viewing: null, md: '' }
+    const first = supersededPlans.value[0]
+    if (first) viewPlan(first.plan_id)
+  }
+  async function viewPlan (planId) {
+    history.value.viewing = planId
+    history.value.md = ''
+    try {
+      const r = await api.getPlanById(conv.currentId, planId)
+      if (history.value.viewing === planId) history.value.md = r.plan || '_(plan vide)_'
+    } catch { history.value.md = '_(échec du chargement)_' }
+  }
+
   const attachments = ref([]) // workspace paths attached to the next message
   const scroller = ref(null)
   const fileInput = ref(null)

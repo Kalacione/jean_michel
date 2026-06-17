@@ -67,6 +67,8 @@ export const api = {
   putTodo: (id, goal, items) => request('PUT', `/conversations/${id}/todo`, { goal, items }),
   getPlan: id => request('GET', `/conversations/${id}/plan`),
   putPlan: (id, markdown) => request('PUT', `/conversations/${id}/plan`, { markdown }),
+  getPlans: id => request('GET', `/conversations/${id}/plans`),
+  getPlanById: (id, planId) => request('GET', `/conversations/${id}/plans/${planId}`),
 
   snapshots: id => request('GET', `/conversations/${id}/snapshots`),
   revertConversation: (id, commit) => request('POST', `/conversations/${id}/revert`, { commit }),
