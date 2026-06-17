@@ -81,7 +81,7 @@ from .persistence import (
     save_state,
     save_sub_messages,
 )
-from .todo import clear_todo, load_plan, load_todo, plan_file_for, save_plan_file
+from .todo import clear_todo, load_active_plan, load_todo, plan_file_for
 from .tokens import estimate_messages_tokens, estimate_tools_payload_tokens
 from .tools import _repo
 from .tools._workspace import workspace_root_for
@@ -416,6 +416,15 @@ class _LoopOutcome:
 _PLAN_READY_MSG = "📋 Plan prêt — approuve pour lancer l'exécution, ou écris-moi ce qu'il faut affiner."
 
 
+def _plan_ready_msg(state: ConversationState) -> str:
+    """The PLAN-turn conclusion : references the active plan's workspace file so the human + the
+    executor know where it lives (the plan is no longer re-injected ; it's read on demand). [Phase 2 R2.2]"""
+    pid = state.active_plan_id
+    if pid:
+        return f"{_PLAN_READY_MSG} (plan : workspace/plan_{pid}.md)"
+    return _PLAN_READY_MSG
+
+
 def _next_plan_id(state: ConversationState) -> str:
     """Deterministic next plan id : p{1+max(<N>)} over existing ``p<N>`` keys. NOT len()+1 :
     superseded plans stay in ``state.plans`` (Phase 2), so a count would collide."""
@@ -424,34 +433,36 @@ def _next_plan_id(state: ConversationState) -> str:
 
 
 def _assign_plan_id_for_write(conv_folder: Path, state: ConversationState) -> None:
-    """Own the active plan id BEFORE plan_write runs (the deterministic orchestrator owns ids ;
-    the tool stays dumb and writes ``plan.md``). [Phase 2] Supersede rule :
+    """Own the active plan id BEFORE plan_write runs : the deterministic orchestrator owns ids ; the
+    tool then reads active_plan_id from state.json and writes ``workspace/plan_<id>.md``. [Phase 2 R2.1]
+    Supersede rule :
     - no active plan → new id (first plan) ;
-    - active plan NOT approved → keep it (refinement ; the tool overwrites plan.md in place) ;
-    - active plan APPROVED (= executed) → SUPERSEDE : archive plan.md→plan_<old>.md, mark the old
-      ``superseded`` (+ superseded_by + PlanSuperseded), mint a new id.
-    Sets ``plan_written_this_turn`` (the PLAN gate reads this flag, NOT file existence — re-plan safe).
-    Emits PlanInscribed at CREATION (not in _sync : the entry already exists by the time _sync runs)."""
+    - active plan NOT approved → keep it (refinement ; the tool overwrites its file in place) ;
+    - active plan APPROVED (= executed) → SUPERSEDE : mark the old ``superseded`` (+ superseded_by +
+      PlanSuperseded), mint a new id. No file copy — each plan already has its own per-id file.
+    Sets ``plan_written_this_turn`` (the PLAN gate reads this flag, NOT file existence — re-plan safe),
+    emits PlanInscribed at CREATION, and PERSISTS the state so the tool sees the assigned id."""
     state.plan_written_this_turn = True
     ap = state.active_plan_id
     entry = state.plans.get(ap) if ap else None
-    if entry is not None and not entry.get("approved"):
-        return  # refinement of the still-unapproved active plan : same id, plan.md rewritten by the tool
-    if entry is not None and entry.get("approved"):  # genuine re-plan → archive + supersede the old
+    if entry is None or not entry.get("approved"):
+        if entry is None:  # no active plan (or stale pointer) → the first plan
+            pid = _next_plan_id(state)
+            pf = plan_file_for(pid)
+            state.active_plan_id = pid
+            state.plans[pid] = {"plan_file": pf, "status": "pending", "approved": False}
+            append_event(conv_folder, PlanInscribed(plan_id=pid, plan_file=pf, status="pending"))
+        # else : refinement of the still-unapproved active plan → same id, file overwritten by the tool.
+    else:  # active plan APPROVED → genuine re-plan : supersede the old (its per-id file stays put), mint a new
         new_pid = _next_plan_id(state)
-        old_md = load_plan(conv_folder)  # the OLD plan content (the tool hasn't written the new one yet)
-        if old_md is not None:
-            save_plan_file(conv_folder, plan_file_for(ap), old_md)
         entry["status"] = "superseded"
         entry["superseded_by"] = new_pid
-        entry["plan_file"] = plan_file_for(ap)
         append_event(conv_folder, PlanSuperseded(plan_id=ap, superseded_by=new_pid))
-        pid = new_pid
-    else:  # no active plan → the first plan
-        pid = _next_plan_id(state)
-    state.active_plan_id = pid
-    state.plans[pid] = {"plan_file": "plan.md", "status": "pending", "approved": False}
-    append_event(conv_folder, PlanInscribed(plan_id=pid, plan_file="plan.md", status="pending"))
+        pf = plan_file_for(new_pid)
+        state.active_plan_id = new_pid
+        state.plans[new_pid] = {"plan_file": pf, "status": "pending", "approved": False}
+        append_event(conv_folder, PlanInscribed(plan_id=new_pid, plan_file=pf, status="pending"))
+    save_state(conv_folder, state)  # persist active_plan_id so plan_write (reads state.json) writes the right file
 
 
 def _sync_todo_referent(conv_folder: Path, state: ConversationState) -> None:
@@ -815,15 +826,16 @@ def _run_agent_loop(
         # already exists — from halting before the model has revised it.
         if (is_main_agent and state.plan_mode
                 and state.plan_written_this_turn
-                and load_plan(conv_folder) is not None):
-            messages.append({"role": "assistant", "content": _PLAN_READY_MSG})
+                and load_active_plan(conv_folder, state) is not None):
+            ready = _plan_ready_msg(state)
+            messages.append({"role": "assistant", "content": ready})
             _emit(
                 event_emitter,
                 conv_folder,
-                RequestCompleted(agent=agent.code, final_content_summary=_PLAN_READY_MSG),
+                RequestCompleted(agent=agent.code, final_content_summary=ready),
             )
             _persist()
-            return _LoopOutcome(kind="final_answer", content=_PLAN_READY_MSG)
+            return _LoopOutcome(kind="final_answer", content=ready)
 
         if report_back_outcome is not None:
             return report_back_outcome

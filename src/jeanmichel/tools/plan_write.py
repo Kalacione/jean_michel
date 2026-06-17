@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..todo import save_plan
+from ..todo import save_active_plan
 from ._base import ToolSpec
 from ._errors import tool_error, tool_ok
 
@@ -28,9 +28,11 @@ def make_spec(conv_folder: Path) -> ToolSpec:
                 "invalid_plan",
                 "plan_write requires a non-empty 'markdown' plan document.",
             )
-        save_plan(conv_folder, markdown.strip())
+        # The plan lives in the shared workspace as plan_<id>.md ; the orchestrator assigns the
+        # active plan id BEFORE this tool runs (save_active_plan resolves it from state). [Phase 2]
+        path = save_active_plan(conv_folder, markdown.strip())
         lines = markdown.strip().count("\n") + 1
-        return tool_ok(f"plan saved ({lines} lines)", lines=lines)
+        return tool_ok(f"plan saved to {path} ({lines} lines)", lines=lines, path=path)
 
     return ToolSpec(
         name="plan_write",

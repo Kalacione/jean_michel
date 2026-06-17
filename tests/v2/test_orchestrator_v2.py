@@ -961,7 +961,7 @@ def test_plan_mode_forces_plan_write_before_concluding(tmp_path: Path):
 def test_plan_mode_halts_after_plan_write(tmp_path: Path):
     """A PLAN turn STOPS the moment plan_write has run — it must NOT chain into todo/execution
     /answering (gemma4 planned+executed+answered in one turn, conv 00-17). Deterministic."""
-    from jeanmichel.todo import load_plan, load_todo
+    from jeanmichel.todo import load_plan_file, load_todo
     from jeanmichel.tools import plan_write as plan_write_mod
 
     agent = make_agent("jean-michel", role="router", tool_grants={"plan_write"})
@@ -976,17 +976,22 @@ def test_plan_mode_halts_after_plan_write(tmp_path: Path):
     )
     assert "Plan prêt" in result            # the halt message
     assert len(mock.calls_v2) == 1          # stopped right after plan_write — no second turn
-    assert load_plan(tmp_path) is not None  # the plan was authored
+    assert load_plan_file(tmp_path, "workspace/plan_p1.md") is not None  # the plan was authored (in workspace)
     assert load_todo(tmp_path) is None      # NO execution / todo built in the plan turn
 
 
 def test_plan_mode_refinement_does_not_halt_before_rewrite(tmp_path: Path):
-    """On a REFINEMENT turn plan.md already exists — the turn must NOT halt until plan_write is
-    called AGAIN (the model may explore first). Halt fires only on the fresh plan_write."""
+    """On a REFINEMENT turn an unapproved active plan already exists — the turn must NOT halt until
+    plan_write is called AGAIN (the model may explore first). Halt fires only on the fresh plan_write."""
+    from jeanmichel import persistence
     from jeanmichel import todo as todomod
     from jeanmichel.tools import plan_write as plan_write_mod
 
-    todomod.save_plan(tmp_path, "# Old plan\n")  # a plan already exists (from a prior turn)
+    # An unapproved active plan already exists (from a prior plan turn) → this is a refinement.
+    todomod.save_plan_file(tmp_path, "workspace/plan_p1.md", "# Old plan\n")
+    persistence.save_state(tmp_path, ConversationState(
+        active_plan_id="p1",
+        plans={"p1": {"plan_file": "workspace/plan_p1.md", "status": "pending", "approved": False}}))
     agent = make_agent("jean-michel", role="router", tool_grants={"plan_write", "echo"})
     registry = {"plan_write": plan_write_mod.make_spec(tmp_path), "echo": make_echo_tool()}
     mock = MockClient(script=[
@@ -999,7 +1004,8 @@ def test_plan_mode_refinement_does_not_halt_before_rewrite(tmp_path: Path):
     )
     assert "Plan prêt" in result
     assert len(mock.calls_v2) == 2  # the exploration turn was NOT cut short
-    assert "Revised" in todomod.load_plan(tmp_path)  # the plan was actually revised
+    # Refinement kept the same id p1 ; its workspace file was revised in place.
+    assert "Revised" in todomod.load_plan_file(tmp_path, "workspace/plan_p1.md")
 
 
 def test_edit_conclusion_clears_todo(tmp_path: Path):
@@ -1081,26 +1087,24 @@ def test_sync_todo_referent_inscribes_and_clears(tmp_path: Path):
 
 
 def test_assign_plan_id_for_write_cases(tmp_path: Path):
-    """Phase 2 : _assign_plan_id_for_write — premier plan / raffinement / supersede d'un plan approuvé."""
-    from jeanmichel import todo as todomod
+    """Phase 2 R2.1 : _assign_plan_id_for_write — premier plan / raffinement / supersede d'un plan
+    approuvé. Chaque plan a son fichier par-id dans workspace/ (pas d'archivage : les fichiers restent)."""
     from jeanmichel.orchestrator_v2 import _assign_plan_id_for_write
     s = ConversationState()
-    # CAS 1 — premier plan : nouvel id p1, flag posé.
-    todomod.save_plan(tmp_path, "# Plan v1")
+    # CAS 1 — premier plan : nouvel id p1 (fichier workspace/plan_p1.md), flag posé.
     _assign_plan_id_for_write(tmp_path, s)
     assert s.active_plan_id == "p1" and s.plan_written_this_turn is True
-    assert s.plans["p1"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
+    assert s.plans["p1"] == {"plan_file": "workspace/plan_p1.md", "status": "pending", "approved": False}
     # CAS 2 — raffinement d'un plan NON approuvé : même id, pas de supersede.
     _assign_plan_id_for_write(tmp_path, s)
     assert s.active_plan_id == "p1" and list(s.plans) == ["p1"]
-    # CAS 3 — re-plan d'un plan APPROUVÉ : p2 actif, p1 superseded + archivé en plan_p1.md.
+    # CAS 3 — re-plan d'un plan APPROUVÉ : p2 actif, p1 superseded (son fichier par-id reste en place).
     s.plans["p1"]["approved"] = True
     _assign_plan_id_for_write(tmp_path, s)
     assert s.active_plan_id == "p2"
     assert s.plans["p1"]["status"] == "superseded" and s.plans["p1"]["superseded_by"] == "p2"
-    assert s.plans["p1"]["plan_file"] == "plan_p1.md"
-    assert todomod.load_plan_file(tmp_path, "plan_p1.md") == "# Plan v1"  # ancien contenu archivé
-    assert s.plans["p2"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
+    assert s.plans["p1"]["plan_file"] == "workspace/plan_p1.md"  # inchangé (pas de renommage)
+    assert s.plans["p2"] == {"plan_file": "workspace/plan_p2.md", "status": "pending", "approved": False}
 
 
 def test_run_main_loop_clears_todo_from_referent_on_conclusion(tmp_path: Path):
@@ -1302,29 +1306,30 @@ def test_rebuild_matches_maintained_with_replan_supersede(tmp_path: Path):
     assert org(rebuilt) == org(maintained)                   # ★ maintenu == reconstruit (avec supersede)
     assert maintained.active_plan_id == "p2"
     assert maintained.plans["p1"] == {
-        "plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
+        "plan_file": "workspace/plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
     assert maintained.plans["p2"]["approved"] is False       # nouveau plan, en attente d'approbation
     assert maintained.phase == "awaiting_approval"
-    # l'ancien plan est ARCHIVÉ (consultable), le nouveau est l'actif (plan.md) :
-    assert todomod.load_plan_file(tmp_path, "plan_p1.md") == "# Plan v1"
-    assert todomod.load_plan(tmp_path) == "# Plan v2"
+    # Chaque plan a son fichier par-id dans workspace/ (consultable) ; le nouveau est l'actif :
+    assert todomod.load_plan_file(tmp_path, "workspace/plan_p1.md") == "# Plan v1"
+    assert todomod.load_active_plan(tmp_path, maintained) == "# Plan v2"
     assert org(persistence.rebuild_from_events(events)) == org(rebuilt)  # idempotent
 
 
 def test_rebuild_folds_plan_superseded():
-    """Phase 2 (B.2) : le filet reconstruit le supersede — ancien plan archivé, nouveau actif."""
+    """Phase 2 : le filet reconstruit le supersede — chaque plan garde son fichier par-id, le
+    nouveau devient actif (PlanSuperseded ne change PAS plan_file)."""
     from jeanmichel import persistence
     events = [
-        {"type": "PlanInscribed", "plan_id": "p1", "plan_file": "plan.md", "status": "pending"},
+        {"type": "PlanInscribed", "plan_id": "p1", "plan_file": "workspace/plan_p1.md", "status": "pending"},
         {"type": "PlanApprovalChanged", "plan_id": "p1", "approved": True},
         {"type": "PlanSuperseded", "plan_id": "p1", "superseded_by": "p2"},
-        {"type": "PlanInscribed", "plan_id": "p2", "plan_file": "plan.md", "status": "pending"},
+        {"type": "PlanInscribed", "plan_id": "p2", "plan_file": "workspace/plan_p2.md", "status": "pending"},
     ]
     st = persistence.rebuild_from_events(events)
     assert st.active_plan_id == "p2"
     assert st.plans["p1"] == {
-        "plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
-    assert st.plans["p2"] == {"plan_file": "plan.md", "status": "pending", "approved": False}
+        "plan_file": "workspace/plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
+    assert st.plans["p2"] == {"plan_file": "workspace/plan_p2.md", "status": "pending", "approved": False}
     assert persistence.rebuild_from_events(events).plans == st.plans  # idempotent
 
 

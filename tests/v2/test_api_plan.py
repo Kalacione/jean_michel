@@ -96,14 +96,14 @@ def test_list_plans_and_get_by_id(client, alice):
     token, conv_id = alice
     with db_connect() as conn:
         folder = Path(db.get_conversation(conn, conv_id)["folder_path"])
-    # p1 superseded (archivé en plan_p1.md), p2 actif (plan.md).
-    todo_mod.save_plan_file(folder, "plan_p1.md", "# Plan v1")
-    todo_mod.save_plan(folder, "# Plan v2")
+    # p1 superseded, p2 actif — chaque plan a son fichier par-id dans workspace/.
+    todo_mod.save_plan_file(folder, "workspace/plan_p1.md", "# Plan v1")
+    todo_mod.save_plan_file(folder, "workspace/plan_p2.md", "# Plan v2")
     persistence.save_state(folder, ConversationState(
         active_plan_id="p2",
         plans={
-            "p1": {"plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"},
-            "p2": {"plan_file": "plan.md", "status": "pending", "approved": False},
+            "p1": {"plan_file": "workspace/plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"},
+            "p2": {"plan_file": "workspace/plan_p2.md", "status": "pending", "approved": False},
         },
     ))
     body = client.get(f"/api/conversations/{conv_id}/plans", headers=_auth(token)).json()

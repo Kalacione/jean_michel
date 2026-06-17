@@ -335,27 +335,42 @@ def create_app() -> Any:
     @app.get("/api/conversations/{conversation_id}/plan")
     def get_plan(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         folder = Path(conv["folder_path"])
-        return {"plan": todo_mod.load_plan(folder), "status": _plan_status(folder)}
+        st = ConversationState.from_dict(persistence.load_state(folder))
+        # Active plan (workspace/plan_<id>.md) ; fall back to a conv-root plan.md (legacy convs, or
+        # a human-authored plan before any plan turn assigned an id).
+        plan = todo_mod.load_active_plan(folder, st) or todo_mod.load_plan(folder)
+        return {"plan": plan, "status": _plan_status(folder)}
 
     @app.put("/api/conversations/{conversation_id}/plan")
     def put_plan(
         body: PlanUpdate, conv: Any = Depends(auth.require_conversation_owner)
     ) -> dict[str, Any]:
-        # Reject a turn-time race : the orchestrator also writes plan.md.
+        # Reject a turn-time race : the orchestrator also writes the plan file.
         if executor.turn_lock.locked():
             raise HTTPException(status_code=409, detail="a turn is in progress")
         folder = Path(conv["folder_path"])
+        st = ConversationState.from_dict(persistence.load_state(folder))
+        pid = st.active_plan_id
+        entry = st.plans.get(pid) if pid else None
+        pf = entry.get("plan_file") if entry else None  # active plan's file (workspace/plan_<id>.md ; legacy plan.md)
         md = body.markdown.strip()
         if md:
-            todo_mod.save_plan(folder, md)
-        else:  # emptied → remove the plan doc + drop it from the referent
-            todo_mod.clear_plan(folder)
-            st = ConversationState.from_dict(persistence.load_state(folder))
-            if st.active_plan_id and st.active_plan_id in st.plans:
-                st.plans.pop(st.active_plan_id, None)
+            if pf:
+                todo_mod.save_plan_file(folder, pf, md)
+            else:
+                todo_mod.save_plan(folder, md)  # no active plan yet → legacy conv-root plan.md
+        else:  # emptied → remove the active plan file + drop it from the referent
+            if pf:
+                todo_mod.clear_plan_file(folder, pf)
+            else:
+                todo_mod.clear_plan(folder)
+            if pid and pid in st.plans:
+                st.plans.pop(pid, None)
                 st.active_plan_id = None
                 persistence.save_state(folder, st)
-        return {"plan": todo_mod.load_plan(folder), "status": _plan_status(folder)}
+        st = ConversationState.from_dict(persistence.load_state(folder))  # reload (active may be gone)
+        plan = todo_mod.load_active_plan(folder, st) or todo_mod.load_plan(folder)
+        return {"plan": plan, "status": _plan_status(folder)}
 
     @app.get("/api/conversations/{conversation_id}/plans")
     def list_plans(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:

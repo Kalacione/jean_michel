@@ -371,7 +371,7 @@ def rebuild_from_events(events: list[dict[str, Any]]) -> Any:
             if old in state.plans:  # only mutates the OLD plan ; the new one is (re)pointed by its PlanInscribed
                 state.plans[old]["status"] = "superseded"
                 state.plans[old]["superseded_by"] = e["superseded_by"]
-                state.plans[old]["plan_file"] = f"plan_{old}.md"  # archive convention (cf. todo.plan_file_for)
+                # plan_file is UNCHANGED : each plan already has its own per-id workspace file (Phase 2 R2.1)
         elif t == "TodoInscribed":
             tid = e["todo_id"]
             state.active_todo_id = tid

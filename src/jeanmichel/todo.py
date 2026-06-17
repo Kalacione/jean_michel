@@ -37,20 +37,18 @@ PLAN_FILENAME = "plan.md"
 
 
 def plan_file_for(plan_id: str) -> str:
-    """Archive filename of a plan by id. The ACTIVE plan stays ``plan.md`` ; a plan is only
-    written to ``plan_<id>.md`` once SUPERSEDED (Phase 2). cf. orchestrator `_assign_plan_id_for_write`."""
-    return f"plan_{plan_id}.md"
+    """Canonical conv-relative path of a plan by id (Phase 2 R2.1). Plans live in the shared
+    ``workspace/`` so agents read/edit them with their own workspace tools ; the agent's
+    workspace-relative name is just ``plan_<id>.md``. (Legacy convs keep a conv-root ``plan.md``
+    referenced by the entry's ``plan_file`` — see the load/save_plan wrappers.)"""
+    return f"workspace/plan_{plan_id}.md"
 
 
-def plan_path(conv_folder: Path, filename: str = PLAN_FILENAME) -> Path:
-    return conv_folder / filename
-
-
-# ---- by-filename plan I/O (active = plan.md ; archived superseded = plan_<id>.md) --------
+# ---- by-filename plan I/O (conv-relative path ; new plans live under workspace/) ----------
 
 
 def load_plan_file(conv_folder: Path, filename: str) -> str | None:
-    """Return the markdown of the plan stored in ``filename``, or None when absent/empty/unreadable."""
+    """Return the markdown stored at conv-relative ``filename``, or None when absent/empty/unreadable."""
     try:
         raw = (conv_folder / filename).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
@@ -59,9 +57,10 @@ def load_plan_file(conv_folder: Path, filename: str) -> str | None:
 
 
 def save_plan_file(conv_folder: Path, filename: str, markdown: str) -> None:
-    """Atomically write a plan document to ``filename`` (tmp + replace)."""
-    conv_folder.mkdir(parents=True, exist_ok=True)
+    """Atomically write a plan document at conv-relative ``filename`` (tmp + replace ; creates
+    parent dirs, e.g. ``workspace/``)."""
     p = conv_folder / filename
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(markdown, encoding="utf-8")
     tmp.replace(p)
@@ -72,16 +71,42 @@ def clear_plan_file(conv_folder: Path, filename: str) -> None:
     (conv_folder / filename).unlink(missing_ok=True)
 
 
-# ---- active-plan wrappers (plan.md) : ALL existing call sites stay unchanged --------------
+def _active_plan_file(state: Any) -> str | None:
+    """Conv-relative path of the ACTIVE plan from the referent (None if no active plan)."""
+    pid = getattr(state, "active_plan_id", None)
+    if not pid:
+        return None
+    entry = (getattr(state, "plans", None) or {}).get(pid) or {}
+    return entry.get("plan_file") or plan_file_for(pid)
+
+
+def load_active_plan(conv_folder: Path, state: Any) -> str | None:
+    """Read the ACTIVE plan's markdown (resolved via state.active_plan_id → its plan_file)."""
+    pf = _active_plan_file(state)
+    return load_plan_file(conv_folder, pf) if pf else None
+
+
+def save_active_plan(conv_folder: Path, markdown: str) -> str:
+    """Write ``markdown`` to the ACTIVE plan's file (workspace/plan_<id>.md). The id is resolved from
+    state.json — the orchestrator assigns active_plan_id BEFORE plan_write runs. Returns the path."""
+    from .models import ConversationState
+    from .persistence import load_state
+    state = ConversationState.from_dict(load_state(conv_folder))
+    pf = _active_plan_file(state) or plan_file_for(state.active_plan_id or "p1")
+    save_plan_file(conv_folder, pf, markdown)
+    return pf
+
+
+# ---- legacy active-plan wrappers (conv-root plan.md) : back-compat for older convs --------
 
 
 def load_plan(conv_folder: Path) -> str | None:
-    """Return the ACTIVE plan markdown (plan.md), or None when absent/empty/unreadable."""
+    """Legacy : the conv-root plan.md (pre-Phase-2 active plan). Prefer load_active_plan."""
     return load_plan_file(conv_folder, PLAN_FILENAME)
 
 
 def save_plan(conv_folder: Path, markdown: str) -> None:
-    """Atomically write the ACTIVE plan document (plan.md)."""
+    """Legacy : write the conv-root plan.md."""
     save_plan_file(conv_folder, PLAN_FILENAME, markdown)
 
 

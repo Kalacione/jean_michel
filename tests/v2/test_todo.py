@@ -246,40 +246,17 @@ def test_recap_not_injected_for_subagent(tmp_path):
     assert not any(m["content"].startswith(todomod.RECAP_MARKER) for m in msgs)
 
 
-# ---- PreLLMCall rich-plan ([PLAN]) injection -----------------------------
+# ---- PreLLMCall : the rich plan is NOT re-injected (Phase 2 R2.2) --------
 
 
-def test_plan_doc_injected_for_main_agent(tmp_path):
-    todomod.save_plan(tmp_path, "# Plan\n\n## Context\nWhy this approach.\n")
+def test_plan_is_not_reinjected(tmp_path):
+    """R2.2 : the plan lives in workspace/plan_<id>.md and is read on demand (the nudge points
+    there) — it is NEVER re-injected as a [PLAN] block (that confused small models into a loop)."""
+    todomod.save_plan_file(tmp_path, "workspace/plan_p1.md", "# Plan\n\n## Context\nWhy.\n")
     hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
     msgs = _msgs()
     hook(msgs, _state())
-    plans = [m for m in msgs if m["content"].startswith("[PLAN]")]
-    assert len(plans) == 1 and "## Context" in plans[0]["content"]
-
-
-def test_plan_doc_refreshed_not_accumulated(tmp_path):
-    todomod.save_plan(tmp_path, "# Plan\n")
-    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
-    msgs = _msgs()
-    for _ in range(3):
-        hook(msgs, _state())
-    assert sum(1 for m in msgs if m["content"].startswith("[PLAN]")) == 1
-
-
-def test_plan_doc_noop_without_plan(tmp_path):
-    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=True)
-    msgs = _msgs()
-    hook(msgs, _state())
-    assert not any(m["content"].startswith("[PLAN]") for m in msgs)
-
-
-def test_plan_doc_not_injected_for_subagent(tmp_path):
-    todomod.save_plan(tmp_path, "# Plan\n")
-    hook = PreLLMCall(llm_client=None, conv_folder=tmp_path, is_main_agent=False)
-    msgs = _msgs()
-    hook(msgs, _state())
-    assert not any(m["content"].startswith("[PLAN]") for m in msgs)
+    assert not any((m.get("content") or "").startswith("[PLAN]") for m in msgs)
 
 
 # ---- report_back extension (D11) -----------------------------------------
