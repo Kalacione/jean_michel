@@ -196,6 +196,19 @@ def test_pre_tool_use_dedup_blocks_repeated_call():
     assert "Duplicate" in (d2.reason or "")
 
 
+def test_pre_tool_use_dedup_exempts_state_trackers():
+    """todo_update/write/plan_write are EXEMPT from dedup — their validity depends on the CURRENT
+    state, not call history (a step re-marked done after being flipped back to in_progress is
+    legitimate). Denying them sent a small model into a ~30-call deny loop (live test 2026-06-17)."""
+    from jeanmichel.hooks import _fingerprint
+    hook = PreToolUse()
+    s = _state()
+    args = {"item_id": "step2", "status": "done"}
+    ctx = _ctx("todo_update", args=args, grants={"todo_update"})
+    cache = {_fingerprint("todo_update", args): {"summary": "step2 → done"}}  # already called once
+    assert hook(ctx, s, cache).deny is False  # NOT denied despite the identical cached call
+
+
 def test_pre_tool_use_dedup_delegate_to_escalates():
     """F4 backstop: a verbatim re-delegation is denied with an ESCALATE order
     pointing at ask_human — not the generic 'Duplicate call' message."""

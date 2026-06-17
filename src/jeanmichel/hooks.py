@@ -134,6 +134,14 @@ def _fingerprint(call_name: str, args: dict[str, Any]) -> str:
     return f"{call_name}({_normalize_args_for_fingerprint(args)})"
 
 
+# Tools EXEMPT from dedup-deny. The dedup guards against repeating expensive / looping calls
+# (delegate_to, web_search). The orchestrator state-trackers below are cheap, re-writable, and
+# their validity depends on the CURRENT state, not on call history : a todo_update whose previous
+# effect was undone (e.g. step marked done, then back to in_progress) is LEGITIMATE to re-issue —
+# denying it as a "duplicate" sent a small model into a ~30-call deny loop (live test, 2026-06-17).
+_DEDUP_EXEMPT = frozenset({"todo_write", "todo_update", "plan_write"})
+
+
 # ---- Hooks ----------------------------------------------------------------
 
 
@@ -252,9 +260,10 @@ class PreToolUse:
                     ),
                 )
 
-        # 4. Contextualised dedup
+        # 4. Contextualised dedup — but NOT for cheap re-writable state-trackers (todo/plan),
+        # whose validity depends on current state, not call history (see _DEDUP_EXEMPT).
         fp = _fingerprint(ctx.call.name, ctx.call.arguments)
-        if fp in dedup_cache:
+        if fp in dedup_cache and ctx.call.name not in _DEDUP_EXEMPT:
             cached = dedup_cache[fp]
             if ctx.call.name == "delegate_to":
                 # F4 hard backstop : a verbatim re-delegation is the router looping.
