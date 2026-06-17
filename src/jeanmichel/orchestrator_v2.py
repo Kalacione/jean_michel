@@ -507,6 +507,10 @@ def _reconcile_plan_approval(conv_folder: Path, state: ConversationState, *, pla
 
 _FILE_WRITE_TOOLS = frozenset({"workspace_create_file", "workspace_append", "workspace_str_replace"})
 
+# R5.1 : consecutive iterations whose tool calls cached NOTHING new (all repeats/denied) before the
+# loop concludes on its own — bounds runaway no-progress loops far below max_iterations (50).
+_MAX_STUCK_ITERATIONS = 3
+
 
 def _add_file(
     conv_folder: Path, state: ConversationState, path: str, *, layer: str, produced_by: str | None
@@ -579,6 +583,7 @@ def _run_agent_loop(
     empty_main_turns = 0
     plan_unwritten_turns = 0  # PLAN mode : tried to conclude without authoring plan.md
     no_tool_call_turns = 0  # subagent : emitted prose instead of a report_back tool_call
+    stuck_iterations = 0  # R5.1 : iterations whose tool calls cached NOTHING new (no-progress backstop)
 
     def _persist() -> None:
         # Subagents must NOT clobber the main conv files (messages.json/state.json):
@@ -592,7 +597,9 @@ def _run_agent_loop(
         state.last_iteration_at_utc = datetime.now(UTC).isoformat()  # alimenté (était mort)
         # User pressed Stop : abort cleanly between iterations (no new LLM/tool work).
         if cancel_event is not None and cancel_event.is_set():
+            _log.info("loop cancel hit @iteration-top (agent=%s)", agent.code)
             return _LoopOutcome(kind="aborted", reason="user_cancelled")
+        dedup_size_before = len(dedup_cache)  # R5.1 : grows iff a NEW distinct tool action is cached
         # PreLLMCall : compaction escalation (may mutate messages).
         level = hooks.pre_llm_call(messages, state)
         if level > 0:
@@ -841,6 +848,31 @@ def _run_agent_loop(
 
         if report_back_outcome is not None:
             return report_back_outcome
+
+        # No-progress backstop (R5.1) : this iteration ran tool calls but cached NOTHING new (all
+        # repeats / denied / exempt-same-fp) → no progress. After K in a row, conclude on our own —
+        # bounds a runaway loop (e.g. re-marking an already-done todo) far below max_iterations, so
+        # the turn ends → {final} → the UI Stop spinner clears (instead of spinning to 50).
+        if resp.tool_calls and len(dedup_cache) == dedup_size_before:
+            stuck_iterations += 1
+            if stuck_iterations >= _MAX_STUCK_ITERATIONS:
+                _log.warning("%s : %d iterations without progress → concluding (no-progress backstop)",
+                             agent.code, stuck_iterations)
+                _emit(event_emitter, conv_folder, HookFired(
+                    hook_name="loop", action="no_progress_stop",
+                    reason=f"{stuck_iterations} iterations sans progrès"))
+                if is_main_agent:
+                    fallback = (
+                        "(Je tournais en rond sans progresser sur cette étape — j'arrête là plutôt que "
+                        "de boucler. Reformule ou précise si tu veux que je reprenne autrement.)"
+                    )
+                    _emit(event_emitter, conv_folder, RequestCompleted(
+                        agent=agent.code, final_content_summary=fallback[:200]))
+                    _persist()
+                    return _LoopOutcome(kind="final_answer", content=fallback)
+                return _LoopOutcome(kind="aborted", reason="no_progress")
+        else:
+            stuck_iterations = 0
 
     return _LoopOutcome(
         kind="aborted",

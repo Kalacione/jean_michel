@@ -1345,6 +1345,25 @@ def test_no_plan_gate_outside_plan_mode(tmp_path: Path):
     assert len(mock.calls_v2) == 1  # concluded on the first turn
 
 
+def test_no_progress_backstop_concludes(tmp_path: Path):
+    """R5.1 : un tour qui répète le MÊME tool call (rien de nouveau en cache) conclut TOUT SEUL après
+    _MAX_STUCK_ITERATIONS — pas de boucle jusqu'à max_iterations. Garantit que la « boucle sans fin »
+    se solde → {final} → le spinner Stop du front s'efface."""
+    from jeanmichel.orchestrator_v2 import _MAX_STUCK_ITERATIONS
+    agent = make_agent("jean-michel", role="router", tool_grants={"echo"})
+    registry = {"echo": make_echo_tool()}
+    # The model keeps emitting the SAME call : the 1st executes (progress), every repeat is dedup-denied
+    # → no new cache entry → no progress. Far more responses scripted than should be consumed.
+    mock = MockClient(script=[
+        assistant_response("", tool_calls=[tool_call("echo", text="loop")]) for _ in range(20)
+    ])
+    result = run_main_loop(conv_folder=tmp_path, agent=agent, tools_registry=registry,
+                           llm_client=mock, user_text="go", plan_mode=False)
+    assert "rond sans progresser" in result  # the graceful no-progress conclusion
+    # 1 progressing iteration + K stuck → concluded ; NOT max_iterations(50) nor all 20 scripted.
+    assert len(mock.calls_v2) == 1 + _MAX_STUCK_ITERATIONS
+
+
 def test_plan_mode_propagates_to_subagent(tmp_path: Path):
     """plan_mode reaches a delegated specialist (fresh sub_state) : its mutating
     tools are denied just like the router's."""
