@@ -94,7 +94,7 @@ class ConversationState:
     blocked_subagent_request_id: str | None = None
     pending_human_answer: str | None = None  # set by ask_human, consumed by the matching re-delegation
 
-    # ---- Organizational referent (cf. docs/20260616_meaningful_state) ----------------
+    # ---- Organizational referent (cf. README.md §Persistance v2) ----------------
     # These fields PERSIST across turns (reloaded at turn start) — the state IS the ledger :
     # index + statuses + progression + links + pointers, maintained by the orchestrator
     # (deterministic), read directly (no derivation). Everything ABOVE is per-turn ephemeral
@@ -124,7 +124,7 @@ class ConversationState:
         """Reset the PER-TURN ephemeral fields at the start of a turn (the organizational
         fields above PERSIST). The budget (system/output/working_budget) is recomputed
         separately by the loop's `_initialize_state` ; here we only zero the per-turn
-        counters/flags + take the turn's plan_mode. cf. docs/20260616_meaningful_state (le split)."""
+        counters/flags + take the turn's plan_mode. cf. README.md §Persistance v2 (le split)."""
         self.depth_current = 0
         self.plan_mode = plan_mode
         self.plan_written_this_turn = False

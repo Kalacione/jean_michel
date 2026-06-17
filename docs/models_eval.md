@@ -63,20 +63,32 @@ confiance « medium », cf. firefight). Le `thinking` est un *plus* d'observabil
 
 | Modèle | Rôle essayé | Statut | Pros | Cons | Source |
 |---|---|---|---|---|---|
-| `cogito:32b` | orchestrateur | ✅ **en prod** | éval 5/5, tool-calling fiable, rapide | pas de canal thinking (réflexions UI vides) | `docs/20260614_model_selection.md`, commit `a00122b` |
-| `cogito:14b` | orchestrateur | ❌ écarté | 4/5 | rate le tool_call simple (B) à certaines temp | `docs/20260614_model_selection.md` |
+| `cogito:32b` | orchestrateur | ✅ **en prod** | éval 5/5, tool-calling fiable, rapide | pas de canal thinking (réflexions UI vides) | ce doc, commit `a00122b` |
+| `cogito:14b` | orchestrateur | ❌ écarté | 4/5 | rate le tool_call simple (B) à certaines temp | ce doc |
 | `qwen3:14b` | code, recherche | ✅ **en prod** (code) | tools+thinking, ~2× + rapide que gemma en recherche, Pareto | — | `DevNotes/benchmark_agents.md` |
 | `qwen3-coder:latest` | code-runner | ✅ **en prod** | conçu pour le code, contexte 128k | pas de thinking | `models.example.toml` |
 | `gemma4:26b` | reasoner/compactor/subagent | ✅ **en prod** | **multimodal**, thinking, tools, finesse éditoriale | plus lent que qwen3 sur recherche | `docs/GEMMA4.md`, `DevNotes/benchmark_agents.md` |
 | `granite4.1:8b` | dispatch | ✅ **en prod** | rapide, JSON forçable, spécialisé triage | texte-only (par design) | `DevNotes/REVOLUCION/06_proposition_v2.md` |
 | `gemma4:latest` | tier-1 (tôt) | ❌ rejeté | rapide | « trop con » : sort du junk → rework humain | `DevNotes/benchmark_agents.md` |
-| Nemotron-Orchestrator-8B Q5_K_M | orchestrateur | ❌ cassé | — | GGUF cassé : `!!!!`, crash runner HTTP 500 (→ a motivé le harness) | `docs/20260614_model_selection.md`, commit `2bcffc8` |
+| Nemotron-Orchestrator-8B Q5_K_M | orchestrateur | ❌ cassé | — | GGUF cassé : `!!!!`, crash runner HTTP 500 (→ a motivé le harness) | ce doc, commit `2bcffc8` |
 | `deepseek-r1:14b` | raisonneur (bench) | ❌ rejeté | — | **ne sait pas utiliser les tools** | `DevNotes/benchmark_agents.md` |
 | `qwen3.6:27b` | raisonneur (bench) | ❌ trop lent | — | dépasse la limite ~120s (thinking) | `DevNotes/benchmark_agents.md` |
-| famille `qwen2.5-coder` | code | ❌ retiré | — | viré du repo « à ne pas reconsidérer » (version testée) ; **le 32b n'a jamais été testé** (cf. candidats) | `docs/20260614_model_selection.md` §4 |
+| famille `qwen2.5-coder` | code | ❌ retiré | — | viré du repo « à ne pas reconsidérer » (version testée) ; **le 32b n'a jamais été testé** (cf. candidats) | ce doc §4 |
 | HauhauCS Gemma4-26B uncensored Q6_K_P | reasoner/compactor | ⏳ reverté | dé-censuré sans perte, agentique | toolchain CUDA/GCC Manjaro → `llama-server` incompilable | commits `6bb85af` (adoption) / `125b0ff` (revert) |
-| OpenAI API | orchestrateur | ❌ exclu | — | boycott (décision) | `docs/20260614_model_selection.md` §2 |
-| Mistral | orchestrateur | ❌ rejeté | — | rejeté (raison non détaillée) | `docs/20260614_model_selection.md` §2 |
+| OpenAI API | orchestrateur | ❌ exclu | — | boycott (décision) | ce doc §2 |
+| Mistral | orchestrateur | ❌ rejeté | — | rejeté (raison non détaillée) | ce doc §2 |
+
+### 3.1 Détail — éval orchestrateur head-to-head (`debug/eval_model.py`, ctx 40960)
+| Test | cogito:14b | **cogito:32b** | qwen3:14b |
+|---|---|---|---|
+| A. anti-garbage | ✅ 2.8s | ✅ 4.6s | ✅ 9.5s |
+| B. tool_call simple | ❌ 0 calls | ✅ delegate_to | ❌ 0 calls |
+| C. décompo multi-outil | ✅ | ✅ | ✅ 14.8s |
+| D. temp 0.2 / 0.6 | ✅/✅ | ✅/✅ | ✅/✅ |
+| **Total** | 4/5 | **5/5** | 4/5 |
+
+cogito:32b = seul à émettre un tool_call propre sur la délégation simple, aux 2 températures, 2–10× plus
+rapide. Adoption : commits `2bcffc8` (config + VRAM), `a00122b` (cogito:32b + cleanup).
 
 ---
 
@@ -108,8 +120,21 @@ confiance « medium », cf. firefight). Le `thinking` est un *plus* d'observabil
 - Or un **spécialiste doit `report_back` (un tool)** → sans tools, il est dégradé (fallback prose).
   À trancher : (a) variant tools, (b) `phi4-mini`, ou (c) rôle « raisonneur pur » sans délégation/report_back.
 
-### glm-4.7-flash & qwen3:30b — candidats code-router (déjà notés)
-- Cf. `docs/20260614_model_selection.md` §4 : tool-calling **à confirmer** dans le harness (bloquant pour le rôle).
+### glm-4.7-flash & qwen3:30b — candidats code-router (remplacer qwen3:14b)
+Besoin : décompo + délégation (**tool-calling**), PAS de génération (= code-runner). Contrainte : tenir
+sur 1 GPU (32 Go), GGUF Ollama rôdé (leçon Nemotron).
+- **glm-4.7-flash** — 30B-A3B MoE, 19 Go (Q4), « strongest in the 30B class », coding + agentic. ⚠️
+  tool-calling **NON confirmé** → à vérifier au harness (bloquant pour le rôle).
+- **qwen3:30b** — a3b MoE, 19 Go, agentic + code (officiel Ollama).
+- **cogito:32b** — déjà pullé (gagnant orchestrateur) ; pourrait servir aussi (raisonnement + tools).
+- ❌ deepseek-coder-v2:16b — tools seulement via variants communautaires → risque GGUF.
+
+**Câblage du gagnant** (point de vigilance — double résolution à réconcilier) : (a) *code-router* = main
+agent en mode code → `turn_runner.py` met `main_agent.model = MODE_ROUTER_MODEL["code"]` (= `CODE_MODEL`),
+MAIS `load_agent` (`orchestrator_v2.py`) applique aussi `agents.model_override` si non-NULL (**précédence à
+confirmer**) ; (b) *code-analyst* (subagent) = via `agents.model_override`. Donc câbler = `[roles].code`
+(+ `[context_window]`) dans `models.example.toml` **ET** migration manuelle de `agents.model_override` des
+deux agents → gagnant (+ `db/schema.sql` + apply live + test). Cf. mémoire migrations manuelles.
 
 ---
 
@@ -125,7 +150,6 @@ confiance « medium », cf. firefight). Le `thinking` est un *plus* d'observabil
 ---
 
 ## Deep-dives (détails)
-- `docs/20260614_model_selection.md` — éval orchestrateur + plan code-router (glm/qwen3:30b).
 - `DevNotes/benchmark_agents.md` — bench live (recherche) chiffré.
 - `docs/GEMMA4.md` — formatage de prompt + multimodal gemma4.
 - `DevNotes/gemma_variants.md` — saga HauhauCS uncensored (voir via `git show 6bb85af`).

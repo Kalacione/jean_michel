@@ -18,13 +18,22 @@
   répond le plan en simple message. L'état (`plan_mode`/approbation) ou la reprise d'état déconne ; intermittent
   (un 2ᵉ reload a fini par produire un plan p3). Conv témoin `conversations/2026-06-17_16-41_0f98aefcb2224b87a028c0dadbf332d0`.
   → vérifier la **restauration front** de `planPending`/`plan_mode` au `select()`/reload, dérivée du référent.
-- **Compteur « 1 plan précédent » figé** : le front affiche toujours « 1 plan précédent » même après plusieurs
-  plans → comptage/affichage de l'historique des plans dans l'UI (cf. `GET …/plans`).
 - **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
   garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
 - Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
 - Re-vérifier en live : artefacts écrits dans le workspace, plans en mode analyse qui répondent, appels d'outils
   non bloqués, mémoires visibles.
+  - erreurs frontend LaTex : ```LaTeX-incompatible input and strict mode is set to 'warn': Unrecognized Unicode character "ệ" (7879) [unknownSymbol] katex.mjs:316:49
+No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs:4738:47
+“mathvariant='bold'” on MathML elements is deprecated and will be removed at a future date.```
+
+## consolidation
+
+- c'est con de prefixer `workspace` pour ``` "p3": {
+      "plan_file": "workspace/plan_p3.md",
+      "status": "pending",
+      "approved": false
+    }``` normalement les load/ write/read sont forcement limites au dossier workspace, j;ais peur qu'nu agent essaye de lire `workspace/workspace/fichier.md`
 
 ## Mémoire
 - **Sidecars mémoire → DB** (R6, backlog) : `consolidation_state.json` + `pending_memory.json` traînent dans le
@@ -43,7 +52,7 @@
 ## Sélection de modèles
 - **Rôle code-router / code-analyst** : remplacer qwen3:14b par mieux tenant sur 1 GPU (32 Go). Candidats, plan
   d'éval (`debug/eval_model.py`), vigilance câblage (migration `model_override`) →
-  [docs/20260614_model_selection.md](docs/20260614_model_selection.md).
+  [docs/models_eval.md](docs/models_eval.md) (§3.1 éval + §4 candidats/câblage).
 - **Point E — orchestrateur DÉDIÉ vs jean-michel chat** : déféré. Préférence = orchestrateur le plus déterministe
   possible ; re-trancher sur données réelles, après le réglage du rôle code.
 
@@ -51,6 +60,7 @@
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
 - On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur, tests).
+- **MAJ `docs/PROMPT_SKELETON.md`** : remettre à jour la structure du prompt avec l'état v2 actuel (noté au ménage docs).
 - Rafraîchir le paradigm viewer/editor.
 - Audit des paradigmes de tous les agents (incohérences ?).
 - **meta_analyst — qualité** : `--meta-analysis` remarche (commit 78055ce), MAIS le meta-analyst **hallucine** des

@@ -301,7 +301,7 @@ def load_events(conv_folder: Path) -> list[dict[str, Any]]:
 
 
 # ---- Anti-drift safety net : rebuild the referent from the event journal ----
-# cf. docs/20260616_meaningful_state (Phase 1.6). The organizational state.json is
+# cf. README.md §Persistance v2 (rebuild_from_events). The organizational state.json is
 # MAINTAINED live by the orchestrator ; this reconstructs the SAME organizational
 # fields by folding the referent domain events (the journal). The test
 # "maintained == reconstructed" proves no inscription site was forgotten. Pure +
