@@ -6,7 +6,16 @@ sont des **références vivantes** (tenues à jour).
 
 > Pour le backlog en cours, voir [../todo.md](../todo.md). Entrée produit/setup : [../README.md](../README.md).
 
-## État courant (snapshot post-batch 2026-06-15)
+## État courant (snapshot post-batch 2026-06-17)
+- **Référent organisationnel** : `state.json` est LE ledger autoritaire de la conversation (tours, plans,
+  todos, subagents, fichiers, `phase`, `plan_mode`) ; filet `rebuild_from_events` (« maintenu == reconstruit »).
+- **Plan & todo découplés** : plan riche **par-id** (`workspace/plan_<id>.md`, **NON** réinjecté — lu à la
+  demande via nudge), todo terse (`todo.json`, re-surfacé `[TODO-RECAP]`) ; mode plan = écrit le plan puis
+  **halte déterministe** ; multiplicité (supersede + historique `GET …/plans`).
+- **Lignée de fork** en DB (`parent_conv_id`/`parent_commit`, migration 151) → API → UI.
+- **Stop interruptible + garde-fou boucle** (R5) : Stop ferme la connexion Ollama et annule pendant les tool
+  calls ; un garde-fou sans-progrès fait conclure la boucle seule.
+- **Maths LaTeX** rendues en KaTeX dans le chat (`katex` direct ; le plugin CJS était cassé par l'optim de deps Vite).
 - **graphify supprimé** du système (câblé mais inerte + RAM) — n'existe plus.
 - **Config modèle = foyer unique `models.toml`** (`[roles]`, `[context_window]`, `no_thinking`, `[voice]` ;
   défauts committés dans `models.example.toml` ; env = override). Orchestrateur (`main`) = **cogito:32b**
@@ -32,8 +41,10 @@ sont des **références vivantes** (tenues à jour).
   code-router, harness `debug/eval_model.py`, préférences modèle.
 - [GEMMA4.md](GEMMA4.md) — cheat-sheet gemma (reasoner/compactor/subagent ; plus le routeur par défaut).
 
-### Plan mode
+### Plan mode & référent organisationnel
 - [20260613_plan_mode/audit_orchestration.md](20260613_plan_mode/audit_orchestration.md) — audit + décisions (Claude plan mode, etc.).
+- [20260616_meaningful_state/](20260616_meaningful_state/) — `state.json` = référent autoritaire (inventaire + plan) :
+  plan/todo découplés, multiplicité par-id + supersede, filet anti-drift. Livré Phases 0→2 (cf. README §Plan & todo, §Persistance v2).
 
 ### Chaîne code / intervention sur un vrai repo (Étages A/B/C, sandbox projet)
 - [20260612_improve_thinking/](20260612_improve_thinking/) — plan, étage B (sandbox projet), branchable repo, E2E/tuning.

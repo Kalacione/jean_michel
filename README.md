@@ -146,6 +146,29 @@ réponse passe par un nettoyage Markdown (drop des blocs code, listes
 remises à plat, liens → texte seul, ponctuations adoucies pour la
 prosodie). La voix lit du texte naturel, pas du markdown brut.
 
+## Plan & todo
+
+Deux artefacts **découplés**, sur le modèle Claude :
+
+- **Plan riche** — en *mode plan* (toggle porté par la conversation,
+  `state.plan_mode`), l'orchestrateur n'écrit QUE le plan (`plan_write`) puis
+  **s'arrête de façon déterministe** pour le soumettre à validation (les autres
+  outils sont refusés ; à l'inverse `plan_write` est refusé hors mode plan,
+  pour éviter un plan fantôme). Le plan est un markdown riche (analyse / étapes /
+  vérif) stocké **par-id** dans `workspace/plan_<id>.md`. Il n'est **pas**
+  réinjecté dans le prompt (cela faisait boucler les petits modèles sur un
+  re-plan) : l'agent le **relit à la demande** (`workspace_view`), poussé par un
+  nudge hooks.
+- **TODO** — `todo.json` (racine), tracker terse construit **à l'exécution** via
+  `todo_write` / `todo_update`, **re-surfacé chaque tour** comme bloc
+  `[TODO-RECAP]`. C'est lui qu'on réinjecte, pas le plan.
+
+**Approbation** : portée par le référent (`state.plans[id].approved`) — un tour
+d'édition lancé sur un plan actif non-approuvé vaut acceptation. **Multiplicité** :
+un nouveau plan écrit après exécution **supersède** le précédent (id distinct +
+event `PlanSuperseded`) ; l'historique est consultable (`GET …/plans` +
+`…/plans/{id}`, lecture seule dans l'UI).
+
 ## API daemon (`./jm.sh --serve`)
 
 Daemon FastAPI lancé à la main sur l'hôte, point d'entrée
@@ -195,10 +218,12 @@ Composants principaux :
 - `ChatPane.vue` — fenêtre de chat, **stream WebSocket** des events
   d'orchestration (réflexion / délégation / appels d'outils visibles
   en live), upload d'attachements (drag & drop), Markdown rendu via
-  `markdown-it`.
-- `EventTrace.vue` — déroulé chronologique des events typés (mêmes 11
-  classes que le CLI : `RequestStarted`, `DelegationStarted/Completed`,
-  `ToolCall*`, `HookFired`, `WorkingBudgetUpdate`…). Les étapes de réflexion
+  `markdown-it` + **maths LaTeX en KaTeX** (inline `$…$`, bloc `$$…$$` ;
+  via `katex` direct, cf. `web/src/markdown-katex.js`).
+- `EventTrace.vue` — déroulé chronologique des events typés (même catalogue
+  que le CLI, défini dans `events.py` : `RequestStarted`, `Delegation*`,
+  `ToolCall*`, `HookFired`, `PlanInscribed/Superseded`, `TodoInscribed/Cleared`,
+  `FileProduced`…). Les étapes de réflexion
   rendent le Markdown et sont repliables : seule la dernière est dépliée,
   les précédentes restent en aperçu (puce triangulaire pour basculer).
 - `AskHumanDialog.vue` — aller-retour humain en cours de turn (le
@@ -222,7 +247,7 @@ Pas de dépendance audio sur le navigateur (ni `speechSynthesis`).
 ```bash
 cd web
 npm install
-npm run dev        # http://localhost:5173 (HMR)
+npm run dev        # http://localhost:3000 (HMR, cf. vite.config.mjs)
 # OU container :
 docker compose -f web/compose.yml up --build   # → http://localhost:3000
 ```
@@ -414,12 +439,22 @@ candidates s'accumulent dans `pending_memory.json` et sont revues en fin de tour
 Une conversation = un dossier plat horodaté :
 
 ```
-conversations/2026-05-28_03-12_{conv_uuid}/
-├── messages.json                    # main agent's full messages[]
-├── state.json                       # ConversationState scalars
-├── events.jsonl                     # typed event log (append-only)
-└── subagent_<request_id>.json       # one per subagent execution
+conversations/2026-06-17_16-41_{conv_uuid}/
+├── messages.json                # messages[] complets du main agent
+├── state.json                   # ConversationState = LE référent organisationnel (cf. infra)
+├── events.jsonl                 # journal d'events typés (append-only)
+├── todo.json                    # tracker terse du TODO courant (présent si exécution)
+├── workspace/                   # artefacts : plan_<id>.md (plans riches par-id) + fichiers produits
+└── subagent_<request_id>.json   # un par exécution de subagent
 ```
+
+`state.json` n'est plus un simple sac de scalaires : c'est le **référent
+organisationnel autoritaire** (le ledger unique). Il porte le log des tours
+(`requests[]`), les plans (`plans{}` par-id + statut d'approbation), les todos,
+les subagents, les fichiers produits, la `phase`, le `plan_mode` et la lignée de
+fork. Il est **rechargé en début de tour** ; un **filet anti-drift**
+(`rebuild_from_events`, `persistence.py`) garantit « maintenu == reconstruit »
+en rejouant `events.jsonl` (verrou de test).
 
 Audit cross-conversation : `~/.jean-michel/sandbox_audit.jsonl` (toutes
 les exécutions `bash_sandbox`, toutes conversations confondues).
@@ -449,7 +484,9 @@ frontal web :
 - **Créer une nouvelle conversation à partir d'ici** — fork : le contenu du
   dossier **à ce commit** (hors `.git`, via `git archive`) est extrait dans
   une nouvelle conversation possédée par le même utilisateur. L'originale
-  reste intacte.
+  reste intacte. La **lignée** est enregistrée en DB
+  (`conversations.parent_conv_id` + `parent_commit`, migration 151) et
+  surfacée dans l'UI (« forké de … »).
 
 Routes API (owner-scoped) : `GET …/snapshots`, `POST …/revert`,
 `POST …/fork`. Tout est **best-effort** : `git` absent ou flag à off ⇒ no-op,
@@ -459,21 +496,26 @@ imbriqués ne polluent pas le repo principal.
 
 ## Événements typés
 
-L'orchestrateur émet 11 types d'events (catalogue dans
+L'orchestrateur émet 23 types d'events (catalogue dans
 `src/jeanmichel/events.py`) consommés par le CLI live et persistés dans
 `events.jsonl`. L'arbre des délégations se reconstruit en filtrant les
-`DelegationStarted` / `DelegationCompleted`.
+`DelegationStarted` / `DelegationCompleted` ; les events d'**inscription au
+référent** (`*Inscribed`, `Plan*`, `Todo*`…) alimentent le filet
+`rebuild_from_events`.
 
-| Event                  | Émis quand                                          |
-|------------------------|-----------------------------------------------------|
-| `RequestStarted`       | début d'un tour humain ou d'une délégation          |
-| `LLMCallStarted/Completed` | autour de chaque appel LLM                     |
-| `ToolCallStarted/Completed` | autour de chaque tool natif                    |
-| `DelegationStarted/Completed` | autour de chaque subagent spawn              |
-| `HookFired`            | hook prend une action visible (deny, compaction)    |
-| `WorkingBudgetUpdate`  | franchissement d'un seuil de compaction             |
-| `MemoryNearCapacity`   | user_memory atteint 90 entrées                      |
-| `RequestCompleted`     | agent produit sa réponse finale                     |
+| Event                                       | Émis quand                            |
+|---------------------------------------------|---------------------------------------|
+| `RequestStarted/Completed`                  | autour d'un tour humain ou délégation |
+| `RequestOpened/Closed`                      | référent : ouverture/clôture de tour  |
+| `LLMCallStarted/Completed`                  | autour de chaque appel LLM            |
+| `ToolCallStarted/Completed`                 | autour de chaque tool natif           |
+| `DelegationStarted/Completed`               | autour de chaque subagent spawn       |
+| `AgentThinking` / `AgentTokenStreamed`      | réflexion + tokens streamés en live   |
+| `HookFired`                                 | hook agit (deny, compaction)          |
+| `WorkingBudgetUpdate`                       | franchissement d'un seuil de compaction |
+| `MemoryNearCapacity` / `MemoryConsolidationProposed` | mémoire pleine / candidat shadow |
+| `PlanInscribed` / `PlanApprovalChanged` / `PlanSuperseded` | référent : plan écrit / approuvé / remplacé |
+| `TodoInscribed` / `TodoCleared` · `FileProduced` · `SubagentInscribed` | référent : todo / fichier / subagent |
 
 ## Workspace per-conversation
 
@@ -845,7 +887,7 @@ jeanmichel/
 │   ├── dispatcher.py         # Tier 0 (granite)
 │   ├── hooks.py              # 4 hooks Python
 │   ├── compaction.py         # 4-level escalade
-│   ├── events.py             # 11 dataclasses typées
+│   ├── events.py             # 23 dataclasses typées
 │   ├── tokens.py             # estimation contexte
 │   ├── llm.py                # OllamaClient + MockClient (chat_messages)
 │   ├── persistence.py        # messages.json + state.json + events.jsonl

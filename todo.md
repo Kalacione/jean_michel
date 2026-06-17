@@ -2,77 +2,76 @@
 
 > Backlog consolidé. Pour la connaissance acquise (design, audits), voir [docs/README.md](docs/README.md).
 
-## En cours
-- **Plan mode — vérif live + étape 5** : roder le cycle Plan→Approuver→Edit en code/analyse, puis analyse
-  écrite de généralisation aux autres modes + patterns d'orchestration transverses (doc `docs/20260613_plan_mode/`).
-- **Plan riche (modèle Claude) — LIVRÉ** : `plan.md` markdown authored par `plan_write` (analyse/étapes/vérif),
-  réinjecté `[PLAN]` chaque tour ; **plan et todo DÉCOUPLÉS** (todo.json = vrai tracker via `todo_write`, créé
-  À l'exécution depuis le plan) ; acceptation `proposed/accepted` sur sidecar `plan_status.json` ; complétion
-  todo_update cohérente. **DÉFÉRÉ — plusieurs plans/todos séquentiels par conversation** : aujourd'hui `plan.md`
-  et `todo.json` sont uniques (le courant ; un nouveau écrase). Cible : un couple plan+todo PAR demande
-  (demande 1 → plan 1 & todo 1, demande 2 → plan 2 & todo 2, séquentiels), avec historique. Demande de la
-  réflexion (nommage/cycle de vie des artefacts, ce que `[PLAN]`/recap injectent, ce que le front montre).
+## Plan / todo — reste
+- **Steering en cours de tour** : avec le multi-plan, pouvoir réorienter pendant l'exécution d'un plan.
+  Prend un chemin d'analyse en cours de plan ; à creuser.
+- **Todo multiple** (par-id, comme les plans) : aujourd'hui les **plans sont multiples** (`workspace/plan_<id>.md`,
+  supersede déterministe au re-plan, historique en lecture seule dans l'UI) mais le **todo reste unique**
+  (`todo.json` à la racine, le courant écrase). Cible : un todo par demande **et** le todo comme outil de
+  **suivi de progression des subagents** sur les opérations longues. (Déféré le 2026-06-17 — « on a plus urgent ».)
+- **Enforcement plan-mode `todo_write`** : le garde mode-PLAN exige déjà `plan_write` ; reste le glissement où le
+  modèle narre la todo en prose au lieu d'appeler l'outil.
 
 ## Bugs / à revérifier en live
-- **Front : contexte perdu au reload / changement de conversation.** L'état `planPending` (barre d'approbation)
-  et le streaming sont éphémères (armés seulement par l'event live `final`), non restaurés depuis le persistant
-  → au reload/switch, un plan en attente devient inacceptable. Dériver l'état du disque au chargement
-  (`todo.json` présent + dernier tour = plan non exécuté).
-- **Vision / images avec cogito comme `main`** : cogito:32b n'est pas multimodal. Avant, le routeur (gemma)
-  voyait les images nativement. Vérifier que le flux image marche (le main délègue bien au tool `analyze_image`
-  → gemma4 ; pas d'image base64 injectée directement dans les messages de cogito qui la chokerait).
+- **Re-plan impossible après reload / switch de conversation** (régression — avait été marqué FIXED, ne l'est
+  pas) : après recharge de page ou changement de conv, refaire un plan ne propose **plus** l'acceptation — ça
+  répond le plan en simple message. L'état (`plan_mode`/approbation) ou la reprise d'état déconne ; intermittent
+  (un 2ᵉ reload a fini par produire un plan p3). Conv témoin `conversations/2026-06-17_16-41_0f98aefcb2224b87a028c0dadbf332d0`.
+  → vérifier la **restauration front** de `planPending`/`plan_mode` au `select()`/reload, dérivée du référent.
+- **Compteur « 1 plan précédent » figé** : le front affiche toujours « 1 plan précédent » même après plusieurs
+  plans → comptage/affichage de l'historique des plans dans l'UI (cf. `GET …/plans`).
+- **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
+  garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
 - Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
-- Re-vérifier en live post-fixes (ex-« NULACHIER ») : artefacts écrits dans le workspace, plans en mode analyse
-  qui répondent, appels d'outils non bloqués, mémoires visibles.
+- Re-vérifier en live : artefacts écrits dans le workspace, plans en mode analyse qui répondent, appels d'outils
+  non bloqués, mémoires visibles.
+
+## Mémoire
+- **Sidecars mémoire → DB** (R6, backlog) : `consolidation_state.json` + `pending_memory.json` traînent dans le
+  dossier conv (le user les a repérés et râlé : « c'est quoi ce fichier de merde »). Cible :
+  `conversations.consolidation_studied_msgs` (colonne) + table `memory_pending`. Migration manuelle + schema.sql.
+- **Shadow-consolidation — reste** : (a) **persistance reload** — `GET /conversations/{id}/pending-memory` +
+  chargement au `select()` (sinon candidats perdus si on quitte la conv dans les ~15 s) ; (b) éventuel **gating**
+  de fréquence (ne pas consolider chaque tour deep). [Recouvre en partie le point sidecars→DB ci-dessus.]
 
 ## Perf / qualité orchestration
-- **Shadow-consolidation** : découplée du tour (tâche de fond post-tour + push notif) + grounding anti-GIGO
-  (user/tool only) ✅ (c48cfc1). **Reste** : (a) **persistance reload** — `GET /conversations/{id}/pending-memory`
-  + chargement au `select()` (sinon candidats perdus si on quitte la conv dans les ~15s) ; (b) éventuel
-  **gating** de fréquence (ne pas consolider chaque tour deep).
 - **Nudging tours vides de cogito** (tour assistant vide juste après un résultat d'outil → relancé par le garde,
   ~1 appel LLM en plus) : creuser la cause (prompt ? quirk modèle reasoning ?).
 - **Fluidité du streaming sous famine GIL** : le worker tient le GIL pendant les sections CPU lourdes → le live
   saccade (la WS ne meurt plus, keepalive désactivé, mais l'UX peut figer un instant).
-- Enforcement plan-mode `todo_write` : le modèle narre parfois le plan en prose au lieu d'appeler l'outil.
 
 ## Sélection de modèles
 - **Rôle code-router / code-analyst** : remplacer qwen3:14b par mieux tenant sur 1 GPU (32 Go). Candidats, plan
-  d'éval (harness `debug/eval_model.py`) et point de vigilance câblage (migration model_override) →
+  d'éval (`debug/eval_model.py`), vigilance câblage (migration `model_override`) →
   [docs/20260614_model_selection.md](docs/20260614_model_selection.md).
-- **Point E — rôle orchestrateur DÉDIÉ vs jean-michel chat** : déféré. Préférence = garder l'orchestrateur le
-  plus déterministe possible ; re-trancher sur données réelles, après le réglage du rôle code.
+- **Point E — orchestrateur DÉDIÉ vs jean-michel chat** : déféré. Préférence = orchestrateur le plus déterministe
+  possible ; re-trancher sur données réelles, après le réglage du rôle code.
 
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
-- On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur,
-  tests).
+- On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur, tests).
 - Rafraîchir le paradigm viewer/editor.
 - Audit des paradigmes de tous les agents (incohérences ?).
-- **meta_analyst — qualité** : `--meta-analysis` remarche (prompt → délégation explicite, commit 78055ce), MAIS
-  le meta-analyst **hallucine** des noms d'agents/outils inexistants (ex. `analyst`/`researcher`, `sandbox_execute`)
-  alors qu'il a `self_inspect_config`. Durcir une discipline grounding (ne référencer que des agents/outils
-  RÉELS du roster ; citer les noms exacts). Idée : le lancer **périodiquement** (le vieux doc proposait un
-  auto-trigger sur seuil d'échecs/ask_human) — mais sortie à **filtrer par un humain**, jamais auto-appliquer.
+- **meta_analyst — qualité** : `--meta-analysis` remarche (commit 78055ce), MAIS le meta-analyst **hallucine** des
+  noms d'agents/outils inexistants (ex. `analyst`/`researcher`, `sandbox_execute`) alors qu'il a
+  `self_inspect_config`. Durcir le grounding (ne référencer que des agents/outils RÉELS du roster ; noms exacts).
+  Idée : le lancer **périodiquement** (auto-trigger sur seuil d'échecs/ask_human) — mais sortie **filtrée par un
+  humain**, jamais auto-appliquée.
+
+## Évolutions ambitieuses
+- Les questions, comme les acceptations de plans, devraient être des **events en notification** : pouvoir les
+  traiter sans être sur la fenêtre de conversation, ne pas perdre les questions.
 
 ## Idées
 - Plein de micro-LLM prédisant le prochain token sur le même contexte → triplets de précogs.
 
+## Modèles à tester
+Sources : https://www.morphllm.com/best-ollama-models
+- orchestrator : `deepseek-r1:32b` (`ollama run deepseek-r1:32b`)
+- code : `qwen2.5-coder:32b` (22 Go VRAM @ Q4_K_M)
+- math/STEM : Phi-4 14B
+- via claude code : https://huggingface.co/collections/zai-org/glm-52 (MIT, pas de version quantifiée, 256 Go VRAM)
 
-## Evolutions ambitieuses
-
-- les questions, comme les accpetations de plans doivent etre des events qui apparaissent en notification; genre on pourrait les accepter sans etre sur la fenetre de conversation et ne pas perdre les questions.
-
-
-## Modeles a tester
-
-Sources: https://www.morphllm.com/best-ollama-models
-
-- orchestrator: `deepseek-r1:32b`   => `ollama run deepseek-r1:32b`
-- code: `qwen2.5-coder:32b` (22Go VRAM at Q4_K_M) => `ollama run qwen2.5-coder:32b`
-- new math and stem specialist: Phi-4 14B
-
-## Source a recuperer pour ecriture doc
-
-https://www.sitepoint.com/the-complete-stack-for-local-autonomous-agents--from-ggml-to-orchestration/
+## Source à récupérer pour écriture doc
+- https://www.sitepoint.com/the-complete-stack-for-local-autonomous-agents--from-ggml-to-orchestration/
