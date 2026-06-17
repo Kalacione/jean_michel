@@ -375,11 +375,13 @@ DEFAULT_MODEL_CONTEXT_WINDOW = _int_env("JEANMICHEL_DEFAULT_CTX_WINDOW", 32_768)
 # Override via env ("0" = unload right after every call, "30m" = keep hot).
 OLLAMA_KEEP_ALIVE = os.environ.get("JEANMICHEL_OLLAMA_KEEP_ALIVE", "30s")
 
-# Where the streamed LLM output ("slop") is dumped, one .jsonl per call, for debug
-# and post-mortem analysis of slow/looping generations. Empty/"none" disables it.
-# Under debug/ : it's a debug artifact, not runtime data — keeps the repo root clean.
-# (Per-conversation streams live in conversations/<id>/llm_streams/, see llm.py.)
-LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", str(REPO_ROOT / "debug" / "llm_streams"))
+# Global dump of streamed LLM "slop" (one file per call) — ONLY for callers WITHOUT a
+# conversation (CLI eval / debug of non-conv calls). OFF by default : in web — and normal
+# CLI — every turn has a conversation, whose streams already go to
+# conversations/<id>/llm_streams/ (see llm._resolve_stream_dir), so a global dump is
+# redundant slop. Enable for CLI/eval debugging via
+# JEANMICHEL_LLM_STREAM_DIR=debug/llm_streams (Empty/"none"/"off" = disabled).
+LLM_STREAM_DIR = os.environ.get("JEANMICHEL_LLM_STREAM_DIR", "")
 
 # Daemon logging : rotating file (+ stderr) configured at `run()`. The daemon used
 # to log nowhere persistent (terminal only) → silent hangs were undiagnosable.
