@@ -479,24 +479,19 @@ def _sync_todo_referent(conv_folder: Path, state: ConversationState) -> None:
         append_event(conv_folder, TodoCleared(todo_id=cleared))
 
 
-def _reconcile_plan_approval(
-    conv_folder: Path, state: ConversationState, *, plan_mode: bool, at_start: bool
-) -> None:
-    """Plan acceptance lifecycle on the REFERENT (replaces the plan_status.json sidecar). [Phase 1.3b]
-    - START of an EDIT turn on an unapproved active plan → approved=True (the human approved by
-      executing) ;
-    - END of a PLAN turn with an active plan → approved=False (a (re)plan awaits approval — also
-      resets a previously approved plan on a re-plan).
-    Emits PlanApprovalChanged on an actual flip (the filet journal)."""
+def _reconcile_plan_approval(conv_folder: Path, state: ConversationState, *, plan_mode: bool) -> None:
+    """Plan acceptance on the REFERENT (replaces the plan_status.json sidecar). [Phase 1.3b]
+    Called at the START of a turn : an EDIT turn launched on a still-unapproved active plan = the
+    human approved it by executing → approved=True (+ PlanApprovalChanged for the filet).
+
+    [Phase 2 R1.2] There is NO end-of-PLAN-turn reset anymore : a re-plan mints a NEW plan already
+    unapproved (via `_assign_plan_id_for_write`), so resetting the active plan's approval was both
+    redundant AND harmful — an aborted/no-plan_write PLAN turn would un-approve an already-executed
+    plan (the bug seen live : the UI re-proposed validating a finished plan)."""
     pid = state.active_plan_id
-    if not pid or pid not in state.plans:
-        return
-    if at_start and not plan_mode and not state.plans[pid].get("approved"):
+    if pid and pid in state.plans and not plan_mode and not state.plans[pid].get("approved"):
         state.plans[pid]["approved"] = True
         append_event(conv_folder, PlanApprovalChanged(plan_id=pid, approved=True))
-    elif not at_start and plan_mode and state.plans[pid].get("approved"):
-        state.plans[pid]["approved"] = False
-        append_event(conv_folder, PlanApprovalChanged(plan_id=pid, approved=False))
 
 
 _FILE_WRITE_TOOLS = frozenset({"workspace_create_file", "workspace_append", "workspace_str_replace"})
@@ -1226,7 +1221,7 @@ def run_main_loop(
         request_id=_req_entry["id"], mode=_req_entry["mode"], plan_id=_req_entry["plan_id"],
         started=_req_entry["started"], summary=_req_entry["summary"]))
     # An EDIT turn launched on a still-unapproved active plan = the human accepted it → execute.
-    _reconcile_plan_approval(conv_folder, state, plan_mode=plan_mode, at_start=True)
+    _reconcile_plan_approval(conv_folder, state, plan_mode=plan_mode)
     hooks = build_hook_registry(
         llm_client=llm_client, conv_folder=conv_folder, is_main_agent=True
     )
@@ -1263,8 +1258,8 @@ def run_main_loop(
         cancel_event=cancel_event,
     )
 
-    # A PLAN turn (re)proposes its plan (approved=False) → the Approve bar shows.
-    _reconcile_plan_approval(conv_folder, state, plan_mode=plan_mode, at_start=False)
+    # [Phase 2 R1.2] No end-of-turn approval reset : a re-plan already mints a NEW unapproved plan
+    # (via _assign_plan_id_for_write) ; resetting here un-approved an executed plan on an aborted re-plan.
 
     # Close this turn's request entry + set the terminal phase, then persist the referent. [Phase 1]
     # (The loop's _persist saved the state mid-turn ; this records the OUTCOME, post-loop.)

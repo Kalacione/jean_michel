@@ -1125,15 +1125,18 @@ def test_run_main_loop_clears_todo_from_referent_on_conclusion(tmp_path: Path):
 
 
 def test_reconcile_plan_approval_on_referent(tmp_path: Path):
-    """Phase 1.3b : l'acceptation vit dans state.plans[id].approved (plus de sidecar)."""
+    """Phase 1.3b + R1.2 : l'acceptation vit dans state.plans[id].approved (plus de sidecar).
+    Un tour EDIT sur un plan non-approuvé l'accepte ; il N'Y A PLUS de reset de fin de tour PLAN."""
     from jeanmichel.orchestrator_v2 import _reconcile_plan_approval
     s = ConversationState(active_plan_id="p1", plans={"p1": {"approved": False}})
-    _reconcile_plan_approval(tmp_path, s, plan_mode=False, at_start=True)   # EDIT start sur non-approuvé
+    _reconcile_plan_approval(tmp_path, s, plan_mode=False)        # EDIT start sur non-approuvé
     assert s.plans["p1"]["approved"] is True                     # → accepté
-    _reconcile_plan_approval(tmp_path, s, plan_mode=True, at_start=False)   # fin de tour PLAN (re-plan)
-    assert s.plans["p1"]["approved"] is False                    # → ré-attente d'approbation
+    # R1.2 : un tour PLAN (re-plan) ne dé-approuve PLUS le plan actif (c'est _assign qui crée le
+    # nouveau plan déjà non-approuvé ; le reset un-approuvait un plan exécuté sur un re-plan aborté).
+    _reconcile_plan_approval(tmp_path, s, plan_mode=True)
+    assert s.plans["p1"]["approved"] is True                     # → reste approuvé (pas de reset)
     s2 = ConversationState()                                     # pas de plan actif → no-op
-    _reconcile_plan_approval(tmp_path, s2, plan_mode=False, at_start=True)
+    _reconcile_plan_approval(tmp_path, s2, plan_mode=False)
     assert s2.active_plan_id is None
 
 
