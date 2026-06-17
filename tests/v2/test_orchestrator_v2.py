@@ -1262,6 +1262,52 @@ def test_rebuild_from_events_matches_maintained_referent(tmp_path: Path):
     assert org(persistence.rebuild_from_events(events)) == org(rebuilt)
 
 
+def test_rebuild_matches_maintained_with_replan_supersede(tmp_path: Path):
+    """Phase 2 (B.6) — LE VERROU : avec un re-plan (supersede), le maintenu reste EXACTEMENT
+    reconstructible depuis le journal (PlanSuperseded inclus). Plan → approuve/exécute → re-plan."""
+    from jeanmichel import persistence
+    from jeanmichel import todo as todomod
+    from jeanmichel.tools import plan_write as plan_write_mod
+
+    org_keys = ("phase", "active_plan_id", "active_todo_id", "plans", "todos",
+                "requests", "subagents", "files")
+
+    def org(state: ConversationState) -> dict:
+        return {k: getattr(state, k) for k in org_keys}
+
+    def plan_turn(text: str, md: str) -> None:
+        run_main_loop(
+            conv_folder=tmp_path,
+            agent=make_agent("jean-michel", role="router", tool_grants={"plan_write"}),
+            tools_registry={"plan_write": plan_write_mod.make_spec(tmp_path)},
+            user_text=text, plan_mode=True,
+            llm_client=MockClient(script=[assistant_response(
+                "", tool_calls=[tool_call("plan_write", markdown=md)])]),
+        )
+
+    plan_turn("planifie", "# Plan v1")                       # p1 proposé
+    run_main_loop(                                            # approuve + exécute p1 (conclut)
+        conv_folder=tmp_path, agent=make_agent("jean-michel", role="router"),
+        tools_registry={}, user_text="Approved — execute", plan_mode=False,
+        llm_client=MockClient(script=[assistant_response("Fait.")]),
+    )
+    plan_turn("re-planifie autrement", "# Plan v2")          # re-plan → p1 superseded, p2 actif
+
+    maintained = ConversationState.from_dict(persistence.load_state(tmp_path))
+    events = persistence.load_events(tmp_path)
+    rebuilt = persistence.rebuild_from_events(events)
+    assert org(rebuilt) == org(maintained)                   # ★ maintenu == reconstruit (avec supersede)
+    assert maintained.active_plan_id == "p2"
+    assert maintained.plans["p1"] == {
+        "plan_file": "plan_p1.md", "status": "superseded", "approved": True, "superseded_by": "p2"}
+    assert maintained.plans["p2"]["approved"] is False       # nouveau plan, en attente d'approbation
+    assert maintained.phase == "awaiting_approval"
+    # l'ancien plan est ARCHIVÉ (consultable), le nouveau est l'actif (plan.md) :
+    assert todomod.load_plan_file(tmp_path, "plan_p1.md") == "# Plan v1"
+    assert todomod.load_plan(tmp_path) == "# Plan v2"
+    assert org(persistence.rebuild_from_events(events)) == org(rebuilt)  # idempotent
+
+
 def test_rebuild_folds_plan_superseded():
     """Phase 2 (B.2) : le filet reconstruit le supersede — ancien plan archivé, nouveau actif."""
     from jeanmichel import persistence
