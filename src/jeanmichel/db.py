@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from . import config
 from .models import Agent, Conversation, Paradigm
@@ -525,3 +526,38 @@ def set_agent_model(conn: sqlite3.Connection, agent_code: str, model: str | None
     )
     if result.rowcount == 0:
         raise KeyError(f"Unknown agent: {agent_code}")
+
+
+_AGENT_EDITABLE_FIELDS = ("model_override", "temperature", "thinking_mode")
+
+
+def update_agent_params(conn: sqlite3.Connection, code: str, **fields: Any) -> None:
+    """Patch an agent's editable params (model_override / temperature / thinking_mode).
+
+    Only fields PRESENT in ``fields`` are written (partial PATCH). ``model_override`` empty → NULL
+    (role default). Used by the web Agent-settings panel ; the CLI uses ``set_agent_model``.
+    """
+    sets: list[str] = []
+    vals: list[Any] = []
+    for f in _AGENT_EDITABLE_FIELDS:
+        if f not in fields:
+            continue
+        v = fields[f]
+        if f == "model_override":
+            v = v.strip() if isinstance(v, str) and v.strip() else None
+        elif f == "temperature":
+            v = float(v)
+        elif f == "thinking_mode":
+            v = int(bool(v))
+        sets.append(f"{f}=?")
+        vals.append(v)
+    if not sets:
+        return
+    sets.append("modified_at=?")
+    vals.append(_now())
+    vals.append(code)
+    result = conn.execute(  # noqa: S608 — columns are a fixed whitelist, values parameterized
+        f"UPDATE agents SET {', '.join(sets)} WHERE code=?", vals
+    )
+    if result.rowcount == 0:
+        raise KeyError(f"Unknown agent: {code}")

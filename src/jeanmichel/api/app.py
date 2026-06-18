@@ -178,6 +178,11 @@ def create_app() -> Any:
         interests: str | None = None
         notes: str | None = None
 
+    class AgentUpdate(BaseModel):
+        model_override: str | None = None   # "" / null → NULL (role default)
+        temperature: float | None = None
+        thinking_mode: bool | None = None
+
     # ---- health ----------------------------------------------------------
 
     @app.get("/api/health")
@@ -761,6 +766,51 @@ def create_app() -> Any:
             db.update_web_user_profile(conn, user["id"], **patch)
             row = db.get_web_user_by_id(conn, user["id"])
         return {"profile": {f: row[f] for f in db.WEB_PROFILE_FIELDS}}
+
+    # ---- agents (single-user system : any logged-in user can read & edit) -
+
+    def _agent_view(a: Any) -> dict[str, Any]:
+        return {
+            "code": a.code, "name": a.name, "role": a.role, "mission": a.mission,
+            "temperature": a.temperature, "thinking_mode": a.thinking_mode,
+            "model_override": a.model_override,
+            "effective_model": config.agent_model(a.code, a.role, a.model_override),
+        }
+
+    @app.get("/api/agents")
+    def list_agents(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        with db.connect() as conn:
+            agents = db.list_active_agents(conn)
+        return {"agents": [_agent_view(a) for a in agents]}
+
+    @app.get("/api/models")
+    def list_models(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        """Installed Ollama models (for the model dropdown). Tolerant : [] if Ollama is unreachable."""
+        try:
+            from ollama import Client
+            resp = Client(host=config.DEFAULT_OLLAMA_HOST).list()
+            raw = getattr(resp, "models", None) or (resp.get("models") if isinstance(resp, dict) else []) or []
+            names = []
+            for m in raw:
+                n = getattr(m, "model", None) or (m.get("model") or m.get("name") if isinstance(m, dict) else None)
+                if n:
+                    names.append(n)
+            return {"models": sorted(set(names))}
+        except Exception:  # noqa: BLE001 — Ollama down / not installed → the UI lets you type a model
+            return {"models": []}
+
+    @app.put("/api/agents/{code}")
+    def update_agent(
+        code: str, body: AgentUpdate, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        patch = body.model_dump(exclude_unset=True)
+        try:
+            with db.connect() as conn:
+                db.update_agent_params(conn, code, **patch)
+                agent = db.get_agent_by_code(conn, code)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown agent") from None
+        return {"agent": _agent_view(agent)}
 
     # ---- text-to-speech (vocal mode ; on-demand, off the turn critical path) -
 

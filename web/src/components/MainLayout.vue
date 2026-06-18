@@ -22,6 +22,7 @@
       />
     </v-badge>
     <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
+    <v-btn icon="mdi-robot-outline" title="Réglages des agents" @click="agents = true" />
     <v-btn icon="mdi-theme-light-dark" title="Thème" @click="$vuetify.theme.cycle()" />
     <v-chip class="ml-2" prepend-icon="mdi-account" variant="tonal">
       {{ auth.user?.username }}
@@ -50,6 +51,7 @@
   <MemoryDialog v-model="memory" />
   <MemoryReviewDialog v-model="review" />
   <ProfileDialog v-model="profile" />
+  <AgentsDialog v-model="agents" />
 
   <v-snackbar
     v-model="snackbar.visible"
@@ -63,6 +65,7 @@
 
 <script setup>
   import { onMounted, onUnmounted, ref } from 'vue'
+  import AgentsDialog from '@/components/AgentsDialog.vue'
   import AskHumanDialog from '@/components/AskHumanDialog.vue'
   import ChatPane from '@/components/ChatPane.vue'
   import ConversationsDrawer from '@/components/ConversationsDrawer.vue'
@@ -82,6 +85,7 @@
   const memory = ref(false)
   const review = ref(false)
   const profile = ref(false)
+  const agents = ref(false)
 
   let notif = null
   let notifClosing = false

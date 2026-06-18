@@ -163,6 +163,11 @@ export const api = {
   getProfile: () => request('GET', '/profile'),
   updateProfile: patch => request('PATCH', '/profile', patch),
 
+  // Agent settings (single-user system). updateAgent patch : {model_override?, temperature?, thinking_mode?}.
+  listAgents: () => request('GET', '/agents'),
+  listModels: () => request('GET', '/models'),
+  updateAgent: (code, patch) => request('PUT', `/agents/${code}`, patch),
+
   // TTS is auth-gated, so an <audio src> can't carry the token : fetch with the
   // header and return a Blob the caller plays via the Web Audio / Audio API.
   async tts (text) {
