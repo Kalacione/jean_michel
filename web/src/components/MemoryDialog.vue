@@ -70,6 +70,9 @@
                 <span class="text-caption text-medium-emphasis">[{{ e.scope }}]</span> {{ e.code }}
               </template>
               <template #append>
+                <v-chip v-if="e.importance" class="mr-1" size="x-small" :title="`importance ${e.importance}`" variant="tonal">
+                  {{ e.importance }}
+                </v-chip>
                 <v-btn icon="mdi-delete-outline" size="x-small" variant="text" @click.stop="del(e)" />
               </template>
             </v-list-item>
@@ -120,6 +123,16 @@
             <v-text-field v-model="form.title" counter="60" density="compact" label="Titre" variant="outlined" />
             <v-text-field v-model="form.description" counter="150" density="compact" label="Description" variant="outlined" />
             <v-textarea v-model="form.content" auto-grow counter="1000" label="Contenu" rows="8" variant="outlined" />
+            <v-slider
+              v-model="form.importance"
+              class="mt-1 px-2"
+              label="Importance"
+              :max="5"
+              :min="1"
+              show-ticks="always"
+              :step="1"
+              thumb-label
+            />
             <v-alert v-if="error" class="mb-2" density="compact" :text="error" type="error" />
             <div class="d-flex ga-2">
               <v-btn color="primary" :loading="saving" variant="flat" @click="save">
@@ -155,7 +168,7 @@
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
-  const form = reactive({ scope: 'user', code: '', title: '', description: '', content: '', project_id: null, tool_code: '' })
+  const form = reactive({ scope: 'user', code: '', title: '', description: '', content: '', importance: 3, project_id: null, tool_code: '' })
 
   // The query params pinning a list/recall/delete to the current browse target.
   function browseTarget () {
@@ -203,7 +216,7 @@
     selected.value = null
     error.value = ''
     Object.assign(form, {
-      scope: browseScope.value, code: '', title: '', description: '', content: '',
+      scope: browseScope.value, code: '', title: '', description: '', content: '', importance: 3,
       project_id: browseScope.value === 'project' ? browseProjectId.value : null,
       tool_code: browseScope.value === 'tool' ? browseToolCode.value : '',
     })
@@ -229,7 +242,8 @@
       mode.value = 'edit'
       Object.assign(form, {
         scope: full.scope, code: full.code, title: full.title, description: full.description,
-        content: full.content, project_id: full.project_id, tool_code: full.tool_code || '',
+        content: full.content, importance: full.importance ?? 3,
+        project_id: full.project_id, tool_code: full.tool_code || '',
       })
     } catch (err) {
       error.value = err.detail || err.message
@@ -243,13 +257,14 @@
       if (mode.value === 'new') {
         await api.saveMemory({
           scope: form.scope, code: form.code, title: form.title,
-          description: form.description, content: form.content,
+          description: form.description, content: form.content, importance: form.importance,
           project_id: form.scope === 'project' ? form.project_id : null,
           tool_code: form.scope === 'tool' ? form.tool_code : null,
         })
       } else {
         await api.updateMemory(form.scope, form.code, {
           title: form.title, description: form.description, content: form.content,
+          importance: form.importance,
           ...entryTarget(form),
         })
       }

@@ -151,6 +151,7 @@ def create_app() -> Any:
         title: str
         description: str
         content: str
+        importance: int = 3
         project_id: int | None = None
         tool_code: str | None = None
 
@@ -158,6 +159,7 @@ def create_app() -> Any:
         title: str | None = None
         description: str | None = None
         content: str | None = None
+        importance: int | None = None
         project_id: int | None = None
         tool_code: str | None = None
 
@@ -695,6 +697,7 @@ def create_app() -> Any:
                     title=body.title,
                     description=body.description,
                     content=body.content,
+                    importance=body.importance,
                     **target,
                 )
         except memory_svc.MemoryOpError as exc:
@@ -718,6 +721,7 @@ def create_app() -> Any:
                     title=body.title,
                     description=body.description,
                     content=body.content,
+                    importance=body.importance,
                     **target,
                 )
         except memory_svc.MemoryOpError as exc:
