@@ -41,12 +41,6 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
   chargement au `select()` (sinon candidats perdus si on quitte la conv dans les ~15 s) ; (b) éventuel **gating**
   de fréquence (ne pas consolider chaque tour deep). [Recouvre en partie le point sidecars→DB ci-dessus.]
 
-## Perf / qualité orchestration
-- **Nudging tours vides de cogito** (tour assistant vide juste après un résultat d'outil → relancé par le garde,
-  ~1 appel LLM en plus) : creuser la cause (prompt ? quirk modèle reasoning ?).
-- **Fluidité du streaming sous famine GIL** : le worker tient le GIL pendant les sections CPU lourdes → le live
-  saccade (la WS ne meurt plus, keepalive désactivé, mais l'UX peut figer un instant).
-
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
