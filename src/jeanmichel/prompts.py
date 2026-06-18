@@ -87,7 +87,7 @@ def _memory_section(
     """Render one ``## header`` index section (code : description), capped. [] if empty."""
     rows = conn.execute(
         f"SELECT code, description FROM memory WHERE {where} "
-        "ORDER BY modified_at DESC LIMIT ?",
+        "ORDER BY importance DESC, modified_at DESC LIMIT ?",
         (*params, cap),
     ).fetchall()
     if not rows:

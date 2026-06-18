@@ -53,6 +53,18 @@ def test_grounded_candidate_kept(tmp_db_v2):
     assert cands[0]["suggested_action"] == "new"
 
 
+def test_propose_carries_importance_and_kind(tmp_db_v2):
+    llm = FakeLLM({"candidates": [{
+        "scope": "user", "code": "imp-fact", "title": "t", "description": "d", "content": "c",
+        "importance": 5, "grounding_quote": "I really like Rust",
+    }]})
+    msgs = _messages("I really like Rust a lot.")
+    with db_connect() as conn:
+        cands = consolidation.propose(conn, msgs, llm=llm, user_id=_uid())
+    assert cands[0]["importance"] == 5
+    assert cands[0]["kind"] == "fact"
+
+
 def test_ungrounded_candidate_dropped(tmp_db_v2):
     """Anti-hallucination : a quote that doesn't appear in the conversation → dropped."""
     llm = FakeLLM({"candidates": [{
@@ -213,6 +225,15 @@ def test_apply_save_and_extend(tmp_db_v2):
         consolidation.apply_candidate(conn, cand, action="extend", user_id=_uid(), content="v2")
     rec = json.loads(_handler(action="recall", scope="user", code="fav"))
     assert rec["entry"]["content"] == "v2"
+
+
+def test_apply_candidate_writes_importance(tmp_db_v2):
+    cand = {"scope": "user", "code": "imp", "title": "t", "description": "d", "content": "v",
+            "project_id": None, "tool_code": None, "importance": 5}
+    with db_connect() as conn:
+        consolidation.apply_candidate(conn, cand, action="save", user_id=_uid())
+    rec = json.loads(_handler(action="recall", scope="user", code="imp"))
+    assert rec["entry"]["importance"] == 5
 
 
 def test_run_shadow_stashes_pending(tmp_db_v2, conv_folder):

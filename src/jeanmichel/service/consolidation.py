@@ -37,13 +37,14 @@ MIN_QUOTE_CHARS = 12          # too-short quotes can't be reliably grounded
 MAX_TRANSCRIPT_CHARS = 8_000  # cap the transcript fed to the LLM
 
 CONSOLIDATION_SYSTEM_PROMPT = """You extract durable, reusable facts worth remembering long-term from a conversation. Reply with strict JSON of shape:
-{"candidates": [{"scope": "...", "code": "...", "title": "...", "description": "...", "content": "...", "grounding_quote": "...", "tool_code": "..."}]}
+{"candidates": [{"scope": "...", "code": "...", "title": "...", "description": "...", "content": "...", "importance": 1-5, "grounding_quote": "...", "tool_code": "..."}]}
 
 Rules:
 - Only propose a fact that is DURABLE and reusable across future conversations. Skip one-off task details, transient state, and anything already obvious.
 - `scope`: "user" (a stable fact/preference about the human), "project" (a decision/constraint of the current project), or "tool" (a reusable lesson on how to use a tool — set `tool_code`).
 - `grounding_quote`: a VERBATIM excerpt copied from a USER message or a TOOL result that supports the fact — NEVER from the assistant's own statements (those may be unverified). If you cannot quote a user/tool source, do not propose it. Never paraphrase the quote.
 - `code`: a short kebab-case slug (e.g. "prefers-terse-answers"). No spaces.
+- `importance`: 1 (minor) to 5 (critical) — how strongly this fact should resurface later. Default 3.
 - Keep it concise: title <= 60 chars, description <= 150, content <= 1000.
 - If nothing is worth remembering, return {"candidates": []}. Do not invent facts to be helpful.
 Output English only."""
@@ -190,7 +191,12 @@ def propose(
         else:
             action = "new"
 
+        try:
+            imp = max(1, min(5, int(c.get("importance", 3))))
+        except (TypeError, ValueError):
+            imp = 3
         out.append({
+            "kind": "fact",
             "scope": scope,
             "code": code,
             "title": title,
@@ -199,6 +205,7 @@ def propose(
             "grounding_quote": quote.strip(),
             "tool_code": tool_code,
             "project_id": project_id if scope == "project" else None,
+            "importance": imp,
             "suggested_action": action,
             "existing_matches": [
                 {k: m.get(k) for k in ("code", "title", "description", "score")} for m in matches
@@ -342,12 +349,13 @@ def apply_candidate(
     t = title if title is not None else candidate["title"]
     d = description if description is not None else candidate["description"]
     ct = content if content is not None else candidate["content"]
+    imp = candidate.get("importance", 3)
     if action == "extend":
         memory.update(conn, scope=scope, code=candidate["code"],
-                      title=t, description=d, content=ct, **target)
+                      title=t, description=d, content=ct, importance=imp, **target)
         return {"action": "extend", "scope": scope, "code": candidate["code"]}
     saved = memory.save(conn, scope=scope, code=candidate["code"],
-                        title=t, description=d, content=ct, **target)
+                        title=t, description=d, content=ct, importance=imp, **target)
     return {"action": "save", **saved}
 
 

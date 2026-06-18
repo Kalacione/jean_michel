@@ -171,6 +171,22 @@ def test_save_content_over_limit_rejected(tmp_db_v2):
     assert e.value.code == "content_too_long"
 
 
+def test_save_persists_importance(tmp_db_v2):
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="x", title="t", description="d", content="c",
+                    importance=5, user_id=cli_user_id(conn))
+    rec = json.loads(_handler(action="recall", scope="user", code="x"))
+    assert rec["entry"]["importance"] == 5
+
+
+def test_update_importance_only(tmp_db_v2):
+    _save_user("x")  # default importance 3
+    with db_connect() as conn:
+        memory.update(conn, scope="user", code="x", importance=5, user_id=cli_user_id(conn))
+    rec = json.loads(_handler(action="recall", scope="user", code="x"))
+    assert rec["entry"]["importance"] == 5
+
+
 # ---- service.memory : update / delete -------------------------------------
 
 
@@ -359,6 +375,19 @@ def test_render_warns_near_capacity(tmp_db_v2):
         block, count = render_memory_block(conn, user_id=_uid())
     assert count == 90
     assert "near capacity" in block
+
+
+def test_render_ranks_by_importance_over_recency(tmp_db_v2):
+    with db_connect() as conn:
+        uid = cli_user_id(conn)
+        # 'critical' saved FIRST (older) but high importance ; 'minor' newer but low.
+        memory.save(conn, scope="user", code="critical", title="t",
+                    description="critical note", content="c", importance=5, user_id=uid)
+        memory.save(conn, scope="user", code="minor", title="t",
+                    description="minor note", content="c", importance=1, user_id=uid)
+    with db_connect() as conn:
+        block, _ = render_memory_block(conn, user_id=_uid())
+    assert block.index("critical note") < block.index("minor note")  # importance beats recency
 
 
 def test_render_table_missing_returns_empty(tmp_path):

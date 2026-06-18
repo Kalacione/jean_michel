@@ -40,12 +40,12 @@ DEFAULT_SEARCH_LIMIT = 10
 
 _COLS = (
     "id", "scope", "user_id", "project_id", "tool_code", "code", "title",
-    "description", "content", "created_at", "modified_at",
+    "description", "content", "importance", "created_at", "modified_at",
 )
 _SELECT_COLS = ", ".join(_COLS)
 _SELECT_COLS_M = ", ".join(f"m.{c}" for c in _COLS)  # for the FTS join (disambiguated)
 _INDEX_COLS = (
-    "id, scope, user_id, project_id, tool_code, code, title, description, modified_at"
+    "id, scope, user_id, project_id, tool_code, code, title, description, importance, modified_at"
 )
 
 
@@ -61,6 +61,14 @@ class MemoryOpError(Exception):
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _clamp_importance(v: Any) -> int:
+    """Coerce to an int in [1, 5] (the injection-ranking weight). Default 3 on garbage."""
+    try:
+        return max(1, min(5, int(v)))
+    except (TypeError, ValueError):
+        return 3
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +154,7 @@ def save(
     user_id: int | None = None,
     project_id: int | None = None,
     tool_code: str | None = None,
+    importance: int = 3,
 ) -> dict[str, Any]:
     """Insert a new entry in ``scope``. Raises on validation / (scope,target,code) conflict."""
     clause, params = _target_clause(
@@ -161,7 +170,7 @@ def save(
             "already_exists",
             (
                 f"An entry with scope='{scope}' and code='{code}' already exists. "
-                "Use action='update' to modify it."
+                "Update it instead."
             ),
             scope=scope,
             entry_code=code,
@@ -171,8 +180,9 @@ def save(
     conn.execute(
         "INSERT INTO memory "
         "(scope, user_id, project_id, tool_code, code, title, description, content, "
-        "created_at, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (scope, user_id, project_id, tool_code, code, title, description, content, now, now),
+        "importance, created_at, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (scope, user_id, project_id, tool_code, code, title, description, content,
+         _clamp_importance(importance), now, now),
     )
     return {"scope": scope, "code": code, "title": title}
 
@@ -306,14 +316,15 @@ def update(
     title: str | None = None,
     description: str | None = None,
     content: str | None = None,
+    importance: int | None = None,
 ) -> int:
     """Update the entry identified by ``(scope, target, code)``. Returns its id."""
     if not code or not code.strip():
         raise MemoryOpError("invalid_args", "code is required for update.")
-    if title is None and description is None and content is None:
+    if title is None and description is None and content is None and importance is None:
         raise MemoryOpError(
             "invalid_args",
-            "update requires at least one of: title, description, content.",
+            "update requires at least one of: title, description, content, importance.",
         )
     if title is not None:
         _validate_field("title", title, MAX_TITLE_CHARS)
@@ -331,6 +342,9 @@ def update(
         if val is not None:
             sets.append(f"{col}=?")
             params.append(val)
+    if importance is not None:
+        sets.append("importance=?")
+        params.append(_clamp_importance(importance))
     sets.append("modified_at=?")
     params.append(_now())
     params.append(target_id)
