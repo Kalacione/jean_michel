@@ -26,6 +26,7 @@ from . import image_search as _image_search_mod
 from . import manage_memory as _manage_memory_mod
 from . import news as _news_mod
 from . import plan_write as _plan_write_mod
+from . import propose_memory as _propose_memory_mod
 from . import pypi as _pypi_mod
 from . import repo_edit as _repo_edit_mod
 from . import repo_exec as _repo_exec_mod
@@ -102,6 +103,9 @@ def build_registry(
     # Bind memory to the conversation context : owner (None → reserved cli user)
     # + the conversation's project (None → no project ; project-scope notes denied).
     mum_spec = _manage_memory_mod.make_spec(memory_user_id, memory_project_id)
+    # propose_memory : the write-proposal channel (candidate → human review). Bound to the
+    # conversation so candidates land in its pending_consolidation queue.
+    propose_memory_spec = _propose_memory_mod.make_spec(conv_id, memory_user_id, memory_project_id)
     # Workspace-bound image tools : analyze_image reads the normalized derivative
     # and talks to a vision client (reuses the turn's main_llm when injected) ;
     # image_fetch downloads a web image into the workspace.
@@ -133,6 +137,7 @@ def build_registry(
         todo_update_spec.name: todo_update_spec,
         plan_write_spec.name: plan_write_spec,
         mum_spec.name: mum_spec,
+        propose_memory_spec.name: propose_memory_spec,
         _news_mod.LATEST_SPEC.name: _news_mod.LATEST_SPEC,
         _news_mod.ARCHIVE_SPEC.name: _news_mod.ARCHIVE_SPEC,
         _web_fetch_mod.SPEC.name: _web_fetch_mod.SPEC,
