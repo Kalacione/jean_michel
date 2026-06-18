@@ -193,20 +193,18 @@ INSERT INTO paradigms VALUES(120,10,'subresearch_inline','Sub-research within a 
 INSERT INTO paradigms VALUES(121,34,'router_synthesis_discipline','Router synthesis discipline',unistr('- After a specialist returns via `report_back`, decide explicitly: follow up\u000a  with another delegation, or synthesize the answer for the user directly.\u000a- If the report includes sub_questions you want to follow up on, delegate to\u000a  the appropriate agent.\u000a- When all necessary research is done, produce the answer as an assistant\u000a  message without further tool calls. The orchestrator detects this as the\u000a  conversation''s end point.\u000a- Never re-delegate the same question without narrowing the scope.'),'Enforced also at the orchestrator level: if the router calls any tool other than plan_update/delegate_to/ask_human/return_to_user immediately after a specialist returns, a reminder is injected.',0,100,1,'2026-05-28T20:17:15Z','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(122,16,'source_admission_criteria','Source admission criteria for listing tasks',unistr('- When the briefing asks for a list of items (sources, tools, papers, products…), each entry must be a SPECIFIC, NAMED instance that the user could identify and use directly. Do not use category labels as entries unless the briefing explicitly asks for categories.\u000a- Each listed entry must be grounded in a tool_response from THIS research session. If you cannot point to the search result or page where the entry was surfaced, do not list it. Pre-existing knowledge about a name is not evidence that the name corresponds to what you claim about it.\u000a- The description column for each entry must add information that distinguishes THIS entry from the others (its angle, format, access mode, license, scope). Generic descriptions that merely paraphrase the entry name are a red flag — they signal you cannot actually characterize what makes the entry relevant.\u000a- When unsure whether an entry truly matches the brief''s constraints (e.g. public access, free tier, documented API, current availability), EXCLUDE it. A short, accurate list always beats a longer list padded with entries you cannot defend.\u000a- Brand recognition is not verification. Many well-known brands no longer offer what they once did, or offer it only under commercial contract. Always check the tool_response evidence, not your memory of the brand.'),'Generalised anti-hallucination paradigm for listing tasks. Targets: category-as-entry failure, brand-vs-product confusion, generic descriptions. Derived from comparison of 3 model outputs on a sourcing task, 2026-05-24.',0,55,1,'2026-05-28T20:17:15Z','2026-05-28T20:17:15Z');
 INSERT INTO paradigms VALUES(123,21,'comparator_output_contract','Comparator output contract',unistr('- Materialise the comparative table as a workspace file via workspace_create_file. Do not paste the table into report_back or into ask_human.\u000a- File name pattern: comparison_<subject_slug>_<HHMMSS>.md, where <subject_slug> is a short lowercase ASCII slug describing the comparison subject (use underscores, no spaces, no accents) and <HHMMSS> is the current UTC time as six digits. Example: comparison_ai_frameworks_142507.md. The timestamp is mandatory to avoid collisions when several comparisons run in parallel or in successive turns.\u000a- After the file is written, call report_back exactly once with:\u000a    - files_produced = ["<the relative path you just wrote>"]\u000a    - summary = one paragraph describing what the table contains and its main verdict\u000a    - confidence reflecting how solid the underlying data is\u000a  This is what makes the file discoverable by downstream agents (document-builder, critical-thinker, jean-michel). Skipping report_back strands the artifact.\u000a- If you cannot complete the comparison (missing data, blocked source), still call report_back with files_produced=[] (or the partial file path if any) and an explicit blockers list. Do not silently abort.'),'Comparator naturally produces a structured artifact (a table). Pasting it inline truncates badly in chat UIs and hides it from sibling agents. Forcing workspace_create_file + report_findings creates a clean handoff. Timestamped name avoids the obvious collision when the router re-asks the comparator on the same subject. Codified after observing a 2026-05-25 conversation where the comparator hit no_write_grant.',0,20,1,'2026-05-28T20:17:15Z','2026-05-28 20:17:15');
-INSERT INTO paradigms VALUES(124,29,'memory_discipline','Memory discipline','- Save memory when something durable emerges: a fact about the human
-  (scope user), a project decision (scope project), a reusable lesson about a
-  tool (scope tool), or a globally useful fact (scope world).
-- Before saving, search existing memory (action=''search'') to avoid duplicates
-  and to catch a contradicting entry — extend/update the existing one instead.
-- Update an entry when the conversation refines or contradicts it; delete when
-  it becomes obsolete.
-- Recall (action=''recall'') the full body of an entry whose code you saw in the
-  memory index; search when you don''t know the code, before concluding you don''t
-  know something.
-- Keep entries concise: title < 60 chars, description < 150, content < 1000.
-- Use the note_for_<scope> shortcuts when adding a new note.','Frames jean-michel''s use of manage_memory. Discipline, not a
-mechanical must — the shadow consolidation pass proposes saves for the human to
-confirm; nothing is written unattended.',0,60,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
+INSERT INTO paradigms VALUES(124,29,'memory_discipline','Memory discipline','- manage_memory is READ-ONLY: recall (full body by code), search (find related, before
+  concluding you don''t know something), list (the index).
+- To REMEMBER something durable — a stable fact about the human (scope user), a project
+  decision/constraint (scope project), or a reusable lesson about a tool (scope tool) —
+  call propose_memory. It does NOT write directly: it proposes a candidate the human
+  reviews and approves.
+- Before proposing, search existing memory to avoid duplicates and surface a contradicting
+  entry (the review extends/supersedes rather than duplicating).
+- Keep proposals concise: title < 60 chars, description < 150, content < 1000.
+- A reflection pass also proposes durable facts at the end of a turn — nothing is written
+  unattended; the human confirms every entry.','Frames the read/propose split: manage_memory reads, propose_memory proposes
+(human-reviewed). Discipline, not a mechanical must; nothing is written to memory unattended.',0,60,1,'2026-05-28 20:17:15','2026-05-28 20:17:15');
 INSERT INTO paradigms VALUES(143,29,'tool_note_discipline','Tool note discipline','- A tool note (scope=''tool'') captures a durable, reusable lesson about HOW
   to use a specific tool well: a parameter that matters, a failure mode and its
   fix, an input format the tool expects. Never a one-off result.
@@ -807,6 +805,15 @@ INSERT INTO agent_tools VALUES(22,'workspace_create_file');
 INSERT INTO agent_tools VALUES(22,'workspace_append');
 INSERT INTO agent_tools VALUES(22,'workspace_str_replace');
 INSERT INTO agent_tools VALUES(22,'manage_memory');
+-- propose_memory : the write-proposal channel, granted to every agent holding manage_memory (migrate_154).
+INSERT INTO agent_tools VALUES(1,'propose_memory');
+INSERT INTO agent_tools VALUES(12,'propose_memory');
+INSERT INTO agent_tools VALUES(15,'propose_memory');
+INSERT INTO agent_tools VALUES(16,'propose_memory');
+INSERT INTO agent_tools VALUES(17,'propose_memory');
+INSERT INTO agent_tools VALUES(18,'propose_memory');
+INSERT INTO agent_tools VALUES(21,'propose_memory');
+INSERT INTO agent_tools VALUES(22,'propose_memory');
 INSERT INTO agent_tools VALUES(1,'image_search');
 INSERT INTO agent_tools VALUES(13,'image_search');
 INSERT INTO agent_tools VALUES(1,'analyze_image');

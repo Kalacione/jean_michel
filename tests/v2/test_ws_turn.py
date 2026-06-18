@@ -326,8 +326,10 @@ def test_ws_analyse_has_no_speak(client, monkeypatch):
 # ---- per-user memory isolation in the turn (M2) ---------------------------
 
 
-def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
-    """A web turn reads/writes the OWNER's memory — never the cli user's."""
+def test_ws_turn_proposes_memory_for_review(client, monkeypatch):
+    """A web turn PROPOSES memory (propose_memory, the write-proposal channel) for the
+    owner's conversation — the candidate is stashed for human review ; nothing is written
+    to memory directly (manage_memory is read-only)."""
     dispatch = MockClient(
         script=[LLMResponse(thinking="", content='{"intent":"deep","tool":null,"args":{}}')]
     )
@@ -338,20 +340,20 @@ def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
                 content="",
                 tool_calls=[
                     ToolCall(
-                        name="manage_memory",
+                        name="propose_memory",
                         arguments={
-                            "action": "save", "scope": "user", "code": "fav-lang",
+                            "scope": "user", "code": "fav-lang",
                             "title": "Fav lang", "description": "likes Rust",
                             "content": "The user likes Rust.",
                         },
                     )
                 ],
             ),
-            LLMResponse(thinking="", content="Noté."),
+            LLMResponse(thinking="", content="Noté — à valider dans /memo."),
         ]
     )
     monkeypatch.setattr(executor, "get_llm_clients", lambda: (dispatch, main))
-    alice_id = _make_user("alice", "pw")
+    _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
     conv_id = _create_conv(client, token)
 
@@ -361,19 +363,13 @@ def test_ws_turn_writes_to_owner_memory(client, monkeypatch):
             if ws.receive_json()["type"] in ("final", "error"):
                 break
 
+    from jeanmichel.service import consolidation
+    pending = consolidation.load_pending(conv_id)
+    assert "fav-lang" in {c["code"] for c in pending}  # proposed for review
+    # Proposal only — nothing written to memory directly.
     with db_connect() as conn:
-        alice_codes = {
-            r["code"] for r in conn.execute(
-                "SELECT code FROM memory WHERE scope='user' AND user_id=?", (alice_id,)
-            )
-        }
-        cli_codes = {
-            r["code"] for r in conn.execute(
-                "SELECT code FROM memory WHERE scope='user' AND user_id=?", (db.cli_user_id(conn),)
-            )
-        }
-    assert "fav-lang" in alice_codes
-    assert "fav-lang" not in cli_codes
+        n = conn.execute("SELECT COUNT(*) AS c FROM memory WHERE code='fav-lang'").fetchone()["c"]
+    assert n == 0
 
 
 # ---- message attachments fold into the LLM payload ------------------------

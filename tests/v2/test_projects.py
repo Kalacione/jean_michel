@@ -9,8 +9,8 @@ from jeanmichel.db import cli_user_id
 from jeanmichel.db import connect as db_connect
 from jeanmichel.prompts import render_memory_block
 from jeanmichel.service import conversation as conversation_svc
+from jeanmichel.service import memory
 from jeanmichel.service import project as project_svc
-from jeanmichel.tools.manage_memory import _handler
 
 
 def _uid() -> int:
@@ -173,7 +173,8 @@ def test_delete_project_cascades_project_memory(tmp_db_v2):
     """scope='project' memory is removed when the project is deleted."""
     with db_connect() as conn:
         proj = project_svc.create(conn, user_id=_uid(), code="p", name="P")
-    _handler(action="save", scope="project", code="dec", title="t", description="d", content="c", project_id=proj["id"])
+        memory.save(conn, scope="project", code="dec", title="t", description="d",
+                    content="c", project_id=proj["id"])
     with db_connect() as conn:
         assert conn.execute("SELECT COUNT(*) AS c FROM memory WHERE scope='project'").fetchone()["c"] == 1
         project_svc.delete(conn, user_id=_uid(), project_id=proj["id"])
@@ -186,8 +187,8 @@ def test_delete_project_cascades_project_memory(tmp_db_v2):
 def test_project_memory_injected_only_with_project_id(tmp_db_v2):
     with db_connect() as conn:
         proj = project_svc.create(conn, user_id=_uid(), code="p", name="P")
-    _handler(action="save", scope="project", code="arch", title="t",
-             description="project architecture note", content="c", project_id=proj["id"])
+        memory.save(conn, scope="project", code="arch", title="t",
+                    description="project architecture note", content="c", project_id=proj["id"])
     with db_connect() as conn:
         block_no, _ = render_memory_block(conn, user_id=_uid())
         block_yes, _ = render_memory_block(conn, user_id=_uid(), project_id=proj["id"])

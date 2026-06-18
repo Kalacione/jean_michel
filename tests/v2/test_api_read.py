@@ -23,6 +23,7 @@ from jeanmichel.api import app as api_app  # noqa: E402
 from jeanmichel.api import auth  # noqa: E402
 from jeanmichel.db import connect as db_connect  # noqa: E402
 from jeanmichel.service import consolidation  # noqa: E402
+from jeanmichel.service import memory  # noqa: E402
 from jeanmichel.tools._workspace import workspace_root_for  # noqa: E402
 from jeanmichel.tools.manage_memory import _handler as memory_handler  # noqa: E402
 
@@ -514,22 +515,21 @@ def test_memory_mutations_require_auth(client):
 
 
 def test_memory_api_equals_tool(client):
-    """Acceptance : API CRUD and the tool share one store — scoped to the SAME user."""
+    """Acceptance : the API write path and the read-only tool share one store (same user)."""
     alice_id = _make_user("alice", "pw")
     token = _login(client, "alice", "pw")
-    # API write (alice) -> visible to the tool when scoped to alice.
+    # API write (alice) -> visible to the read-only tool when scoped to alice.
     _save_via_api(client, token, code="shared", content="api-written")
     recalled = json.loads(
         memory_handler(action="recall", scope="user", code="shared", user_id=alice_id)
     )
     assert recalled["entry"]["content"] == "api-written"
-    # Tool write (alice) -> visible to the API.
-    memory_handler(
-        action="save", scope="user", code="tool-side",
-        title="t", description="d", content="tool-written", user_id=alice_id,
-    )
-    api_entry = client.get("/api/memory/user/tool-side", headers=_auth(token)).json()["entry"]
-    assert api_entry["content"] == "tool-written"
+    # A service write (the apply-on-approval path) is likewise visible to the API.
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="svc-side", title="t", description="d",
+                    content="svc-written", user_id=alice_id)
+    api_entry = client.get("/api/memory/user/svc-side", headers=_auth(token)).json()["entry"]
+    assert api_entry["content"] == "svc-written"
 
 
 def test_memory_isolated_between_users(client):

@@ -160,14 +160,15 @@ def render_memory_block(
 
     sections.append("")
     sections.append(
-        "Use `manage_memory(action='recall', scope='<scope>', code='<code>')` to "
-        "load an entry's full body, `action='search'` to find related memory, "
-        "`action='save'` / `note_for_<scope>` to add, `action='update'` to refine."
+        "Use `manage_memory(action='recall', scope='<scope>', code='<code>')` to load an "
+        "entry's full body, `action='search'` to find related memory. To remember something "
+        "durable, call `propose_memory` (it proposes a candidate the human reviews — memory "
+        "is never written unattended)."
     )
     if user_count >= warn_at:
         sections.append(
             f"⚠ User memory near capacity ({user_count} entries). "
-            "Purge obsolete entries via `action='delete'`."
+            "Prefer proposing a merge/supersede over a brand-new entry."
         )
     return "\n".join(sections) + "\n", user_count
 

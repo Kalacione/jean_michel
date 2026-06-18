@@ -1,9 +1,11 @@
-"""Tool : manage_memory — long-term, scoped, cross-conversation memory.
+"""Tool : manage_memory — READ long-term, scoped, cross-conversation memory.
 
-CRUD + FTS + validation live in ``jeanmichel.service.memory`` (shared with the
-web API and the consolidation engine). This module is the LLM-facing wrapper :
-it binds the conversation context (``user_id`` = memory owner, ``project_id`` =
-the conversation's project, if any) and turns data / errors into
+Read-only : recall / search / list. CRUD + validation live in
+``jeanmichel.service.memory`` (shared with the web API + the consolidation engine).
+The agent does NOT write memory directly — to remember something durable it calls
+``propose_memory`` (the write-proposal channel : the candidate is human-reviewed before
+anything is written). This module binds the conversation context (``user_id`` = memory
+owner, ``project_id`` = the conversation's project) and turns data / errors into
 tool_ok/tool_error strings.
 
 A memory has a ``scope`` that decides where it is later injected (deterministic) :
@@ -11,16 +13,11 @@ A memory has a ``scope`` that decides where it is later injected (deterministic)
   user    → the current user           (target bound from the conversation)
   project → the conversation's project  (target bound from the conversation)
   tool    → any agent granted a tool    (target: tool_code, given by the LLM)
-
-Actions : save / recall / search / list / update / delete, plus the ergonomic
-shortcuts note_for_user / note_for_project / note_for_tool
-(sugar over save with the scope pinned).
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import Any
 
 from ..db import cli_user_id
@@ -31,14 +28,8 @@ from ._errors import tool_error, tool_ok
 
 _log = logging.getLogger(__name__)
 
-# action → fixed scope, for the note_for_* shortcuts.
-_NOTE_SHORTCUTS: dict[str, str] = {
-    "note_for_user": "user",
-    "note_for_project": "project",
-    "note_for_tool": "tool",
-}
-
-_ALL_ACTIONS = sorted(memory.VALID_ACTIONS | set(_NOTE_SHORTCUTS))
+# Read-only tool surface. Writes go through propose_memory (human-reviewed).
+_READ_ACTIONS: tuple[str, ...] = ("recall", "search", "list")
 
 
 def _resolve_target(
@@ -71,9 +62,6 @@ def _handler(
     action: str,
     scope: str | None = None,
     code: str | None = None,
-    title: str | None = None,
-    description: str | None = None,
-    content: str | None = None,
     tool_code: str | None = None,
     query: str | None = None,
     limit: int | None = None,
@@ -81,40 +69,18 @@ def _handler(
     user_id: int | None = None,
     project_id: int | None = None,
 ) -> str:
-    """Dispatch on ``action``, bound to the conversation's user/project context."""
-    if action not in memory.VALID_ACTIONS and action not in _NOTE_SHORTCUTS:
+    """Dispatch a READ action, bound to the conversation's user/project context."""
+    if action not in _READ_ACTIONS:
         return tool_error(
-            "invalid_action", f"action must be one of {_ALL_ACTIONS}.", received=action
+            "invalid_action",
+            f"manage_memory is read-only ; action must be one of {list(_READ_ACTIONS)}. "
+            "To remember something, use propose_memory.",
+            received=action,
         )
-
-    # note_for_* → save with the scope pinned.
-    if action in _NOTE_SHORTCUTS:
-        scope = _NOTE_SHORTCUTS[action]
-        action = "save"
 
     try:
         with db_connect() as conn:
             uid = user_id if user_id is not None else cli_user_id(conn)
-
-            if action == "save":
-                if scope is None:
-                    return tool_error("invalid_args", "scope is required for save.")
-                target = _resolve_target(scope, uid=uid, project_id=project_id, tool_code=tool_code)
-                saved = memory.save(
-                    conn,
-                    scope=scope,
-                    code=code or "",
-                    title=title or "",
-                    description=description or "",
-                    content=content or "",
-                    **target,
-                )
-                return tool_ok(
-                    f"Saved {saved['scope']}/{saved['code']}: {saved['title']}",
-                    action="save",
-                    scope=saved["scope"],
-                    entry_code=saved["code"],
-                )
 
             if action == "recall":
                 if scope is None:
@@ -160,36 +126,8 @@ def _handler(
                     for sc, target in _visible_scopes(uid, project_id):
                         entries.extend(memory.list_(conn, scope=sc, **target))
                 return tool_ok(f"{len(entries)} entries", count=len(entries), entries=entries)
-
-            if action == "update":
-                if scope is None:
-                    return tool_error("invalid_args", "scope is required for update.")
-                target = _resolve_target(scope, uid=uid, project_id=project_id, tool_code=tool_code)
-                target_id = memory.update(
-                    conn,
-                    scope=scope,
-                    code=code or "",
-                    title=title,
-                    description=description,
-                    content=content,
-                    **target,
-                )
-                return tool_ok(
-                    f"Updated {scope}/{code} (id={target_id}).", id=target_id, scope=scope, code=code
-                )
-
-            if action == "delete":
-                if scope is None:
-                    return tool_error("invalid_args", "scope is required for delete.")
-                target = _resolve_target(scope, uid=uid, project_id=project_id, tool_code=tool_code)
-                target_id = memory.delete(conn, scope=scope, code=code or "", **target)
-                return tool_ok(
-                    f"Deleted {scope}/{code} (id={target_id}).", id=target_id, scope=scope, code=code
-                )
     except memory.MemoryOpError as exc:
         return tool_error(exc.code, exc.message, **exc.extra)
-    except sqlite3.IntegrityError as exc:
-        return tool_error("integrity_error", str(exc))
     except Exception as exc:  # noqa: BLE001
         _log.warning("manage_memory unexpected error: %s", exc)
         return tool_error("internal_error", str(exc))
@@ -203,45 +141,20 @@ _PARAMETERS = {
     "properties": {
         "action": {
             "type": "string",
-            "enum": _ALL_ACTIONS,
-            "description": (
-                "Operation. save/recall/search/list/update/delete, or a "
-                "note_for_<scope> shortcut (= save with the scope pinned)."
-            ),
+            "enum": list(_READ_ACTIONS),
+            "description": "recall (full body by code), search (full-text), list (index). Read-only.",
         },
         "scope": {
             "type": "string",
             "enum": sorted(memory.VALID_SCOPES),
             "description": (
                 "user (about the human), project (the current project), tool "
-                "(operational note for a tool). Required for "
-                "save/recall/update/delete ; optional filter for list/search."
+                "(operational note for a tool). Required for recall ; optional filter for list/search."
             ),
         },
         "code": {
             "type": "string",
-            "description": (
-                "Short kebab-case slug (e.g. 'unity-montreal'). Required for "
-                "save/recall/update/delete."
-            ),
-        },
-        "title": {
-            "type": "string",
-            "description": f"Short title (<= {memory.MAX_TITLE_CHARS} chars). Required for save.",
-        },
-        "description": {
-            "type": "string",
-            "description": (
-                f"One-line hook injected into the prompt index "
-                f"(<= {memory.MAX_DESCRIPTION_CHARS} chars). Required for save."
-            ),
-        },
-        "content": {
-            "type": "string",
-            "description": (
-                f"Full markdown body (<= {memory.MAX_CONTENT_CHARS} chars). "
-                "Required for save. Loaded on demand via recall."
-            ),
+            "description": "Short kebab-case slug. Required for recall.",
         },
         "tool_code": {
             "type": "string",
@@ -260,13 +173,11 @@ _PARAMETERS = {
 }
 
 _DESCRIPTION = (
-    "Manage long-term, scoped, cross-conversation memory. Scopes: "
-    "user (durable facts about the human), project (the current project), tool "
-    "(operational notes to use a tool better). Actions: save, recall (load full "
-    "body by code), search (full-text BM25 ranking — use it before concluding you "
-    "don't know something), list (index), update, delete ; plus "
-    "note_for_user / note_for_project / note_for_tool shortcuts. Entries are "
-    "unique per (scope, target, code)."
+    "READ long-term, scoped, cross-conversation memory. Scopes: user (durable facts about "
+    "the human), project (the current project), tool (operational notes). Actions: recall "
+    "(load full body by code), search (full-text BM25 ranking — use it before concluding "
+    "you don't know something), list (index). To ADD or refine memory, use propose_memory "
+    "(it proposes a candidate the human reviews — manage_memory never writes)."
 )
 
 
@@ -277,9 +188,6 @@ def make_spec(user_id: int | None = None, project_id: int | None = None) -> Tool
         action: str,
         scope: str | None = None,
         code: str | None = None,
-        title: str | None = None,
-        description: str | None = None,
-        content: str | None = None,
         tool_code: str | None = None,
         query: str | None = None,
         limit: int | None = None,
@@ -288,9 +196,6 @@ def make_spec(user_id: int | None = None, project_id: int | None = None) -> Tool
             action,
             scope=scope,
             code=code,
-            title=title,
-            description=description,
-            content=content,
             tool_code=tool_code,
             query=query,
             limit=limit,

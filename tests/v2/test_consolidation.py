@@ -8,7 +8,7 @@ import json
 from jeanmichel.db import cli_user_id
 from jeanmichel.db import connect as db_connect
 from jeanmichel.models import LLMResponse
-from jeanmichel.service import consolidation
+from jeanmichel.service import consolidation, memory
 from jeanmichel.tools.manage_memory import _handler
 
 
@@ -130,8 +130,9 @@ def test_tool_result_grounding_kept(tmp_db_v2):
 
 
 def test_existing_code_suggests_extend(tmp_db_v2):
-    _handler(action="save", scope="user", code="likes-rust", title="Rust",
-             description="likes rust", content="old")
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="likes-rust", title="Rust",
+                    description="likes rust", content="old", user_id=cli_user_id(conn))
     llm = FakeLLM({"candidates": [{
         "scope": "user", "code": "likes-rust", "title": "Likes Rust",
         "description": "The user likes Rust", "content": "new info",
@@ -144,8 +145,9 @@ def test_existing_code_suggests_extend(tmp_db_v2):
 
 
 def test_similar_entry_surfaced_as_review(tmp_db_v2):
-    _handler(action="save", scope="user", code="rust-pref", title="Rust",
-             description="enjoys rust programming", content="body")
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="rust-pref", title="Rust",
+                    description="enjoys rust programming", content="body", user_id=cli_user_id(conn))
     llm = FakeLLM({"candidates": [{
         "scope": "user", "code": "rust-systems", "title": "Rust systems",
         "description": "enjoys rust programming for systems", "content": "x",

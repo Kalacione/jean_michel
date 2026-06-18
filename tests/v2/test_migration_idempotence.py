@@ -90,6 +90,7 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_151_conversation_lineage.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_152_drop_world_scope_add_importance.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_153_pending_consolidation.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_154_propose_memory_grant.sql")
     yield conn
     conn.close()
 
@@ -1004,3 +1005,22 @@ def test_migrate_152_collapses_world_and_adds_importance(tmp_path):
     }
     assert "likes-rust" in hits
     conn.close()
+
+
+# ---- migrate_154 : propose_memory grant + read/propose paradigm -------------
+
+
+def test_propose_memory_granted_to_manage_memory_agents(v2_migrated_db, v2_consolidated_db):
+    """migrate_154 : propose_memory (the write-proposal channel) is granted to exactly the
+    agents that hold manage_memory (now read-only). Identical in the chain AND schema.sql."""
+    for db in (v2_migrated_db, v2_consolidated_db):
+        mm = {r["agent_id"] for r in db.execute(
+            "SELECT agent_id FROM agent_tools WHERE tool_code='manage_memory'")}
+        pm = {r["agent_id"] for r in db.execute(
+            "SELECT agent_id FROM agent_tools WHERE tool_code='propose_memory'")}
+        assert pm == mm and len(pm) >= 1
+    # The memory_discipline paradigm now frames the read/propose split (no note_for/save).
+    content = v2_consolidated_db.execute(
+        "SELECT content FROM paradigms WHERE code='memory_discipline'"
+    ).fetchone()["content"]
+    assert "propose_memory" in content and "note_for" not in content
