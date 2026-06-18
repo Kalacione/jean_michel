@@ -47,13 +47,6 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
 - **Fluidité du streaming sous famine GIL** : le worker tient le GIL pendant les sections CPU lourdes → le live
   saccade (la WS ne meurt plus, keepalive désactivé, mais l'UX peut figer un instant).
 
-## Sélection de modèles
-- **Rôle code-router / code-analyst** : remplacer qwen3:14b par mieux tenant sur 1 GPU (32 Go). Candidats, plan
-  d'éval (`debug/eval_model.py`), vigilance câblage (migration `model_override`) →
-  [docs/models_eval.md](docs/models_eval.md) (§3.1 éval + §4 candidats/câblage).
-- **Point E — orchestrateur DÉDIÉ vs jean-michel chat** : déféré. Préférence = orchestrateur le plus déterministe
-  possible ; re-trancher sur données réelles, après le réglage du rôle code. Tester aussi `magistral:24b`
-
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
@@ -67,9 +60,6 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
   Idée : le lancer **périodiquement** (auto-trigger sur seuil d'échecs/ask_human) — mais sortie **filtrée par un
   humain**, jamais auto-appliquée.
 
-## Évolutions ambitieuses
-- Les questions, comme les acceptations de plans, devraient être des **events en notification** : pouvoir les
-  traiter sans être sur la fenêtre de conversation, ne pas perdre les questions.
 
 ## Idées
 - Plein de micro-LLM prédisant le prochain token sur le même contexte → triplets de précogs.
@@ -79,7 +69,5 @@ Sources : https://www.morphllm.com/best-ollama-models
 - orchestrator : `deepseek-r1:32b` (`ollama run deepseek-r1:32b`)
 - code : `qwen2.5-coder:32b` (22 Go VRAM @ Q4_K_M)
 - math/STEM : Phi-4 14B
-- via claude code : https://huggingface.co/collections/zai-org/glm-52 (MIT, pas de version quantifiée, 256 Go VRAM)
-
-## Source à récupérer pour écriture doc
-- https://www.sitepoint.com/the-complete-stack-for-local-autonomous-agents--from-ggml-to-orchestration/
+- via claude code : https://huggingface.co/collections/zai-org/glm-52 (MIT, pas de version quantifiée, 256 Go VRAM mini)
+- `magistral:24b` (date un peu)

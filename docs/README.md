@@ -41,6 +41,7 @@ Index des **références vivantes** (tenues à jour). Les vieux plans/audits dat
 - [tool_ideas.md](tool_ideas.md) — candidats d'outils à ajouter (géo, extraction de contenu).
 
 ### Système (références externes)
+- [local_agent_stack.md](local_agent_stack.md) — digest de l'article SitePoint « la stack d'un agent local » (GGML→orchestration), mappé à notre stack Ollama + ce qu'on pourrait piocher (GBNF, Pydantic, KV-quant).
 - [system_prompts/](system_prompts/) — prompts de référence (claude.ai, claude-code, opus, comet) pour inspiration / comparaison.
 
 ## Le « pourquoi » & le « quand »
