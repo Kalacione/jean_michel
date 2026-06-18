@@ -539,6 +539,37 @@ def review_pending(console: Console, session: PromptSession, conv_id: str) -> No
         uid = db.cli_user_id(conn)
 
     for i, c in enumerate(pending):
+        if c.get("kind") == "rule":
+            sim = ", ".join(m["code"] for m in c.get("existing_matches", []))
+            rbody = [
+                f"[bold]RÈGLE → paradigme[/]  ·  {c['section_code']}.{c['category_code']}",
+                f"[bold]{c['title']}[/]",
+                "",
+                c["content"],
+                "",
+                f"[dim]source : “{c.get('grounding_quote', '')}”[/]",
+            ]
+            if sim:
+                rbody.append(f"[{C_WARN}]paradigmes proches : {sim} — pense à en binder un via --admin plutôt que dupliquer[/]")
+            console.print(Panel(Group(*[Text.from_markup(x) if isinstance(x, str) else x for x in rbody]),
+                                title=f"Suggestion {i + 1}/{len(pending)} (règle)", border_style="magenta"))
+            rchoice = session.prompt(
+                HTML("<ansiyellow>[c]réer (inactif) / [d]rop / [q]uitter (défaut c)</ansiyellow>: ")
+            ).strip().lower() or "c"
+            if rchoice == "q":
+                break
+            if rchoice == "d":
+                consolidation_svc.remove_pending(conv_id, c)
+                continue
+            try:
+                with db.connect() as conn:
+                    res = consolidation_svc.apply_rule_candidate(conn, c, action="create")
+                consolidation_svc.mark_applied(conv_id, c)
+                console.print(f"[{C_FINAL}]✓ paradigme créé (inactif) : {res['code']} — active/bind via --admin[/]")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[{C_WARN}]✖ {exc}[/]")
+            continue
+
         target = c.get("tool_code") or (f"project#{c['project_id']}" if c.get("project_id") else "")
         body = [
             f"[bold]\\[{c['scope']}] {c['code']}[/]" + (f"  ·  {target}" if target else ""),

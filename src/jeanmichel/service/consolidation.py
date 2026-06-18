@@ -446,3 +446,129 @@ def add_candidate(
     }
     add_pending(conv_id, [candidate])
     return candidate
+
+
+# ---- rule candidates (procedural memory → paradigm promotion) -------------
+
+MAX_RULE_CONTENT_CHARS = 1_500
+
+
+def _similar_paradigms(conn: Any, title: str, content: str) -> list[dict[str, Any]]:
+    """Active paradigms that look similar (share a significant title word, in title OR
+    content). Crude — flags likely duplicates for the human across ALL agents (no filter),
+    so a similar-but-unbound rule can be BOUND rather than duplicated."""
+    toks = [t for t in re.split(r"[^a-z0-9]+", (title or "").lower()) if len(t) > 3]
+    if not toks:
+        return []
+    clauses = ["lower(title) LIKE ?" for _ in toks] + ["lower(content) LIKE ?" for _ in toks]
+    params = [f"%{t}%" for t in toks] * 2
+    rows = conn.execute(
+        f"SELECT code, title FROM paradigms WHERE active=1 AND ({' OR '.join(clauses)}) LIMIT 5",
+        params,
+    ).fetchall()
+    return [{"code": r["code"], "title": r["title"]} for r in rows]
+
+
+def _finalize_rule(
+    conn: Any, *, section_code: str, category_code: str, title: str, content: str,
+    grounding_quote: str = "", importance: int = 3,
+) -> dict[str, Any] | None:
+    """Validate a rule (paradigm) candidate against the live taxonomy + dedup vs ALL
+    paradigms. Returns the candidate dict, or None on unknown category / empty fields."""
+    cat = conn.execute(
+        "SELECT 1 FROM categories c JOIN sections s ON s.id=c.section_id "
+        "WHERE s.code=? AND c.code=?",
+        (section_code, category_code),
+    ).fetchone()
+    if cat is None:
+        return None
+    title = _clamp(title, memory.MAX_TITLE_CHARS)
+    content = _clamp(content, MAX_RULE_CONTENT_CHARS)
+    if not (title and content):
+        return None
+    try:
+        imp = max(1, min(5, int(importance)))
+    except (TypeError, ValueError):
+        imp = 3
+    matches = _similar_paradigms(conn, title, content)
+    return {
+        "kind": "rule",
+        "section_code": section_code,
+        "category_code": category_code,
+        "title": title,
+        "content": content,
+        "grounding_quote": (grounding_quote or "").strip(),
+        "importance": imp,
+        "suggested_action": "review" if matches else "create",
+        "existing_matches": matches,
+    }
+
+
+def add_rule_candidate(
+    conv_id: str, *, section_code: str, category_code: str, title: str, content: str,
+    grounding_quote: str = "", importance: int = 3,
+) -> dict[str, Any]:
+    """Validate + dedup + stash ONE agent-proposed RULE (paradigm) candidate for review.
+    Raises ``memory.MemoryOpError`` on an unknown category / empty fields."""
+    with db.connect() as conn:
+        cand = _finalize_rule(
+            conn, section_code=section_code, category_code=category_code,
+            title=title, content=content, grounding_quote=grounding_quote, importance=importance,
+        )
+    if cand is None:
+        raise memory.MemoryOpError(
+            "invalid_rule",
+            f"unknown category '{section_code}.{category_code}' or empty title/content.",
+        )
+    add_pending(conv_id, [cand])
+    return cand
+
+
+def _slug(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return s[:48] or "promoted-rule"
+
+
+def apply_rule_candidate(
+    conn: Any,
+    candidate: dict[str, Any],
+    *,
+    action: str = "create",
+    bind_agent: str | None = None,
+    bind_to_code: str | None = None,
+    title: str | None = None,
+    content: str | None = None,
+) -> dict[str, Any]:
+    """Apply a reviewed RULE candidate (the human's choice).
+
+    - create : ``db.create_paradigm(is_global=0, active=0)`` — visible but DARK until the
+      human activates/binds it (anti prompt-bloat ; nothing auto-applies).
+    - bind   : bind an EXISTING similar paradigm (``bind_to_code``) to ``bind_agent`` rather
+      than duplicating it.
+    """
+    if action == "bind":
+        if not (bind_agent and bind_to_code):
+            raise memory.MemoryOpError("invalid_args", "bind needs bind_agent + bind_to_code.")
+        db.bind_paradigm(conn, bind_agent, bind_to_code)
+        return {"action": "bind", "agent": bind_agent, "code": bind_to_code}
+
+    t = title if title is not None else candidate["title"]
+    ct = content if content is not None else candidate["content"]
+    base = _slug(t)
+    code = base
+    n = 1
+    while conn.execute("SELECT 1 FROM paradigms WHERE code=?", (code,)).fetchone():
+        n += 1
+        code = f"{base}-{n}"
+    pid = db.create_paradigm(
+        conn,
+        section_code=candidate["section_code"],
+        category_code=candidate["category_code"],
+        code=code,
+        title=t,
+        content=ct,
+        rationale=candidate.get("grounding_quote") or None,
+        is_global=False,
+        active=False,
+    )
+    return {"action": "create", "code": code, "id": pid}

@@ -1,9 +1,11 @@
-"""Tool : propose_memory — capture a durable memory candidate for human review.
+"""Tool : propose_memory — capture a durable FACT or a behavioural RULE for human review.
 
 The agent calls this when it (or the user, via « garde en mémoire » / « note pour plus
-tard ») spots something worth keeping long-term. NOTHING is written directly : the
-candidate lands in the ``pending_consolidation`` queue and the human approves it (CLI
-``/memo``, web review). This is the *write-proposal* channel ; ``manage_memory`` is read-only.
+tard ») spots something worth keeping long-term. NOTHING is written directly :
+  - kind="fact" → a candidate in pending_consolidation (→ semantic memory on approval) ;
+  - kind="rule" → a paradigm-promotion candidate (→ a paradigm on approval, DARK until the
+    human activates/binds it).
+The human approves in the CLI ``/memo`` + web review. ``manage_memory`` is read-only.
 
 Bound to the conversation context (conv_id + memory owner + project) at registry-build time.
 """
@@ -23,46 +25,48 @@ _log = logging.getLogger(__name__)
 _PARAMETERS = {
     "type": "object",
     "properties": {
-        "scope": {
+        "kind": {
             "type": "string",
-            "enum": sorted(memory.VALID_SCOPES),
+            "enum": ["fact", "rule"],
             "description": (
-                "user (a durable fact/preference about the human), project (a decision/"
-                "constraint of the current project), tool (a reusable lesson on a tool — set tool_code)."
+                "fact = a durable fact (→ memory) ; rule = a generalizable behavioural lesson "
+                "(« when X, do Y / never Z ») → a paradigm, human-approved. Default fact."
             ),
         },
-        "code": {
-            "type": "string",
-            "description": "Short kebab-case slug (e.g. 'prefers-terse-answers'). No spaces.",
-        },
-        "title": {"type": "string", "description": f"Short title (<= {memory.MAX_TITLE_CHARS} chars)."},
-        "description": {
-            "type": "string",
-            "description": f"One-line hook surfaced in the prompt index (<= {memory.MAX_DESCRIPTION_CHARS} chars).",
-        },
+        "title": {"type": "string", "description": f"Short title (<= {memory.MAX_TITLE_CHARS} chars). Required."},
         "content": {
             "type": "string",
-            "description": f"Full markdown body (<= {memory.MAX_CONTENT_CHARS} chars).",
+            "description": "Full body (markdown). Required. For a rule: English, model-agnostic bullets.",
         },
-        "tool_code": {"type": "string", "description": "Target tool name. Required when scope='tool'."},
+        "importance": {"type": "integer", "description": "1 (minor) .. 5 (critical). Default 3."},
         "grounding_quote": {
             "type": "string",
-            "description": "Optional verbatim quote from the user or a tool result supporting the fact (helps the human review).",
+            "description": "Optional verbatim quote (from the user or a tool result) supporting it.",
         },
-        "importance": {
-            "type": "integer",
-            "description": "1 (minor) .. 5 (critical). Default 3. Ranks how prominently the entry is later surfaced.",
+        # fact-only
+        "scope": {"type": "string", "enum": sorted(memory.VALID_SCOPES), "description": "[fact] user / project / tool."},
+        "code": {"type": "string", "description": "[fact] short kebab-case slug."},
+        "description": {
+            "type": "string",
+            "description": f"[fact] one-line hook injected in the index (<= {memory.MAX_DESCRIPTION_CHARS} chars).",
         },
+        "tool_code": {"type": "string", "description": "[fact] target tool name, when scope='tool'."},
+        # rule-only
+        "section_code": {
+            "type": "string",
+            "description": "[rule] paradigm SECTION code (e.g. communication, reasoning, process, code, safety, critical_thinking).",
+        },
+        "category_code": {"type": "string", "description": "[rule] paradigm CATEGORY code within the section."},
     },
-    "required": ["scope", "code", "title", "description", "content"],
+    "required": ["title", "content"],
 }
 
 _DESCRIPTION = (
-    "Propose a durable fact worth remembering across future conversations — a user "
-    "preference, a project decision/constraint, or a reusable tool lesson. Use it when the "
-    "user says « garde ça en mémoire » / « note pour plus tard », or when you learn "
-    "something durable. It is NOT written directly : it becomes a candidate the human "
-    "reviews and approves. Use manage_memory to READ existing memory first (avoid duplicates)."
+    "Propose something worth keeping long-term — kind='fact' (a user preference, a project "
+    "decision/constraint, or a tool lesson → memory) or kind='rule' (a generalizable "
+    "behavioural lesson → a paradigm). Use it on « garde ça en mémoire » or when you learn "
+    "something durable. NOT written directly : it becomes a candidate the human reviews and "
+    "approves. Read existing memory with manage_memory first to avoid duplicates."
 )
 
 
@@ -72,18 +76,36 @@ def make_spec(
     """Return a ToolSpec bound to the conversation context (conv + memory owner + project)."""
 
     def handler(
-        scope: str,
-        code: str,
         title: str,
-        description: str,
         content: str,
-        tool_code: str | None = None,
-        grounding_quote: str = "",
+        kind: str = "fact",
         importance: int = 3,
+        grounding_quote: str = "",
+        scope: str | None = None,
+        code: str | None = None,
+        description: str | None = None,
+        tool_code: str | None = None,
+        section_code: str | None = None,
+        category_code: str | None = None,
     ) -> str:
         if not conv_id:
             return tool_error("no_conversation", "propose_memory needs a conversation context.")
         try:
+            if kind == "rule":
+                if not (section_code and category_code):
+                    return tool_error("invalid_args", "kind='rule' needs section_code + category_code.")
+                cand = consolidation.add_rule_candidate(
+                    conv_id, section_code=section_code, category_code=category_code,
+                    title=title, content=content, grounding_quote=grounding_quote, importance=importance,
+                )
+                return tool_ok(
+                    f"Proposed rule « {cand['title']} » for review (suggested: {cand['suggested_action']}). "
+                    "The human approves it in /memo.",
+                    action="propose", kind="rule", suggested_action=cand["suggested_action"],
+                )
+            # kind == "fact"
+            if not (scope and code and description):
+                return tool_error("invalid_args", "kind='fact' needs scope + code + description.")
             uid = user_id
             if uid is None:
                 with db_connect() as conn:
@@ -96,9 +118,7 @@ def make_spec(
             return tool_ok(
                 f"Proposed {cand['scope']}/{cand['code']} for review "
                 f"(suggested: {cand['suggested_action']}). The human approves it in /memo.",
-                action="propose",
-                scope=cand["scope"],
-                entry_code=cand["code"],
+                action="propose", kind="fact", scope=cand["scope"], entry_code=cand["code"],
                 suggested_action=cand["suggested_action"],
             )
         except memory.MemoryOpError as exc:

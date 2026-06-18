@@ -106,3 +106,79 @@ def test_tool_requires_conversation(tmp_db_v2):
     spec = make_spec("", _uid(), None)  # no conversation context
     out = json.loads(spec.handler(scope="user", code="x", title="t", description="d", content="c"))
     assert out["error_code"] == "no_conversation"
+
+
+# ---- rule candidates (paradigm promotion) ---------------------------------
+
+
+def test_add_rule_candidate_create_when_novel(tmp_db_v2):
+    _mk_conv("r1")
+    cand = consolidation.add_rule_candidate(
+        "r1", section_code="process", category_code="execution",
+        title="Wibblezorp the flibber", content="- Wibblezorp the flibber grik.",
+    )
+    assert cand["kind"] == "rule" and cand["suggested_action"] == "create"
+    pending = consolidation.load_pending("r1")
+    assert len(pending) == 1 and pending[0]["title"] == "Wibblezorp the flibber"
+
+
+def test_add_rule_candidate_review_when_similar(tmp_db_v2):
+    _mk_conv("r2")
+    # 'discipline' recurs across existing paradigm titles/content → flagged for review.
+    cand = consolidation.add_rule_candidate(
+        "r2", section_code="process", category_code="execution",
+        title="Tool discipline matters", content="- Be disciplined with tools.",
+    )
+    assert cand["suggested_action"] == "review"
+    assert cand["existing_matches"]  # similar paradigms surfaced (so the human can bind, not dup)
+
+
+def test_add_rule_candidate_unknown_category_raises(tmp_db_v2):
+    _mk_conv("r3")
+    with pytest.raises(memory.MemoryOpError):
+        consolidation.add_rule_candidate("r3", section_code="nope", category_code="nope",
+                                         title="t", content="c")
+
+
+def test_apply_rule_candidate_creates_dark_paradigm(tmp_db_v2):
+    cand = {"kind": "rule", "section_code": "process", "category_code": "execution",
+            "title": "Frobnicate early", "content": "- frobnicate.", "grounding_quote": "src"}
+    with db_connect() as conn:
+        res = consolidation.apply_rule_candidate(conn, cand, action="create")
+        row = conn.execute("SELECT active, content FROM paradigms WHERE code=?", (res["code"],)).fetchone()
+    assert res["action"] == "create"
+    assert row["active"] == 0  # DARK until the human activates/binds it
+    assert "frobnicate" in row["content"]
+
+
+def test_apply_rule_candidate_bind_existing(tmp_db_v2):
+    cand = {"kind": "rule", "section_code": "process", "category_code": "execution",
+            "title": "x", "content": "y"}
+    with db_connect() as conn:
+        consolidation.apply_rule_candidate(conn, cand, action="bind",
+                                           bind_agent="jean-michel", bind_to_code="memory_discipline")
+        row = conn.execute(
+            "SELECT 1 FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+            "JOIN paradigms p ON p.id=ap.paradigm_id "
+            "WHERE a.code='jean-michel' AND p.code='memory_discipline'"
+        ).fetchone()
+    assert row is not None  # the existing paradigm is bound (no duplicate created)
+
+
+def test_tool_proposes_rule(tmp_db_v2):
+    _mk_conv("rt")
+    spec = make_spec("rt", _uid(), None)
+    out = json.loads(spec.handler(
+        kind="rule", section_code="process", category_code="execution",
+        title="Frobnicate early", content="- frobnicate before zorking.",
+    ))
+    assert "error" not in out and out["kind"] == "rule"
+    assert any(p.get("kind") == "rule" and p["title"] == "Frobnicate early"
+               for p in consolidation.load_pending("rt"))
+
+
+def test_tool_rule_requires_category(tmp_db_v2):
+    _mk_conv("rt2")
+    spec = make_spec("rt2", _uid(), None)
+    out = json.loads(spec.handler(kind="rule", title="t", content="c"))  # no section/category
+    assert out["error_code"] == "invalid_args"

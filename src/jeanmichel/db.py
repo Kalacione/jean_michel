@@ -485,8 +485,10 @@ def create_paradigm(
     rationale: str | None = None,
     is_global: bool = False,
     order_priority: int = 100,
+    active: bool = True,
 ) -> int:
-    """Insert a new paradigm. Returns the new paradigm id."""
+    """Insert a new paradigm. Returns the new paradigm id. ``active=False`` creates it
+    DARK (visible but injected nowhere) — used for human-reviewed promotions."""
     row = conn.execute(
         "SELECT c.id FROM categories c JOIN sections s ON s.id = c.section_id "
         "WHERE s.code = ? AND c.code = ?",
@@ -498,8 +500,9 @@ def create_paradigm(
     cursor = conn.execute(
         "INSERT INTO paradigms (category_id, code, title, content, rationale, "
         "is_global, order_priority, active, created_at, modified_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-        (row["id"], code, title, content, rationale, int(is_global), order_priority, now, now),
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (row["id"], code, title, content, rationale, int(is_global), order_priority,
+         int(active), now, now),
     )
     return cursor.lastrowid  # type: ignore[return-value]
 
