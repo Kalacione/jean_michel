@@ -555,8 +555,10 @@ def review_pending(console: Console, session: PromptSession, conv_id: str) -> No
                             title=f"Suggestion {i + 1}/{len(pending)}", border_style="cyan"))
 
         default = "x" if c["suggested_action"] == "extend" else "s"
+        has_match = bool(c.get("existing_matches"))
+        repl = " / [r]emplacer" if has_match else ""
         choice = session.prompt(
-            HTML(f"<ansiyellow>[s]auver / [e]diter / e[x]tendre / [d]rop / [q]uitter "
+            HTML(f"<ansiyellow>[s]auver / [e]diter / e[x]tendre{repl} / [d]rop / [q]uitter "
                  f"(défaut {default})</ansiyellow>: ")
         ).strip().lower() or default
 
@@ -573,15 +575,23 @@ def review_pending(console: Console, session: PromptSession, conv_id: str) -> No
             title = (session.prompt(HTML("<ansicyan>titre</ansicyan>: "), default=title) or title).strip()
             description = (session.prompt(HTML("<ansicyan>description</ansicyan>: "), default=description) or description).strip()
             content = (session.prompt(HTML("<ansicyan>contenu</ansicyan>: "), default=content, multiline=True) or content).strip()
-        action = "extend" if choice == "x" else "save"
+        if choice == "r" and has_match:
+            action = "supersede"
+            supersedes_code = c["existing_matches"][0]["code"]
+        else:
+            action = "extend" if choice == "x" else "save"
+            supersedes_code = None
         try:
             with db.connect() as conn:
                 consolidation_svc.apply_candidate(
                     conn, c, action=action, user_id=uid,
                     title=title, description=description, content=content,
+                    supersedes_code=supersedes_code,
                 )
             consolidation_svc.mark_applied(conv_id, c)
-            console.print(f"[{C_FINAL}]✓ {action} {c['scope']}/{c['code']}[/]")
+            label = (f"supersede {supersedes_code}→{c['code']}"
+                     if action == "supersede" else f"{action} {c['scope']}/{c['code']}")
+            console.print(f"[{C_FINAL}]✓ {label}[/]")
         except Exception as exc:  # noqa: BLE001
             console.print(f"[{C_WARN}]✖ {exc}[/]")  # stays pending → retry later
 

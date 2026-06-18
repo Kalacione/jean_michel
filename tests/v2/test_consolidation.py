@@ -236,6 +236,33 @@ def test_apply_candidate_writes_importance(tmp_db_v2):
     assert rec["entry"]["importance"] == 5
 
 
+def test_apply_supersede_replaces_stale_entry(tmp_db_v2):
+    """supersede : delete a differently-coded stale entry, then save the candidate fresh."""
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="old-pref", title="Old", description="old pref",
+                    content="old", user_id=cli_user_id(conn))
+    cand = {"scope": "user", "code": "new-pref", "title": "New", "description": "new pref",
+            "content": "new", "project_id": None, "tool_code": None, "importance": 4}
+    with db_connect() as conn:
+        consolidation.apply_candidate(conn, cand, action="supersede", user_id=_uid(),
+                                      supersedes_code="old-pref")
+    assert json.loads(_handler(action="recall", scope="user", code="old-pref"))["error_code"] == "not_found"
+    new = json.loads(_handler(action="recall", scope="user", code="new-pref"))
+    assert new["entry"]["importance"] == 4
+
+
+def test_apply_delete_removes_obsolete_entry(tmp_db_v2):
+    """delete : remove an obsolete entry ; nothing new is saved."""
+    with db_connect() as conn:
+        memory.save(conn, scope="user", code="stale", title="t", description="d",
+                    content="c", user_id=cli_user_id(conn))
+    cand = {"scope": "user", "code": "stale", "title": "t", "description": "d", "content": "c",
+            "project_id": None, "tool_code": None}
+    with db_connect() as conn:
+        consolidation.apply_candidate(conn, cand, action="delete", user_id=_uid())
+    assert json.loads(_handler(action="recall", scope="user", code="stale"))["error_code"] == "not_found"
+
+
 def test_run_shadow_stashes_pending(tmp_db_v2, conv_folder):
     from jeanmichel import persistence
     # run_shadow loads messages from the conv folder.

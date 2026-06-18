@@ -20,6 +20,7 @@ choice via ``service.memory``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -333,11 +334,18 @@ def apply_candidate(
     title: str | None = None,
     description: str | None = None,
     content: str | None = None,
+    supersedes_code: str | None = None,
 ) -> dict[str, Any]:
-    """Write an (optionally edited) candidate to memory. ``action`` is 'save' or 'extend'.
+    """Write an (optionally edited) candidate to memory. ``action`` ∈ {save, extend,
+    supersede, delete} — the human's choice at review (freshness handling, mem0-style).
 
-    Reuses ``service.memory`` (single validation source). For 'extend' it updates
-    the existing entry sharing the candidate's (scope, target, code)."""
+    - save      : insert a new entry.
+    - extend    : update the existing same-(scope,target,code) entry in place.
+    - supersede : delete a stale, differently-coded entry (``supersedes_code``) then save
+                  the candidate fresh — « ceci remplace ça ».
+    - delete    : remove an obsolete entry (``supersedes_code`` or the candidate's own
+                  code) ; nothing is saved.
+    Reuses ``service.memory`` (single validation source)."""
     scope = candidate["scope"]
     target: dict[str, Any] = {}
     if scope == "user":
@@ -346,10 +354,23 @@ def apply_candidate(
         target = {"project_id": candidate.get("project_id")}
     elif scope == "tool":
         target = {"tool_code": candidate.get("tool_code")}
+
+    if action == "delete":
+        code = supersedes_code or candidate["code"]
+        memory.delete(conn, scope=scope, code=code, **target)
+        return {"action": "delete", "scope": scope, "code": code}
+
     t = title if title is not None else candidate["title"]
     d = description if description is not None else candidate["description"]
     ct = content if content is not None else candidate["content"]
     imp = candidate.get("importance", 3)
+
+    if action == "supersede" and supersedes_code and supersedes_code != candidate["code"]:
+        # the stale entry may already be gone — that's fine, proceed to save the fresh one
+        with contextlib.suppress(memory.MemoryOpError):
+            memory.delete(conn, scope=scope, code=supersedes_code, **target)
+        action = "save"
+
     if action == "extend":
         memory.update(conn, scope=scope, code=candidate["code"],
                       title=t, description=d, content=ct, importance=imp, **target)
