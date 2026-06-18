@@ -123,10 +123,24 @@ def propose(
     if len(_norm(transcript)) < MIN_QUOTE_CHARS:
         return []
 
+    cats = ", ".join(
+        f"{r['s']}.{r['c']}" for r in conn.execute(
+            "SELECT s.code AS s, c.code AS c FROM categories c JOIN sections s ON s.id=c.section_id "
+            "WHERE c.active=1 AND s.active=1 ORDER BY s.code, c.code"
+        ).fetchall()
+    )
+    sys_prompt = CONSOLIDATION_SYSTEM_PROMPT + (
+        "\n\nYou MAY also propose a generalizable BEHAVIOURAL RULE — a methodology, or a fix for a "
+        "recurring mistake — rare, only for a clear reusable lesson, as a candidate of shape "
+        '{"kind":"rule","section_code":"...","category_code":"...","title":"...","content":"...",'
+        '"importance":1-5}. `content` = English imperative markdown bullets, model-agnostic (no '
+        f"model names). `section_code.category_code` MUST be one of: {cats}."
+    )
+
     try:
         resp = llm.chat_messages(
             messages=[
-                {"role": "system", "content": CONSOLIDATION_SYSTEM_PROMPT},
+                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": f"Conversation transcript:\n\n{transcript}"},
             ],
             tools=[],
@@ -145,6 +159,23 @@ def propose(
     out: list[dict[str, Any]] = []
     for c in raw if isinstance(raw, list) else []:
         if not isinstance(c, dict):
+            continue
+        if c.get("kind") == "rule":
+            # Behavioural rule → paradigm candidate. No grounding gate (a lesson is an
+            # inference, not a quote) ; safe because it's dark-by-default + human-reviewed.
+            rule = _finalize_rule(
+                conn,
+                section_code=(c.get("section_code") or "").strip(),
+                category_code=(c.get("category_code") or "").strip(),
+                title=c.get("title") or "",
+                content=c.get("content") or "",
+                grounding_quote=c.get("grounding_quote") or "",
+                importance=c.get("importance", 3),
+            )
+            if rule is not None:
+                out.append(rule)
+                if len(out) >= MAX_CANDIDATES:
+                    break
             continue
         scope = c.get("scope")
         if scope not in memory.VALID_SCOPES:

@@ -65,6 +65,30 @@ def test_propose_carries_importance_and_kind(tmp_db_v2):
     assert cands[0]["kind"] == "fact"
 
 
+def test_propose_emits_rule_candidate(tmp_db_v2):
+    llm = FakeLLM({"candidates": [{
+        "kind": "rule", "section_code": "process", "category_code": "execution",
+        "title": "Verify outputs before reporting", "importance": 4,
+        "content": "- Verify a result against ground truth before reporting completion.",
+    }]})
+    msgs = _messages("the assistant claimed success without checking the output")
+    with db_connect() as conn:
+        cands = consolidation.propose(conn, msgs, llm=llm, user_id=_uid())
+    assert len(cands) == 1 and cands[0]["kind"] == "rule"
+    assert cands[0]["section_code"] == "process" and cands[0]["category_code"] == "execution"
+
+
+def test_propose_drops_rule_with_unknown_category(tmp_db_v2):
+    llm = FakeLLM({"candidates": [{
+        "kind": "rule", "section_code": "bogus", "category_code": "bogus",
+        "title": "x", "content": "- y",
+    }]})
+    msgs = _messages("some durable conversation content here")
+    with db_connect() as conn:
+        cands = consolidation.propose(conn, msgs, llm=llm, user_id=_uid())
+    assert cands == []  # invalid category → dropped (best-effort)
+
+
 def test_ungrounded_candidate_dropped(tmp_db_v2):
     """Anti-hallucination : a quote that doesn't appear in the conversation → dropped."""
     llm = FakeLLM({"candidates": [{
