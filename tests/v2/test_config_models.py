@@ -8,6 +8,8 @@ the ceiling so no single model's KV cache can blow VRAM.
 
 from __future__ import annotations
 
+import pytest
+
 from jeanmichel import config
 
 # ---- model_context_window -------------------------------------------------
@@ -55,19 +57,43 @@ def test_ctx_custom_ceiling_from_config(monkeypatch):
 def test_role_env_wins(monkeypatch):
     monkeypatch.setattr(config, "_MODELS_CONFIG", {"roles": {"main": "from-toml"}})
     monkeypatch.setenv("JEANMICHEL_MAIN_MODEL", "from-env")
-    assert config._role_model("JEANMICHEL_MAIN_MODEL", "main", "fallback") == "from-env"
+    assert config._role_model("JEANMICHEL_MAIN_MODEL", "main") == "from-env"
 
 
 def test_role_from_toml(monkeypatch):
     monkeypatch.delenv("JEANMICHEL_MAIN_MODEL", raising=False)
     monkeypatch.setattr(config, "_MODELS_CONFIG", {"roles": {"main": "from-toml"}})
-    assert config._role_model("JEANMICHEL_MAIN_MODEL", "main", "fallback") == "from-toml"
+    assert config._role_model("JEANMICHEL_MAIN_MODEL", "main") == "from-toml"
 
 
-def test_role_falls_back(monkeypatch):
+def test_role_unresolved_raises(monkeypatch):
+    """No hardcoded default : if neither env nor toml provides the role, fail loudly."""
     monkeypatch.delenv("JEANMICHEL_MAIN_MODEL", raising=False)
     monkeypatch.setattr(config, "_MODELS_CONFIG", {})
-    assert config._role_model("JEANMICHEL_MAIN_MODEL", "main", "fallback") == "fallback"
+    with pytest.raises(RuntimeError):
+        config._role_model("JEANMICHEL_MAIN_MODEL", "main")
+
+
+# ---- agent_model (env per-agent → DB override → role default) -------------
+
+
+def test_agent_model_env_per_agent_wins(monkeypatch):
+    monkeypatch.setenv("JEANMICHEL_AGENT_MODEL_CODE_RUNNER", "from-env")
+    assert config.agent_model("code-runner", "specialist", "db-override") == "from-env"
+
+
+def test_agent_model_db_override(monkeypatch):
+    monkeypatch.delenv("JEANMICHEL_AGENT_MODEL_CODE_RUNNER", raising=False)
+    assert config.agent_model("code-runner", "specialist", "qwen3-coder:latest") == "qwen3-coder:latest"
+
+
+def test_agent_model_role_default(monkeypatch):
+    monkeypatch.delenv("JEANMICHEL_AGENT_MODEL_WEB_SEARCH_SPECIALIST", raising=False)
+    monkeypatch.delenv("JEANMICHEL_AGENT_MODEL_JEAN_MICHEL", raising=False)
+    monkeypatch.setattr(config, "MAIN_MODEL", "main-m")
+    monkeypatch.setattr(config, "SUBAGENT_DEFAULT_MODEL", "sub-m")
+    assert config.agent_model("web-search-specialist", "specialist", None) == "sub-m"
+    assert config.agent_model("jean-michel", "router", None) == "main-m"
 
 
 # ---- _voice_setting -------------------------------------------------------

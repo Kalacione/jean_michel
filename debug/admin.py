@@ -45,7 +45,7 @@ _COMMANDS = [
     "agents", "agent", "tools", "paradigms",
     "convs", "purge-orphans",
     "grant", "revoke", "bind", "unbind",
-    "add-paradigm", "toggle-paradigm",
+    "add-paradigm", "toggle-paradigm", "set-model",
     "help", "exit", "quit",
 ]
 
@@ -155,17 +155,21 @@ def _show_agents(db_path: Path) -> None:
             paradigms = db.load_paradigms_for_agent(conn, a.id, "analyse")
             rows.append((a, len(grants), len(paradigms)))
 
+    from jeanmichel import config as _cfg
     t = Table(box=box.ROUNDED, header_style="bold cyan")
     t.add_column("Code", style="bold")
     t.add_column("Name")
     t.add_column("Role", style="dim")
+    t.add_column("Model")
     t.add_column("Think", justify="center")
     t.add_column("Temp", justify="right")
     t.add_column("Tools", justify="right")
     t.add_column("Paradigms", justify="right")
     for a, nt, np in rows:
+        eff = _cfg.agent_model(a.code, a.role, a.model_override)
+        model_cell = eff if a.model_override else f"[dim]{eff} (default)[/dim]"
         t.add_row(
-            a.code, a.name, a.role,
+            a.code, a.name, a.role, model_cell,
             "✓" if a.thinking_mode else "·",
             str(a.temperature), str(nt), str(np),
         )
@@ -189,9 +193,13 @@ def _show_agent(db_path: Path, code: str) -> None:
         ).fetchall()
         bound_codes = {r[0] for r in bound_rows}
 
+    from jeanmichel import config as _cfg
+    eff = _cfg.agent_model(agent.code, agent.role, agent.model_override)
+    model_note = "" if agent.model_override else " [dim](role default)[/dim]"
     console.rule(f"[bold cyan]{agent.name}[/bold cyan] [dim]({agent.code})[/dim]")
     console.print(
         f"[dim]Role:[/dim] {agent.role}  "
+        f"[dim]Model:[/dim] {eff}{model_note}  "
         f"[dim]Think:[/dim] {'on' if agent.thinking_mode else 'off'}  "
         f"[dim]Temp:[/dim] {agent.temperature}"
     )
@@ -464,6 +472,22 @@ def _exec_toggle(db_path: Path, code: str, completer: _AdminCompleter | None) ->
         console.print(f"[red]{e}[/red]")
 
 
+def _exec_set_model(db_path: Path, agent: str, model: str, completer: _AdminCompleter | None) -> None:
+    """Set an agent's per-agent model override, or clear it (→ role default)."""
+    cleared = model.strip().lower() in ("--clear", "default", "none", "")
+    try:
+        with db.connect(db_path) as conn:
+            db.set_agent_model(conn, agent, None if cleared else model)
+        if cleared:
+            console.print(f"[yellow]Cleared[/yellow] model override of [bold]{agent}[/bold] → role default")
+        else:
+            console.print(f"[green]Set[/green] [bold]{agent}[/bold] model → [bold]{model}[/bold]")
+        if completer:
+            completer.refresh()
+    except KeyError as e:
+        console.print(f"[red]{e}[/red]")
+
+
 def _exec_add_paradigm(
     db_path: Path,
     session: PromptSession,
@@ -559,6 +583,7 @@ def _show_help() -> None:
   [cyan]unbind[/cyan] <agent> <paradigm>     Unbind a paradigm from an agent
   [cyan]add-paradigm[/cyan]                  Interactive wizard to create a new paradigm
   [cyan]toggle-paradigm[/cyan] <code>        Enable/disable a paradigm (toggle)
+  [cyan]set-model[/cyan] <agent> <model>     Set an agent's model override (--clear → role default)
   [cyan]help[/cyan]                          Show this help
   [cyan]exit[/cyan] / [cyan]quit[/cyan]                  Exit the REPL
 
@@ -621,6 +646,11 @@ def run_command(
             console.print("[red]Usage: toggle-paradigm <code>[/red]")
         else:
             _exec_toggle(db_path, args[0], completer)
+    elif cmd == "set-model":
+        if len(args) < 2:
+            console.print("[red]Usage: set-model <agent> <model | --clear>[/red]")
+        else:
+            _exec_set_model(db_path, args[0], args[1], completer)
     elif cmd == "add-paradigm":
         if session is None:
             console.print("[red]add-paradigm is only available in interactive mode.[/red]")

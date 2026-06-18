@@ -32,21 +32,22 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 def list_active_agents(conn: sqlite3.Connection) -> list[Agent]:
     rows = conn.execute(
-        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image "
-        "FROM agents WHERE active = 1 ORDER BY id",
+        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image, "
+        "model_override FROM agents WHERE active = 1 ORDER BY id",
     ).fetchall()
     return [
         Agent(id=r["id"], code=r["code"], name=r["name"], role=r["role"],
               mission=r["mission"], thinking_mode=bool(r["thinking_mode"]),
-              temperature=r["temperature"], sandbox_image=r["sandbox_image"])
+              temperature=r["temperature"], sandbox_image=r["sandbox_image"],
+              model_override=r["model_override"])
         for r in rows
     ]
 
 
 def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
     row = conn.execute(
-        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image "
-        "FROM agents WHERE code = ? AND active = 1",
+        "SELECT id, code, name, role, mission, thinking_mode, temperature, sandbox_image, "
+        "model_override FROM agents WHERE code = ? AND active = 1",
         (code,),
     ).fetchone()
     if row is None:
@@ -55,6 +56,7 @@ def get_agent_by_code(conn: sqlite3.Connection, code: str) -> Agent:
         id=row["id"], code=row["code"], name=row["name"], role=row["role"],
         mission=row["mission"], thinking_mode=bool(row["thinking_mode"]),
         temperature=row["temperature"], sandbox_image=row["sandbox_image"],
+        model_override=row["model_override"],
     )
 
 
@@ -509,3 +511,17 @@ def set_paradigm_active(conn: sqlite3.Connection, paradigm_code: str, active: bo
     )
     if result.rowcount == 0:
         raise KeyError(f"Unknown paradigm: {paradigm_code}")
+
+
+def set_agent_model(conn: sqlite3.Connection, agent_code: str, model: str | None) -> None:
+    """Set (or clear) an agent's per-agent model override (``agents.model_override``).
+
+    ``None`` / empty → NULL → the agent falls back to its role default (cf. ``config.agent_model``).
+    """
+    value = model.strip() if isinstance(model, str) and model.strip() else None
+    result = conn.execute(
+        "UPDATE agents SET model_override = ?, modified_at = ? WHERE code = ?",
+        (value, _now(), agent_code),
+    )
+    if result.rowcount == 0:
+        raise KeyError(f"Unknown agent: {agent_code}")

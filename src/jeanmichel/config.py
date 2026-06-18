@@ -214,12 +214,9 @@ WORKSPACE_UPLOAD_MAX_BYTES = _int_env("JEANMICHEL_UPLOAD_MAX_BYTES", 22 * 1024 *
 IMAGE_MAX_PX = _int_env("JEANMICHEL_IMAGE_MAX_PX", 1024)
 
 MODES = ("analyse", "chat", "vocal", "code")
-DEFAULT_OLLAMA_MODEL = os.environ.get(
-    "JEANMICHEL_MODEL",
-    #"qwen3:14b",
-    "gemma4:26b",
-)
 DEFAULT_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# DEFAULT_OLLAMA_MODEL est défini plus bas (après la résolution des rôles) : il retombe sur
+# SUBAGENT_DEFAULT_MODEL (générique multimodal) quand JEANMICHEL_MODEL n'est pas set.
 
 
 # ---- models.toml — foyer unique de la config modèle ----------------------
@@ -265,11 +262,11 @@ def _models_section(name: str) -> dict[str, Any]:
     return sec if isinstance(sec, dict) else {}
 
 
-def _role_model(env_name: str, toml_key: str, default: str) -> str:
-    """Résout un modèle de rôle : env → models.toml [roles] → ultime défaut.
+def _role_model(env_name: str, toml_key: str) -> str:
+    """Résout le modèle d'un rôle : env `JEANMICHEL_<ROLE>_MODEL` → `models.toml [roles]`.
 
-    Le défaut intégré n'est qu'un filet de sécurité (models.example.toml absent
-    ou corrompu) — la source réelle des défauts est le fichier exemple.
+    AUCUN défaut hardcodé : la source des défauts est `models.example.toml` (committé). Si ni
+    l'env ni le toml ne fournit le rôle, on lève — fail-fast > mauvais modèle silencieux.
     """
     env = os.environ.get(env_name)
     if env is not None and env.strip():
@@ -277,7 +274,10 @@ def _role_model(env_name: str, toml_key: str, default: str) -> str:
     val = _models_section("roles").get(toml_key)
     if isinstance(val, str) and val.strip():
         return val.strip()
-    return default
+    raise RuntimeError(
+        f"Rôle modèle '{toml_key}' introuvable : définis [roles].{toml_key} dans "
+        f"models.example.toml (ou l'env {env_name})."
+    )
 
 
 # =============================================================================
@@ -288,27 +288,36 @@ def _role_model(env_name: str, toml_key: str, default: str) -> str:
 # pour la rétrocompat tant que le code legacy n'est pas retiré (Phase 6).
 # Tous ces paramètres sont overridables par env var pour tuning sans recompile.
 
-# Modèles — 5 slots (cf. §1.3 doc 06). Chaîne d'override : env > models.toml > default.
-DISPATCH_MODEL = _role_model("JEANMICHEL_DISPATCH_MODEL", "dispatch", "granite4.1:8b")
-MAIN_MODEL = _role_model("JEANMICHEL_MAIN_MODEL", "main", "cogito:32b")
-COMPACTOR_MODEL = _role_model("JEANMICHEL_COMPACTOR_MODEL", "compactor", "gemma4:26b")
-SUBAGENT_DEFAULT_MODEL = _role_model("JEANMICHEL_SUBAGENT_MODEL", "subagent", "gemma4:26b")
-# Router (jean-michel) model used in the `code` interaction mode — a stronger
-# model for methodical decomposition over a codebase. Other modes use the agent
-# default (MAIN_MODEL / gemma4, vision-capable). Env-overridable.
-CODE_MODEL = _role_model("JEANMICHEL_CODE_MODEL", "code", "qwen3:14b")
-# Per-mode router-model overrides (mode → Ollama model). A mode absent here uses
-# the agent's resolved default. Consumed in service.turn_runner._run_deep_turn.
+# Modèles par rôle — défauts résolus depuis models.toml (env-overridable). AUCUN modèle hardcodé.
+DISPATCH_MODEL = _role_model("JEANMICHEL_DISPATCH_MODEL", "dispatch")
+MAIN_MODEL = _role_model("JEANMICHEL_MAIN_MODEL", "main")
+COMPACTOR_MODEL = _role_model("JEANMICHEL_COMPACTOR_MODEL", "compactor")
+SUBAGENT_DEFAULT_MODEL = _role_model("JEANMICHEL_SUBAGENT_MODEL", "subagent")
+# Modèle du ROUTEUR (jean-michel) en mode `code` (décomposition méthodique sur du code).
+CODE_MODEL = _role_model("JEANMICHEL_CODE_MODEL", "code")
+# Override de modèle-routeur par mode (mode → modèle). Consommé dans service.turn_runner.
 MODE_ROUTER_MODEL = {"code": CODE_MODEL}
-# Slot dédié aux agents dont le métier EST le raisonnement (strategist,
-# critical-thinker, comparator-specialist, meta-analyst). Aujourd'hui chacun
-# pointe dur sur 'gemma4:26b' via `agents.model_override` ; ce slot existe
-# pour qu'un futur switch global (changer de modèle de raisonnement) se fasse
-# par env var, sans migration DB. Le résolveur actuel (orchestrator_v2) ne le
-# lit pas encore — il sera consommé si on bascule de model_override sur un
-# flag d'agent (cognitive_tier='high', par exemple). Documenté ici comme
-# point d'extension stable.
-REASONER_MODEL = _role_model("JEANMICHEL_REASONER_MODEL", "reasoner", "gemma4:26b")
+
+# Fallback générique d'un LLMClient créé sans modèle explicite (rare : l'orchestrateur passe
+# toujours un modèle par-agent résolu). Multimodal — sert aussi de fallback vision.
+DEFAULT_OLLAMA_MODEL = os.environ.get("JEANMICHEL_MODEL", "").strip() or SUBAGENT_DEFAULT_MODEL
+
+
+def agent_model(agent_code: str, agent_role: str, db_override: str | None) -> str:
+    """LE point de décision du modèle d'un agent (lu par orchestrator_v2.load_agent). Précédence :
+
+      1. env ``JEANMICHEL_AGENT_MODEL_<CODE>`` (test rapide d'un agent précis) ;
+      2. ``agents.model_override`` en DB (config par-agent ; None = défaut du rôle) ;
+      3. défaut de rôle : MAIN_MODEL si router, sinon SUBAGENT_DEFAULT_MODEL.
+
+    Tous les modèles viennent du toml (via les constantes ci-dessus) — rien n'est hardcodé ici.
+    """
+    env = os.environ.get("JEANMICHEL_AGENT_MODEL_" + agent_code.upper().replace("-", "_"))
+    if env and env.strip():
+        return env.strip()
+    if db_override and db_override.strip():
+        return db_override.strip()
+    return MAIN_MODEL if agent_role == "router" else SUBAGENT_DEFAULT_MODEL
 
 # Budget de contexte partitionné (cf. §1.7 et §7 doc 06).
 # 4 seuils d'escalade pour la compaction sur le WORKING : snip / microcompact /

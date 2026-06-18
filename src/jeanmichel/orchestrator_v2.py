@@ -1691,13 +1691,9 @@ def load_agent_spec_v2(
         delegation_targets_meta=delegation_targets_meta,
     )
 
-    # Resolve the model.
-    if model_override:
-        model = model_override
-    elif row["role"] == "router":
-        model = _cfg.MAIN_MODEL
-    else:
-        model = _cfg.SUBAGENT_DEFAULT_MODEL
+    # Resolve the model — single decision point (env per-agent → DB model_override → role default),
+    # every value sourced from models.toml. cf. config.agent_model.
+    model = _cfg.agent_model(row["code"], row["role"], model_override)
 
     return AgentSpec(
         code=row["code"],

@@ -19,12 +19,16 @@ from ._errors import tool_error, tool_ok
 
 
 def _default_vision_client() -> Any:
-    """Lazily build a gemma4 client when the registry didn't inject one."""
+    """Lazily build a vision-capable client when the registry didn't inject one.
+
+    Uses SUBAGENT_DEFAULT_MODEL (the generic specialist default, multimodal) — NOT MAIN_MODEL,
+    which may be a text-only orchestrator depending on the toml.
+    """
     try:
-        from ..config import MAIN_MODEL
+        from ..config import SUBAGENT_DEFAULT_MODEL
         from ..llm import OllamaClient
 
-        return OllamaClient(model=MAIN_MODEL)
+        return OllamaClient(model=SUBAGENT_DEFAULT_MODEL)
     except Exception:  # noqa: BLE001
         return None
 

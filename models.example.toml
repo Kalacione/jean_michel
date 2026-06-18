@@ -7,9 +7,13 @@
 #
 # An environment variable always wins when present (quick one-off / CI):
 #   roles            → JEANMICHEL_DISPATCH_MODEL, _MAIN_MODEL, _CODE_MODEL,
-#                       _COMPACTOR_MODEL, _SUBAGENT_MODEL, _REASONER_MODEL
+#                       _COMPACTOR_MODEL, _SUBAGENT_MODEL
+#   per-agent        → JEANMICHEL_AGENT_MODEL_<CODE>  (CODE = agent code, non-alnum → '_')
 #   context windows  → JEANMICHEL_CTX_WINDOW_<slug>  (slug = model id, non-alnum → '_')
 #   voice            → JEANMICHEL_VOICE_MODEL, JEANMICHEL_AUDIO_PLAYER
+#
+# Per-agent models (specialists needing a specific model) are NOT here : they live in the DB
+# (agents.model_override), edited via `jm.sh --admin set-model …` or the web "Agent settings" panel.
 # =============================================================================
 
 # ---- Top-level scalars (MUST stay above the first [table] to be top-level) ---
@@ -28,11 +32,11 @@ no_thinking = ["cogito:32b"]
 # Which Ollama model plays each role in the deterministic orchestration chain.
 [roles]
 dispatch  = "granite4.1:8b"   # tier-0 classifier — small & fast
-main      = "cogito:32b"      # jean-michel router/orchestrator — won the tool-calling eval (5/5)
-code      = "qwen3:14b"       # code-router (code mode) — methodical decomposition
+main      = "gemma4:26b"      # router/orchestrator — gemma4 for the visible thinking channel
+                              # (cogito:32b won the tool-calling eval but exposes no thinking)
+code      = "qwen3:14b"       # the ROUTER's model in `code` mode (methodical decomposition)
 compactor = "gemma4:26b"      # context summarizer
-subagent  = "gemma4:26b"      # default for specialists without a model_override
-reasoner  = "gemma4:26b"      # reasoning-heavy roles (strategist, critical-thinker…)
+subagent  = "gemma4:26b"      # default for any specialist without a per-agent model (DB model_override)
 
 # ---- Context window (pinned as Ollama num_ctx, in tokens) -------------------
 [context_window]
