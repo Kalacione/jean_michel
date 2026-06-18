@@ -40,15 +40,16 @@ Mission: {agent_mission}
 ## Human
 {user_profile_text or "No user profile provided."}
 
-## Known facts about the user (long-term memory)
-- [user]     {code1} : {description1}
-- [feedback] {code2} : {description2}
-- [project]  {code3} : {description3}
+## Long-term memory (index — ordered by importance, then recency)
+- [user]    {code1} : {description1}
+- [project] {code2} : {description2}
+- [tool]    {code3} : {description3}
 ...
 
-Use `manage_user_memory(action='recall', code='<code>')` to load the
-full body of an entry, `action='save'` to add a new fact,
-`action='update'` to refine one.
+Use `manage_memory(action='recall', code='<code>')` to load the full body
+of an entry. `manage_memory` is **read-only** (`recall` / `search` /
+`list`) — to add or refine a fact, call `propose_memory`, which queues a
+candidate for human review (nothing is written unattended).
 
 Detected language — use for human-facing output: {user_language}
 Working language for everything else (internal reasoning, tool queries,
@@ -73,9 +74,9 @@ briefings to other agents): English only.
 
 1. **`# IDENTITY`** — name, code, role, mission of the agent (from `agents` row).
 2. **`# CONTEXT`** :
-   - `## Human` — `user_profile.toml` rendered + `user_memory` index
-     prepended automatically by `render_user_memory_index` (limit 100,
-     warning at 90).
+   - `## Human` — `user_profile.toml` rendered + the long-term-memory index
+     (scopes `user` / `project` / `tool`, ordered `importance DESC, recency`)
+     prepended automatically by `render_memory_block` (capped per scope).
    - Detected language line + working language line.
    - `## Conversation` — mode only (no other runtime state in the prompt).
 3. **`# DIRECTIVES`** — paradigms grouped by category. Selection :
@@ -127,15 +128,14 @@ briefings to other agents): English only.
 Between human turns within the same conversation :
 
 1. `messages.json` is reloaded from disk (full Ollama-shape array).
-2. `messages[0]` (the system prompt) is re-rendered with a fresh
-   `user_memory` index — entries saved during the previous turn become
-   visible.
+2. `messages[0]` (the system prompt) is re-rendered with a fresh memory
+   index — entries approved since the previous turn become visible.
 3. The new user input is appended as `{role: "user", content: ...}`.
 4. The main loop resumes.
 
 This means the system prompt is effectively re-rendered at the start of
-every human turn — the `user_memory` block is always current. Within a
-single turn, the system prompt stays stable.
+every human turn — the memory index is always current. Within a single
+turn, the system prompt stays stable.
 
 ## Tier 0 dispatcher prompt
 
@@ -171,4 +171,4 @@ writing them via workspace tools before delegating).
 | Subagent ask_human            | Available                                         | Removed (use `report_back(confidence='low')`)       |
 | Context budget                | 7 orthogonal counters (steps, delegations, etc.)  | Partitioned `SYSTEM_RESERVE + WORKING + OUTPUT_RESERVE` |
 | Compaction                    | Truncation hacks                                  | 4-level escalade (Snip / Microcompact / Collapse / Autocompact) |
-| Cross-conv user memory        | `user_profile.toml` only (static)                 | `user_memory` table + index auto-injected           |
+| Cross-conv memory             | `user_profile.toml` only (static)                 | `memory` table (user/project/tool) + index auto-injected; writes via `propose_memory` → review |

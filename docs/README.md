@@ -15,6 +15,9 @@ Index des **références vivantes** (tenues à jour). Les vieux plans/audits dat
 - **Fork de conversation** : enregistre sa lignée (conversation + commit source), exposée dans l'UI.
 - **Stop** interrompt réellement le tour (ferme la connexion Ollama, annule pendant les tool calls) ; un
   garde-fou fait conclure une boucle sans progrès.
+- **Mémoire & paradigmes** : mémoire sémantique (faits scopés user/project/tool, classés par importance) +
+  procédurale (paradigmes) enrichies par **proposition → revue humaine** (outil `propose_memory` + un beat de
+  réflexion en fin de tour deep) ; `manage_memory` est lecture seule. Détail → [memory_architecture.md](memory_architecture.md).
 - **Maths** : le LaTeX du chat est rendu en KaTeX.
 - **Modèles** : config dans `models.toml` (`[roles]`, `[context_window]`, `no_thinking`, `[voice]` ; défauts
   committés dans `models.example.toml`, env prioritaire) ; `num_ctx` épinglé par modèle, plafond 128k (anti-OOM
@@ -28,6 +31,7 @@ Index des **références vivantes** (tenues à jour). Les vieux plans/audits dat
 - [orchestrator_determinism.md](orchestrator_determinism.md) — paramètres live, modèles par rôle, garde-fous (**auto-généré** : `./jm.sh --orchestrator-map`).
 - [agents_synoptic.md](agents_synoptic.md) — carte des chaînes d'agents (**auto-généré** : `./jm.sh --synoptic`).
 - [PROMPT_SKELETON.md](PROMPT_SKELETON.md) — structure du prompt.
+- [memory_architecture.md](memory_architecture.md) — mémoire (3 buckets) + promotion en paradigme : capture in-turn + réflexion fin-de-tour → revue humaine, importance/fraîcheur.
 - [HOWTO_ADD_SPECIALIST_OR_TOOL.md](HOWTO_ADD_SPECIALIST_OR_TOOL.md) — ajouter un agent / outil (recettes SQL).
 
 ### Modèles

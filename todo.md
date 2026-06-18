@@ -33,26 +33,18 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
       "approved": false
     }``` normalement les load/ write/read sont forcement limites au dossier workspace, j;ais peur qu'nu agent essaye de lire `workspace/workspace/fichier.md`
 
-## Mémoire
-- **Sidecars mémoire → DB** (R6, backlog) : `consolidation_state.json` + `pending_memory.json` traînent dans le
-  dossier conv (le user les a repérés et râlé : « c'est quoi ce fichier de merde »). Cible :
-  `conversations.consolidation_studied_msgs` (colonne) + table `memory_pending`. Migration manuelle + schema.sql.
-- **Shadow-consolidation — reste** : (a) **persistance reload** — `GET /conversations/{id}/pending-memory` +
-  chargement au `select()` (sinon candidats perdus si on quitte la conv dans les ~15 s) ; (b) éventuel **gating**
-  de fréquence (ne pas consolider chaque tour deep). [Recouvre en partie le point sidecars→DB ci-dessus.]
-
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
 - On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur, tests).
 - **MAJ `docs/PROMPT_SKELETON.md`** : remettre à jour la structure du prompt avec l'état v2 actuel (noté au ménage docs).
-- Rafraîchir le paradigm viewer/editor.
+- **Paradigm viewer/éditeur web** (chantier séparé) : l'intégrer dans l'app web (façon `AgentsDialog`) — voir/éditer
+  content + rationale + bindings/modes + un onglet « Promotions » (`pending_consolidation kind='rule'`). Le CLI
+  (`admin.py` : `paradigm <code>`, `promotions`) couvre déjà la lecture + la revue des promotions.
 - Audit des paradigmes de tous les agents (incohérences ?).
-- **meta_analyst — qualité** : `--meta-analysis` remarche (commit 78055ce), MAIS le meta-analyst **hallucine** des
-  noms d'agents/outils inexistants (ex. `analyst`/`researcher`, `sandbox_execute`) alors qu'il a
-  `self_inspect_config`. Durcir le grounding (ne référencer que des agents/outils RÉELS du roster ; noms exacts).
-  Idée : le lancer **périodiquement** (auto-trigger sur seuil d'échecs/ask_human) — mais sortie **filtrée par un
-  humain**, jamais auto-appliquée.
+- **meta_analyst — auto-trigger périodique** : le lancer automatiquement sur un seuil (échecs récurrents /
+  ask_human) plutôt qu'à la main ; sortie toujours filtrée par l'humain, jamais auto-appliquée. (Le grounding +
+  la promotion en règles ancrées sont en place.)
 
 
 ## Idées
