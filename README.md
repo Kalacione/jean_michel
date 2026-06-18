@@ -443,13 +443,12 @@ conversations/2026-06-17_16-41_{conv_uuid}/
 └── subagent_<request_id>.json   # un par exécution de subagent
 ```
 
-`state.json` n'est plus un simple sac de scalaires : c'est le **référent
-organisationnel autoritaire** (le ledger unique). Il porte le log des tours
-(`requests[]`), les plans (`plans{}` par-id + statut d'approbation), les todos,
-les subagents, les fichiers produits, la `phase`, le `plan_mode` et la lignée de
-fork. Il est **rechargé en début de tour** ; un **filet anti-drift**
-(`rebuild_from_events`, `persistence.py`) garantit « maintenu == reconstruit »
-en rejouant `events.jsonl` (verrou de test).
+`state.json` est le **référent organisationnel autoritaire** (le ledger unique) :
+il porte le log des tours (`requests[]`), les plans (`plans{}` par-id + statut
+d'approbation), les todos, les subagents, les fichiers produits, la `phase`, le
+`plan_mode` et la lignée de fork. Il est **rechargé en début de tour**, et un
+**filet anti-drift** (`rebuild_from_events`, `persistence.py`) le reconstruit à
+l'identique depuis `events.jsonl`.
 
 Audit cross-conversation : `~/.jean-michel/sandbox_audit.jsonl` (toutes
 les exécutions `bash_sandbox`, toutes conversations confondues).
@@ -480,7 +479,7 @@ frontal web :
   dossier **à ce commit** (hors `.git`, via `git archive`) est extrait dans
   une nouvelle conversation possédée par le même utilisateur. L'originale
   reste intacte. La **lignée** est enregistrée en DB
-  (`conversations.parent_conv_id` + `parent_commit`, migration 151) et
+  (`conversations.parent_conv_id` + `parent_commit`) et
   surfacée dans l'UI (« forké de … »).
 
 Routes API (owner-scoped) : `GET …/snapshots`, `POST …/revert`,
@@ -491,7 +490,7 @@ imbriqués ne polluent pas le repo principal.
 
 ## Événements typés
 
-L'orchestrateur émet 24 types d'events (catalogue dans
+L'orchestrateur émet des events typés (catalogue dans
 `src/jeanmichel/events.py`) consommés par le CLI/UI live et persistés dans
 `events.jsonl` (sauf les flux WS-only `AgentTokenStreamed` et `ReferentSnapshot`,
 jamais écrits). L'arbre des délégations se reconstruit en filtrant les
@@ -869,7 +868,7 @@ jeanmichel/
 │   ├── dispatcher.py         # Tier 0 (granite)
 │   ├── hooks.py              # 4 hooks Python
 │   ├── compaction.py         # 4-level escalade
-│   ├── events.py             # 24 dataclasses typées
+│   ├── events.py             # dataclasses d'events typés
 │   ├── tokens.py             # estimation contexte
 │   ├── llm.py                # OllamaClient + MockClient (chat_messages)
 │   ├── persistence.py        # messages.json + state.json + events.jsonl
