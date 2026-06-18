@@ -31,6 +31,7 @@ from prompt_toolkit.completion import Completer, Completion, WordCompleter  # no
 from prompt_toolkit.history import InMemoryHistory  # noqa: E402
 from rich import box  # noqa: E402
 from rich.console import Console  # noqa: E402
+from rich.markup import escape  # noqa: E402
 from rich.table import Table  # noqa: E402
 
 from jeanmichel import config, db  # noqa: E402
@@ -42,7 +43,7 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 _COMMANDS = [
-    "agents", "agent", "tools", "paradigms",
+    "agents", "agent", "tools", "paradigms", "paradigm", "promotions",
     "convs", "purge-orphans",
     "grant", "revoke", "bind", "unbind",
     "add-paradigm", "toggle-paradigm", "set-model",
@@ -383,6 +384,7 @@ def _show_paradigms(db_path: Path, agent_code: str | None = None) -> None:
     t.add_column("On", justify="center")
     if agent_code:
         t.add_column("Applied", justify="center")
+    t.add_column("Preview", style="dim", max_width=54)
     for r in rows:
         active_mark = "[green]✓[/green]" if r["active"] else "[red]✗[/red]"
         global_mark = "G" if r["is_global"] else "·"
@@ -398,10 +400,115 @@ def _show_paradigms(db_path: Path, agent_code: str | None = None) -> None:
                 row_data.append("[cyan]B[/cyan]")
             else:
                 row_data.append("[dim]·[/dim]")
+        row_data.append(escape((r["preview"] or "").replace("\n", " ")))
         t.add_row(*row_data)
     console.print(t)
+    console.print("[dim]Full content: [/dim][cyan]paradigm <code>[/cyan]")
     if agent_code:
         console.print("[dim]G=global (always applied), B=explicitly bound, ·=not applied[/dim]")
+
+
+def _show_paradigm_detail(db_path: Path, code: str) -> None:
+    """Full view of one paradigm: the injected content + the dev rationale + bindings."""
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT p.code, p.title, p.content, p.rationale, p.is_global, p.active, "
+            "p.order_priority, s.code AS sec, c.code AS cat "
+            "FROM paradigms p JOIN categories c ON c.id=p.category_id "
+            "JOIN sections s ON s.id=c.section_id WHERE p.code=?",
+            (code,),
+        ).fetchone()
+        if row is None:
+            console.print(f"[red]Unknown paradigm: {code}[/red]")
+            return
+        agents = [
+            r["code"] for r in conn.execute(
+                "SELECT a.code FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
+                "JOIN paradigms p ON p.id=ap.paradigm_id WHERE p.code=? ORDER BY a.code", (code,)
+            ).fetchall()
+        ]
+        modes = [
+            r["mode"] for r in conn.execute(
+                "SELECT mode FROM paradigm_modes pm JOIN paradigms p ON p.id=pm.paradigm_id "
+                "WHERE p.code=?", (code,)
+            ).fetchall()
+        ]
+    state = "[green]active[/green]" if row["active"] else "[red]INACTIVE[/red]"
+    console.print(f"[bold cyan]{escape(row['code'])}[/bold cyan] — {escape(row['title'])}")
+    console.print(
+        f"[dim]{row['sec']}.{row['cat']}  ·  {'global' if row['is_global'] else 'bound'}  ·  "
+        f"order {row['order_priority']}  ·  [/dim]{state}"
+    )
+    if modes:
+        console.print(f"[dim]modes: {', '.join(modes)}[/dim]")
+    console.print(f"[dim]agents: {', '.join(agents) if agents else '(none — global or unbound)'}[/dim]")
+    console.print("\n[bold]content (injected verbatim into the prompt):[/bold]")
+    console.print(row["content"], markup=False)
+    if row["rationale"]:
+        console.print("\n[bold dim]rationale (dev note — NOT injected):[/bold dim]")
+        console.print(row["rationale"], markup=False, style="dim")
+
+
+def _review_promotions(db_path: Path, session: PromptSession | None) -> None:
+    """Review queued paradigm-promotion candidates (pending_consolidation kind='rule')
+    across conversations : create (DARK) / bind an existing one / drop."""
+    if session is None:
+        console.print("[red]promotions is interactive — run it in the REPL (jm.sh --admin).[/red]")
+        return
+    import json
+
+    from jeanmichel.service import consolidation
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT conversation_id, payload FROM pending_consolidation "
+            "WHERE kind='rule' AND status='pending' ORDER BY id"
+        ).fetchall()
+    cands = [(r["conversation_id"], json.loads(r["payload"])) for r in rows]
+    if not cands:
+        console.print("[dim]Aucune promotion de paradigme en attente.[/dim]")
+        return
+
+    for i, (conv_id, c) in enumerate(cands):
+        sim = ", ".join(m["code"] for m in c.get("existing_matches", []))
+        console.print(f"\n[bold magenta]Promotion {i + 1}/{len(cands)}[/bold magenta]  ·  "
+                      f"{c['section_code']}.{c['category_code']}")
+        console.print(f"[bold]{escape(c['title'])}[/bold]")
+        console.print(c["content"], markup=False)
+        if c.get("grounding_quote"):
+            console.print(f"[dim]source : {escape(c['grounding_quote'])}[/dim]")
+        if sim:
+            console.print(f"[yellow]paradigmes proches : {sim} (binder l'un d'eux évite un doublon)[/yellow]")
+        choice = (session.prompt(
+            "[c]réer (inactif) / [b]ind existant / [d]rop / [s]kip / [q]uit (défaut s): "
+        ).strip().lower() or "s")
+        if choice == "q":
+            break
+        if choice == "s":
+            continue
+        try:
+            if choice == "d":
+                consolidation.remove_pending(conv_id, c)
+                console.print("[dim]drop.[/dim]")
+            elif choice == "b":
+                para = session.prompt("  paradigme existant à binder (code): ").strip()
+                agent = session.prompt("  agent (code): ").strip()
+                with sqlite3.connect(db_path) as conn:
+                    consolidation.apply_rule_candidate(
+                        conn, c, action="bind", bind_agent=agent, bind_to_code=para
+                    )
+                consolidation.mark_applied(conv_id, c)
+                console.print(f"[green]✓ bind {para} → {agent}[/green]")
+            else:  # create
+                with sqlite3.connect(db_path) as conn:
+                    res = consolidation.apply_rule_candidate(conn, c, action="create")
+                consolidation.mark_applied(conv_id, c)
+                console.print(f"[green]✓ créé (inactif) : {res['code']} "
+                              "— active via toggle-paradigm + bind <agent> <code>[/green]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]✖ {exc}[/red]")
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +681,9 @@ def _show_help() -> None:
   [cyan]agents[/cyan]                        List all active agents
   [cyan]agent[/cyan] <code>                  Show full agent profile (tools + paradigms)
   [cyan]tools[/cyan]                         List all known tool codes and their holders
-  [cyan]paradigms[/cyan] [<agent>]           List all paradigms; if agent given, show applied status
+  [cyan]paradigms[/cyan] [<agent>]           List all paradigms (+ preview); if agent given, applied status
+  [cyan]paradigm[/cyan] <code>               Show one paradigm in full (content + rationale + bindings)
+  [cyan]promotions[/cyan]                    Review queued rule→paradigm promotions (create / bind / drop)
   [cyan]convs[/cyan]                         List recent conversations with folder existence check
   [cyan]purge-orphans[/cyan]                 Remove DB records for conversations with missing folders
   [cyan]grant[/cyan] <agent> <tool>          Grant a tool to an agent
@@ -617,6 +726,13 @@ def run_command(
         _show_tools(db_path)
     elif cmd == "paradigms":
         _show_paradigms(db_path, args[0] if args else None)
+    elif cmd == "paradigm":
+        if not args:
+            console.print("[red]Usage: paradigm <code>[/red]")
+        else:
+            _show_paradigm_detail(db_path, args[0])
+    elif cmd == "promotions":
+        _review_promotions(db_path, session)
     elif cmd == "convs":
         _show_convs(db_path)
     elif cmd == "purge-orphans":
