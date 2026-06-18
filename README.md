@@ -276,9 +276,8 @@ Création d'un compte web :
 
 ## Capacités image
 
-Audit complet dans
-[docs/image_vision.md](docs/image_vision.md).
-Livré (migrate_115→119) :
+Design détaillé dans
+[docs/image_vision.md](docs/image_vision.md). Le pipeline, en bref :
 
 1. **Affichage** : endpoint authed `GET …/workspace/image?path=…`
    (vrai MIME), pattern blob → objectURL côté front (même mécanique que
@@ -577,49 +576,10 @@ code = ["jean-michel", "code-fetcher"]
 
 ## Paradigmes en BDD
 
-Le système de paradigmes survit en v2, mais purgé puis enrichi : **118
-paradigmes actifs** au total. Trajectoire (extraits — détail complet dans
-`db/migrations/`) :
-
-- Phase 6 (migrate_100) : passage de 119 v1 → 104 v2 (anti-loop
-  incantatoires retirés, outils morts purgés, 5 nouveaux paradigmes :
-  `user_memory_discipline`, `nested_delegation_discipline`,
-  `report_back_format`, `workspace_progressive_write`,
-  `output_contract_no_inline_dump`).
-- Migration 103 (search quality) : +4 paradigmes
-  (`breadth_before_depth`, `wikipedia_lateral_exploration`,
-  `coverage_check`, `strategist_decomposition_discipline` — ce dernier
-  initialement nommé `parallel_specialists_for_inventory`).
-- Migration 105 (strategist) : +1 paradigme (`strategist_first`) côté
-  router.
-- Migration 106 (news-specialist) : +1 paradigme
-  (`news_freshness_discipline`) côté nouveau specialist.
-- Migration 107 (news routing + web_fetch) : +1 paradigme
-  (`news_first_for_news_briefs`) côté jean-michel, missions de
-  web-search-specialist et news-specialist réécrites pour lever le
-  chevauchement sémantique sur "news", tool `web_fetch` granté aux
-  deux specialists.
-- Migration 108 (code-fetcher) : +3 paradigmes
-  (`code_fetcher_multi_source` côté code-fetcher,
-  `delegate_to_code_fetcher_on_doubt` côté code-runner,
-  `cite_sources_in_user_facing_output` côté jean-michel — bonus pour
-  surfacer les sources dans la réponse user-facing).
-- Migration 109 (code-runner routing + sandbox testing) : +2
-  paradigmes (`code_runner_for_code_production_briefs` côté
-  jean-michel, `test_in_sandbox_when_runnable` côté code-runner),
-  mission de code-runner réécrite pour mettre "writes to workspace
-  AND tests in sandbox" en tête des 160 premiers chars vus par le
-  router.
-- Migration 110 (syntax check before run) : raffine
-  `test_in_sandbox_when_runnable` pour ajouter une étape de syntax
-  check rapide AVANT l'exécution complète (`python -m py_compile`,
-  `bash -n`, `node --check`, `python -m json.tool`, parser YAML).
-  Le budget de 3 itérations couvre désormais syntax + runtime
-  combinés.
-- Migration 111 (code-runner → reasoner) : `code-runner` passe sur
-  `gemma4:26b` via model_override. La production de code est du
-  raisonnement intense, pas du lookup — le 9b par défaut était
-  insuffisant pour produire du code de qualité.
+Le système de paradigmes survit en v2, **purgé puis enrichi** (≈118 paradigmes actifs), et reste strictement
+**model-agnostic** : le comportement vit en DB (`paradigms` / `agent_paradigms` / `paradigm_modes`), aucun prompt
+ne nomme un modèle. L'évolution v1 → v2 (purge des incantatoires, ajouts par spécialiste) est détaillée dans
+[CHANGELOG.md](CHANGELOG.md) + `db/migrations/`.
 
 ## Stack
 
@@ -731,95 +691,11 @@ commentaires `#`, quotes optionnelles, pas d'interpolation `$VAR`
 `db/schema_v1_baseline.sql` est conservé pour valider les migrations
 v1 → v2 dans les tests.
 
-Migrations v2 sous `db/migrations/` :
+Migrations sous `db/migrations/` (un fichier par migration, `migrate_NNN_*.sql`, appliquées **à la main**) —
+le détail de chacune est dans [CHANGELOG.md](CHANGELOG.md) (« Migrations DB »).
 
-- `migrate_100_paradigm_realignment.sql` — purge des paradigmes obsolètes
-  + 5 nouveaux paradigmes + grant `manage_user_memory` à `jean-michel`
-  + désactivation `archivist`.
-- `migrate_101_user_memory.sql` — création de la table `user_memory`.
-- `migrate_102_drop_runtime_tables.sql` — drop `requests`/`artifacts`/
-  `conversation_phases`/`sandbox_executions` + colonne `agents.model_override`
-  + suppression définitive `archivist`.
-- `migrate_103_search_quality.sql` — 4 paradigmes ciblés sur la qualité
-  des recherches multi-domaine (`breadth_before_depth` côté web-search,
-  `wikipedia_lateral_exploration`, `coverage_check` côté document-builder,
-  `parallel_specialists_for_inventory` initialement côté router).
-- `migrate_104_drop_conv_read_file.sql` — suppression des grants
-  `conv_read_file` (outil redondant avec `workspace_view`, retiré du code).
-- `migrate_105_strategist_agent.sql` — création de l'agent `strategist`
-  (reasoner dédié à la décomposition stratégique), déplacement du
-  paradigme inventory de jean-michel vers strategist, model_override
-  `gemma4:26b` sur les 4 reasoners (strategist + critical-thinker +
-  comparator-specialist + meta-analyst), retour de jean-michel sur
-  MAIN_MODEL.
-- `migrate_106_news_specialist.sql` — création de l'agent `news-specialist`
-  (lookup-tier, default model), grants des nouveaux tools `news_latest`
-  + `news_archive`, paradigme `news_freshness_discipline`, ajout aux
-  delegation_targets de jean-michel.
-- `migrate_107_news_routing_and_web_fetch.sql` — fix routing
-  news-specialist (mission web-search-specialist sans "news", mission
-  news-specialist value-first, paradigme `news_first_for_news_briefs`
-  côté router, `news_freshness_discipline` réécrit autour du pattern
-  news_latest + web_fetch), grants `web_fetch` à news-specialist +
-  web-search-specialist.
-- `migrate_108_code_fetcher_agent.sql` — création de l'agent
-  `code-fetcher` (lookup-tier : GitHub + Stack Overflow + PyPI +
-  web_fetch), mise à jour mission de `code-runner` pour acknowledger
-  la délégation, paradigme `delegate_to_code_fetcher_on_doubt` côté
-  code-runner, ajout aux delegation_targets de jean-michel ET de
-  code-runner. Bonus : paradigme `cite_sources_in_user_facing_output`
-  côté jean-michel pour que la réponse au user inclue les sources
-  consultées (URLs + dates).
-- `migrate_109_code_runner_routing_and_sandbox.sql` — fix routing
-  code-runner : paradigme `code_runner_for_code_production_briefs`
-  côté jean-michel ("pour écrire/débugger du code → code-runner, pas
-  de code inline"), mission de code-runner réécrite pour exposer
-  "writes to workspace AND tests in sandbox" dès les 160 premiers
-  chars, paradigme `test_in_sandbox_when_runnable` qui force
-  l'exécution dans bash_sandbox avant report_back (3 itérations max).
-- `migrate_110_syntax_check_before_run.sql` — raffine
-  `test_in_sandbox_when_runnable` pour ajouter une étape syntax check
-  rapide AVANT l'exécution complète (recipes par langage : Python /
-  Bash / Node / JSON / YAML). Évite de consommer un run sandbox pour
-  des erreurs triviales (typos, brackets, indentation).
-- `migrate_111_code_runner_to_reasoner.sql` — `code-runner` rejoint
-  les reasoners (`model_override='gemma4:26b'`). L'écriture de code
-  est du raisonnement, pas du lookup.
-- `migrate_112_web_users.sql` — support multi-utilisateur du frontal web
-  (additif) : tables `web_users` + `conversation_users` (association
-  user ↔ conversation). Le CLI ne crée pas d'association ; ses conversations
-  restent invisibles au frontal web.
-- `migrate_113_user_memory_isolation.sql` — `user_memory.user_id` ajouté,
-  toutes les rows existantes reattribuées au user système `cli`. Lecture
-  et CRUD désormais filtrés par `user_id`. Plus de fuite cross-user.
-- `migrate_114_conversation_cascade.sql` — `ON DELETE CASCADE` sur les
-  FK pour que la suppression d'une conversation (depuis le web) emporte
-  proprement ses messages, events, state et association
-  `conversation_users`. Le workspace sur disque est nettoyé côté service.
-- `migrate_115`→`119` — **capacités image** : outil `image_search`
-  (115), outils vision `analyze_image` (116), routing affichage image +
-  DEEP forcé sur image (117), paradigmes ré-écrits en anglais (118), cap
-  sur le nombre de résultats image (119).
-- `migrate_120`→`123` — **orchestrateur codeur** : infra de décomposition
-  TODO (`todo_write`, paradigme PDCA) + agent `code-runner` re-routé
-  (120), mode `code` + extension des CHECK `mode IN (…,'code')` sur
-  `paradigm_modes` et `conversations` + `CODE_MODEL` (121), workspace
-  file ops (`workspace_create_dir`/`delete_file`/`delete_dir`, 122), agent
-  `code-runner-node` (sandbox `node-alpine`, modèle `qwen3-coder`, 123).
-- `migrate_124`→`126` — **mémoire scopée + projets + consolidation** : table
-  `projects` + `conversations.project_id` (124) ; `user_memory` → `memory` avec
-  dimension `scope` (world/user/project/tool), index partiels d'unicité, FTS5 +
-  BM25, migration des rows existantes en `scope='user'` (125) ; renommage tool
-  `manage_user_memory` → `manage_memory`, paradigmes `memory_discipline` +
-  `tool_note_discipline` (126).
-
-Pour migrer une instance v1 existante :
-
-```bash
-for m in $(seq 100 126); do
-  sqlite3 jeanmichel.db < db/migrations/migrate_${m}_*.sql
-done
-```
+Pour mettre à jour une instance existante — **après un backup** (`./jm.sh --export-db`) — rejouer **dans
+l'ordre** les migrations qui lui manquent (l'ordre lexical des fichiers `migrate_NNN_*.sql` = l'ordre numérique).
 
 ## Profil utilisateur
 

@@ -43,6 +43,8 @@ Index des **références vivantes** (tenues à jour). Les vieux plans/audits dat
 ### Système (références externes)
 - [system_prompts/](system_prompts/) — prompts de référence (claude.ai, claude-code, opus, comet) pour inspiration / comparaison.
 
-## Le « pourquoi » (archéologie)
+## Le « pourquoi » & le « quand »
 Les plans livrés, audits historiques et le dossier `DevNotes/` ont été dégagés du dépôt courant ; le *pourquoi*
-d'une décision est dans l'**historique git** (rien n'est perdu). Pour l'architecture, voir [architecture_v2.md](architecture_v2.md).
+d'une décision est dans l'**historique git** (rien n'est perdu), et l'architecture dans
+[architecture_v2.md](architecture_v2.md). Le *quand* (livraisons notables, évolution des migrations/paradigmes)
+vit dans [../CHANGELOG.md](../CHANGELOG.md).
