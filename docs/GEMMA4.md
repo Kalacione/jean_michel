@@ -87,7 +87,7 @@ Gemma 4 is multimodal on **every** variant (Text+Image ; E2B/E4B also audio).
   required **at call time**. `OllamaClient.chat_messages` forwards messages
   verbatim, so an `images` field reaches the model with no LLM-layer change.
   Accepted formats: JPEG/PNG/WebP (BMP/TIFF too) — **not SVG**.
-- **Project doctrine (cf. `DevNotes/WEBUI/03`).** Images live in the workspace ;
+- **Project doctrine (cf. `docs/image_vision.md`).** Images live in the workspace ;
   we never persist base64 in `messages.json`. We feed a **normalized ≤1024px
   WebP derivative** (lower bandwidth + format-safe). An attached image forces the
   **DEEP** verdict (the granite dispatcher is text-only). Two paths :

@@ -37,7 +37,7 @@ turn assistant **sans tool_calls** : le `content` EST la réponse.
    prompt. Les paradigmes en BDD restent pour le style et la métacognition,
    pas pour piloter le flux.
 
-Voir `DevNotes/REVOLUCION/06_proposition_v2.md` pour le détail
+Voir `docs/architecture_v2.md` pour le détail
 architectural complet.
 
 ## Surfaces
@@ -115,8 +115,7 @@ Choisi au démarrage via `--mode {analyse,chat,vocal,code}` (défaut `analyse`).
   le lookup) selon une boucle **PDCA** : Plan (todo) → Do (délégation) →
   Check (`report_back`, dont `suggested_todo_updates` proposés par les
   workers) → Act (réécriture du TODO par l'orchestrateur). Le TODO est
-  ré-injecté dans le prompt à chaque tour par `PreLLMCall`. Voir
-  [DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md](DevNotes/ORCHESTRATOR/01_audit_decomposition_todo.md).
+  ré-injecté dans le prompt à chaque tour par `PreLLMCall`.
   Les autres modes utilisent le rôle `main` (`cogito:32b`).
 - **`vocal`** — réponses concises (< 4 phrases courtes), paradigme
   `concise_output` activé. Le texte est aussi synthétisé via **Piper TTS**
@@ -199,10 +198,6 @@ Toutes les routes (sauf `/api/health` et `/api/auth/login`) passent par
 voir les conversations / la mémoire / le workspace d'un autre. Anti-traversal
 via `safe_resolve` sur tous les paths workspace.
 
-Voir [DevNotes/WEBUI/01_audit_api_async_webui.md](DevNotes/WEBUI/01_audit_api_async_webui.md)
-pour le cadrage et [DevNotes/WEBUI/02_audit_user_memory_isolation.md](DevNotes/WEBUI/02_audit_user_memory_isolation.md)
-pour le passage du `user_memory` global à l'isolation par utilisateur.
-
 ## Frontal web (Vue 3 + Vuetify)
 
 Le dossier [web/](web/) est une SPA Vite + Vue 3 + Vuetify 4 + Pinia.
@@ -282,7 +277,7 @@ Création d'un compte web :
 ## Capacités image (livré)
 
 Audit complet dans
-[DevNotes/WEBUI/03_audit_image_capabilities.md](DevNotes/WEBUI/03_audit_image_capabilities.md).
+[docs/image_vision.md](docs/image_vision.md).
 Livré (migrate_115→119) :
 
 1. **Affichage** : endpoint authed `GET …/workspace/image?path=…`
@@ -627,9 +622,6 @@ paradigmes actifs** au total. Trajectoire (extraits — détail complet dans
   raisonnement intense, pas du lookup — le 9b par défaut était
   insuffisant pour produire du code de qualité.
 
-Voir `DevNotes/REVOLUCION/08_paradigm_audit_table.md` pour le détail
-de la purge initiale.
-
 ## Stack
 
 **Cœur (toujours requis)** :
@@ -797,11 +789,10 @@ Migrations v2 sous `db/migrations/` :
 - `migrate_112_web_users.sql` — support multi-utilisateur du frontal web
   (additif) : tables `web_users` + `conversation_users` (association
   user ↔ conversation). Le CLI ne crée pas d'association ; ses conversations
-  restent invisibles au frontal web. Cf. `DevNotes/WEBUI/01_audit_api_async_webui.md`.
+  restent invisibles au frontal web.
 - `migrate_113_user_memory_isolation.sql` — `user_memory.user_id` ajouté,
   toutes les rows existantes reattribuées au user système `cli`. Lecture
   et CRUD désormais filtrés par `user_id`. Plus de fuite cross-user.
-  Cf. `DevNotes/WEBUI/02_audit_user_memory_isolation.md`.
 - `migrate_114_conversation_cascade.sql` — `ON DELETE CASCADE` sur les
   FK pour que la suppression d'une conversation (depuis le web) emporte
   proprement ses messages, events, state et association
@@ -816,7 +807,6 @@ Migrations v2 sous `db/migrations/` :
   `paradigm_modes` et `conversations` + `CODE_MODEL` (121), workspace
   file ops (`workspace_create_dir`/`delete_file`/`delete_dir`, 122), agent
   `code-runner-node` (sandbox `node-alpine`, modèle `qwen3-coder`, 123).
-  Cf. [DevNotes/ORCHESTRATOR/](DevNotes/ORCHESTRATOR/).
 - `migrate_124`→`126` — **mémoire scopée + projets + consolidation** : table
   `projects` + `conversations.project_id` (124) ; `user_memory` → `memory` avec
   dimension `scope` (world/user/project/tool), index partiels d'unicité, FTS5 +
@@ -873,16 +863,6 @@ jeanmichel/
 │   ├── PROMPT_SKELETON.md
 │   ├── GEMMA4.md
 │   └── HOWTO_ADD_SPECIALIST_OR_TOOL.md
-├── DevNotes/
-│   ├── REVOLUCION/           # plans, audits, propositions v2 (01→09)
-│   ├── WEBUI/                # audits du frontal web
-│   │   ├── 01_audit_api_async_webui.md
-│   │   ├── 02_audit_user_memory_isolation.md
-│   │   └── 03_audit_image_capabilities.md
-│   ├── ORCHESTRATOR/         # mode code : décomposition PDCA, patterns Claude Code (01→04)
-│   ├── claude_4.7_extraction/
-│   ├── the_toolbox/
-│   └── todo.md
 ├── src/jeanmichel/
 │   ├── cli.py                # CLI Rich (Tier 0 + Tier 1)
 │   ├── orchestrator_v2.py    # main loop + spawn_subagent
@@ -959,8 +939,7 @@ jeanmichel/
 
 ## État
 
-Bascule v2 complétée (8 phases, cf. `DevNotes/REVOLUCION/07_plan_implementation.md`),
-mergée sur `main`. Config modèle via `models.toml` : orchestrateur (`main`) sur
+Bascule v2 complétée (8 phases), mergée sur `main`. Config modèle via `models.toml` : orchestrateur (`main`) sur
 **cogito:32b**, dispatcher sur granite4.1:8b, code-router sur qwen3:14b, 4 reasoners +
 compactor/subagent sur gemma4:26b, 2 workers code sur qwen3-coder (pattern
 fetcher/runner). **835 tests v2 verts.**
@@ -985,8 +964,7 @@ daemon Python à la main côté hôte.
 (image ⇒ DEEP forcé, jamais de base64 persisté dans `messages.json`),
 affichage front (grille `v-img` + miniatures workspace + lightbox).
 
-**Orchestrateur codeur livré** (mode `code`, migrate_120→123, cf.
-[DevNotes/ORCHESTRATOR/](DevNotes/ORCHESTRATOR/)) : main agent `qwen3:14b`
+**Orchestrateur codeur livré** (mode `code`, migrate_120→123) : main agent `qwen3:14b`
 qui décompose en TODO plat (`todo_write`) et pilote une boucle PDCA sur des
 workers `qwen3-coder` (code-runner py-alpine + code-runner-node node-alpine,
 code-fetcher pour le lookup). Sprints S1 (infra TODO) + S2 (wiring modèles +

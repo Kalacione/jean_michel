@@ -7,7 +7,7 @@ Each event class is an immutable dataclass with:
   event `type` (class name) — ready for `events.jsonl` persistence.
 
 The catalogue is the single source of truth for the orchestrator → CLI
-contract (cf. DevNotes/REVOLUCION/06_proposition_v2.md §6 bis and §11 ter C).
+contract (cf. docs/architecture_v2.md §6 bis and §11 ter C).
 """
 
 from __future__ import annotations

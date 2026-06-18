@@ -1,3 +1,5 @@
+> **Bench live des modèles** (recherche, chiffré) — base des verdicts de [models_eval.md](models_eval.md). Relocalisé depuis `DevNotes/benchmark_agents.md`.
+
 # run de bench
 
 ```

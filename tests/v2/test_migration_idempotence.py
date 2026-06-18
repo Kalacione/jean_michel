@@ -208,7 +208,7 @@ def test_new_paradigms_present_and_active(v2_migrated_db):
 def test_total_active_paradigms_count(v2_migrated_db):
     """Sanity : the migration chain produces 120 active paradigms.
 
-    104 from migrations 100-102 (cf. DevNotes/REVOLUCION/08_paradigm_audit_table.md)
+    104 from migrations 100-102 (paradigm realignment)
     + 4 from migrate_103_search_quality (P1 breadth, P2 wiki lateral, P3 coverage
     check, P4 strategist_decomposition_discipline aka parallel_specialists)
     + 1 from migrate_105_strategist_agent (strategist_first, router-side)

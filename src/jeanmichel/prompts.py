@@ -3,7 +3,7 @@
 Three exposed surfaces :
 
 - ``DISPATCH_SYSTEM_PROMPT`` — static prompt for the Tier 0 dispatcher
-  (cf. DevNotes/REVOLUCION/06_proposition_v2.md §3). JSON-forced output.
+  (cf. docs/architecture_v2.md §3). JSON-forced output.
 - ``render_memory_block(conn, *, user_id, project_id, tool_codes)`` — Markdown
   block listing the (code : description) index of the long-term ``memory``
   entries that DETERMINISTICALLY apply here : world (always) + the user's facts

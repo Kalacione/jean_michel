@@ -1,3 +1,5 @@
+> **Spec d'architecture v2** — implémenté dans `src/`. Relocalisé depuis `DevNotes/REVOLUCION/06_proposition_v2.md`. Le code cite des numéros de section (§1.2, §6 bis, §11 ter B…) — **ne pas renuméroter**.
+
 # 06 — Architecture cible v2
 
 > Refonte de `02_architecture_cible.md` après prise en compte du retour

@@ -5,7 +5,7 @@ Tier 1 main loop (gemma, multi-turn) + nested subagents. The CLI is the
 sole consumer of the orchestrator's event stream and the sole point where
 human input is solicited.
 
-Implements the §11 ter B contract of DevNotes/REVOLUCION/06_proposition_v2.md.
+Implements the §11 ter B contract of docs/architecture_v2.md.
 """
 
 from __future__ import annotations

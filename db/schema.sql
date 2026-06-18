@@ -18,7 +18,7 @@
 -- `./jm.sh --install` ; existing v1 instances should apply the individual
 -- migrations under db/migrations/ instead.
 --
--- v2 architecture reference : DevNotes/REVOLUCION/06_proposition_v2.md
+-- v2 architecture reference : docs/architecture_v2.md
 -- =============================================================================
 CREATE TABLE sections (
   id             INTEGER PRIMARY KEY,

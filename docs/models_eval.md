@@ -50,7 +50,7 @@ remplissent ce bloc. Ce n'est pas un bug de streaming.
 - **À étendre (prévu)** : probe **E. compréhension de code** (snippet buggé → identifie le bug) pour départager
   les candidats code-router.
 
-**Bench live qualitatif** (`DevNotes/benchmark_agents.md`) : vraies tâches (recherche multi-source…), on mesure
+**Bench live qualitatif** (`docs/benchmark_agents.md`) : vraies tâches (recherche multi-source…), on mesure
 sources exploitables / hallucinations / densité / vitesse / couverture.
 
 **Critère clé** : l'orchestrateur ET les spécialistes ont besoin des **tools** — un spécialiste conclut via
@@ -65,14 +65,14 @@ confiance « medium », cf. firefight). Le `thinking` est un *plus* d'observabil
 |---|---|---|---|---|---|
 | `cogito:32b` | orchestrateur | ✅ **en prod** | éval 5/5, tool-calling fiable, rapide | pas de canal thinking (réflexions UI vides) | ce doc, commit `a00122b` |
 | `cogito:14b` | orchestrateur | ❌ écarté | 4/5 | rate le tool_call simple (B) à certaines temp | ce doc |
-| `qwen3:14b` | code, recherche | ✅ **en prod** (code) | tools+thinking, ~2× + rapide que gemma en recherche, Pareto | — | `DevNotes/benchmark_agents.md` |
+| `qwen3:14b` | code, recherche | ✅ **en prod** (code) | tools+thinking, ~2× + rapide que gemma en recherche, Pareto | — | `docs/benchmark_agents.md` |
 | `qwen3-coder:latest` | code-runner | ✅ **en prod** | conçu pour le code, contexte 128k | pas de thinking | `models.example.toml` |
-| `gemma4:26b` | reasoner/compactor/subagent | ✅ **en prod** | **multimodal**, thinking, tools, finesse éditoriale | plus lent que qwen3 sur recherche | `docs/GEMMA4.md`, `DevNotes/benchmark_agents.md` |
-| `granite4.1:8b` | dispatch | ✅ **en prod** | rapide, JSON forçable, spécialisé triage | texte-only (par design) | `DevNotes/REVOLUCION/06_proposition_v2.md` |
-| `gemma4:latest` | tier-1 (tôt) | ❌ rejeté | rapide | « trop con » : sort du junk → rework humain | `DevNotes/benchmark_agents.md` |
+| `gemma4:26b` | reasoner/compactor/subagent | ✅ **en prod** | **multimodal**, thinking, tools, finesse éditoriale | plus lent que qwen3 sur recherche | `docs/GEMMA4.md`, `docs/benchmark_agents.md` |
+| `granite4.1:8b` | dispatch | ✅ **en prod** | rapide, JSON forçable, spécialisé triage | texte-only (par design) | `docs/architecture_v2.md` |
+| `gemma4:latest` | tier-1 (tôt) | ❌ rejeté | rapide | « trop con » : sort du junk → rework humain | `docs/benchmark_agents.md` |
 | Nemotron-Orchestrator-8B Q5_K_M | orchestrateur | ❌ cassé | — | GGUF cassé : `!!!!`, crash runner HTTP 500 (→ a motivé le harness) | ce doc, commit `2bcffc8` |
-| `deepseek-r1:14b` | raisonneur (bench) | ❌ rejeté | — | **ne sait pas utiliser les tools** | `DevNotes/benchmark_agents.md` |
-| `qwen3.6:27b` | raisonneur (bench) | ❌ trop lent | — | dépasse la limite ~120s (thinking) | `DevNotes/benchmark_agents.md` |
+| `deepseek-r1:14b` | raisonneur (bench) | ❌ rejeté | — | **ne sait pas utiliser les tools** | `docs/benchmark_agents.md` |
+| `qwen3.6:27b` | raisonneur (bench) | ❌ trop lent | — | dépasse la limite ~120s (thinking) | `docs/benchmark_agents.md` |
 | famille `qwen2.5-coder` | code | ❌ retiré | — | viré du repo « à ne pas reconsidérer » (version testée) ; **le 32b n'a jamais été testé** (cf. candidats) | ce doc §4 |
 | HauhauCS Gemma4-26B uncensored Q6_K_P | reasoner/compactor | ⏳ reverté | dé-censuré sans perte, agentique | toolchain CUDA/GCC Manjaro → `llama-server` incompilable | commits `6bb85af` (adoption) / `125b0ff` (revert) |
 | OpenAI API | orchestrateur | ❌ exclu | — | boycott (décision) | ce doc §2 |
@@ -150,8 +150,8 @@ deux agents → gagnant (+ `db/schema.sql` + apply live + test). Cf. mémoire mi
 ---
 
 ## Deep-dives (détails)
-- `DevNotes/benchmark_agents.md` — bench live (recherche) chiffré.
+- `docs/benchmark_agents.md` — bench live (recherche) chiffré.
 - `docs/GEMMA4.md` — formatage de prompt + multimodal gemma4.
-- `DevNotes/gemma_variants.md` — saga HauhauCS uncensored (voir via `git show 6bb85af`).
+- saga HauhauCS gemma4 uncensored — archivé (`git show 6bb85af` / `125b0ff`).
 - `debug/eval_model.py` — le harness (probes A–D).
 - `models.example.toml` + `src/jeanmichel/config.py` — le câblage.

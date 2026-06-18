@@ -8,7 +8,7 @@ The whole module is ~400 lines, split into three layers :
 3. **Loops**        : `_run_agent_loop` (shared core), `run_main_loop`
                        (Tier 1 entry), `spawn_subagent` (Tier 2 entry).
 
-The loops follow the pseudo-code in `DevNotes/REVOLUCION/06_proposition_v2.md
+The loops follow the pseudo-code in `docs/architecture_v2.md
 §4` and `§5`. Termination conditions :
 
 - main agent : an `assistant` turn without `tool_calls`. The `content` IS

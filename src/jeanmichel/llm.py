@@ -9,7 +9,7 @@ This module exposes two APIs side by side :
 - **New `chat_messages(*, messages, tools, temperature, thinking, model?, format?)`**
   — v2 path. Accepts a full Ollama-shape `messages` array (multi-turn natif :
   `system, user, assistant, tool, assistant, tool, …`). Used by the new
-  orchestrator. Cf. DevNotes/REVOLUCION/06_proposition_v2.md §1.2 et §4.
+  orchestrator. Cf. docs/architecture_v2.md §1.2 et §4.
 
 Both methods are implemented on `OllamaClient` and `MockClient` so tests and
 production can switch independently. The mock's `script` queue feeds both

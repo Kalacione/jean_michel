@@ -1,6 +1,6 @@
 """Tool: analyze_image — let a vision model "look at" a workspace image.
 
-Workspace-centric vision (option A, cf. DevNotes/WEBUI/03) : reads the image's
+Workspace-centric vision (option A, cf. docs/image_vision.md) : reads the image's
 normalized derivative from the workspace, sends ONE transient multimodal call to
 the vision model (base64 only inside this call — never persisted in the
 conversation), and returns the model's TEXTUAL analysis as the tool result. The

@@ -1,3 +1,5 @@
+> **Capacités vision (Gemma4)** — décisions D1–D9 verrouillées. Relocalisé depuis `DevNotes/WEBUI/03_audit_image_capabilities.md`.
+
 # Audit & réflexion — Capacités image pour Jean-Michel
 
 > **Statut : décisions verrouillées (2026-05-30).** Cet audit a servi à trancher ; les

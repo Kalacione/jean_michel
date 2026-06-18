@@ -1,7 +1,7 @@
 """Disk persistence: writes artifacts (prompts, thoughts, briefings, …) with frontmatter.
 
 Also exposes the v2 persistence layer for the new orchestrator
-(cf. DevNotes/REVOLUCION/06_proposition_v2.md §6 et §6 bis) :
+(cf. docs/architecture_v2.md §6 et §6 bis) :
 
 - `messages.json` — Ollama-shape array, source of the main agent's runtime state.
 - `state.json` — scalar counters snapshot (budget, depth, search calls).
@@ -134,7 +134,7 @@ def save_messages(conv_folder: Path, messages: list[dict[str, Any]]) -> None:
     nudges) — they are re-injected fresh each turn and must never become history.
     Strips any transient ``images`` (base64 vision input) so the conversation file
     stays text-only — images live in the workspace, never in messages.json (cf.
-    DevNotes/WEBUI/03). The in-memory list is untouched (the current turn still
+    docs/image_vision.md). The in-memory list is untouched (the current turn still
     sees the injections); only the persisted copy is sanitized.
     """
     path = conv_folder / _MESSAGES_FILE
