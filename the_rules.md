@@ -1,3 +1,8 @@
-- let me get you real data instead of more theory
+- no speculation or approximation: get real data instead of more theory
 - always give the honest truth
 - be brutally honest
+- K.I.S.S. : simple solutions are always the best
+- always look for side effects before any change
+- reduce, reuse, recycle
+- know you own limits, be transparent on hypothesis
+- be a critical thinker of your own assumptions
