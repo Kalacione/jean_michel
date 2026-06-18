@@ -13,11 +13,9 @@
   modèle narre la todo en prose au lieu d'appeler l'outil.
 
 ## Bugs / à revérifier en live
-- **Re-plan impossible après reload / switch de conversation** (régression — avait été marqué FIXED, ne l'est
-  pas) : après recharge de page ou changement de conv, refaire un plan ne propose **plus** l'acceptation — ça
-  répond le plan en simple message. L'état (`plan_mode`/approbation) ou la reprise d'état déconne ; intermittent
-  (un 2ᵉ reload a fini par produire un plan p3). Conv témoin `conversations/2026-06-17_16-41_0f98aefcb2224b87a028c0dadbf332d0`.
-  → vérifier la **restauration front** de `planPending`/`plan_mode` au `select()`/reload, dérivée du référent.
+- **Plan mode : plan narré en « message »** — en mode plan, le modèle streame parfois le plan dans le canal
+  content (visible) avant `plan_write` ; jeté à l'appel d'outil (non persisté), donc cosmétique. Piste : ne pas
+  rendre le stream content en mode plan (le front connaît `isPlan` ; ou le backend ne l'émet pas).
 - **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
   garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
 - Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
@@ -54,7 +52,7 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
   d'éval (`debug/eval_model.py`), vigilance câblage (migration `model_override`) →
   [docs/models_eval.md](docs/models_eval.md) (§3.1 éval + §4 candidats/câblage).
 - **Point E — orchestrateur DÉDIÉ vs jean-michel chat** : déféré. Préférence = orchestrateur le plus déterministe
-  possible ; re-trancher sur données réelles, après le réglage du rôle code.
+  possible ; re-trancher sur données réelles, après le réglage du rôle code. Tester aussi `magistral:24b`
 
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux

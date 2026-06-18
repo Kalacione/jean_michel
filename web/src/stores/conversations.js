@@ -33,10 +33,12 @@ export const useConvStore = defineStore('conversations', () => {
   const pendingMemory = ref([]) // shadow-consolidation candidates awaiting review
   const currentMode = ref('') // task mode of the selected conversation
   const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
-  const planPending = ref(false) // a plan turn just finished → show the Approve/Refine bar
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
   const convState = ref(null) // the organizational REFERENT (state.json) : phase, plans, todos, files, subagents
+  // The Approve/Refine bar is a PURE PROJECTION of the authoritative referent (live via ReferentSnapshot,
+  // reloaded on select) — not a separate getPlan/status flag that could desync. phase=awaiting_approval ⇒ show it.
+  const awaitingApproval = computed(() => convState.value?.phase === 'awaiting_approval')
   // Plan mode only makes sense where execution happens (code) or multi-step delegation (analyse).
   const planAvailable = computed(() => currentMode.value === 'code' || currentMode.value === 'analyse')
 
@@ -117,7 +119,6 @@ export const useConvStore = defineStore('conversations', () => {
     currentMode.value = meta?.mode || ''
     // Plan-first : default to Plan for code & analyse (sticky thereafter).
     planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
-    planPending.value = false
     plan.value = null
     convState.value = null
     streamingMsg = null
@@ -142,14 +143,8 @@ export const useConvStore = defineStore('conversations', () => {
     if (currentId.value !== id) return // switched again mid-load → don't clobber the newer conv
     messages.value = chatBubbles(loaded)
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
-    plan.value = pl.plan || null // rich plan markdown survives reload (Approve bar / editor)
-    convState.value = st // the referent (phase/plans/todos/files/subagents) for the UI summary strip
-    // Approve/Refine bar = a plan still awaiting approval. Source of truth: the plan-level
-    // status (proposed → pending), DECOUPLED from the todo and from the (sticky) planMode
-    // selector + state.plan_mode. Legacy convs (no status sidecar) fall back to the old heuristic.
-    planPending.value = pl.status
-      ? pl.status === 'proposed'
-      : !!(st?.plan_mode && td?.items?.length)
+    plan.value = pl.plan || null // rich plan markdown survives reload (shown in the Approve bar / editor)
+    convState.value = st // the referent (phase/plans/todos/files/subagents) — drives the chips AND the Approve bar
     // An already-accepted plan → default the selector to Edit so a continuation message
     // executes/continues instead of silently re-planning (the reload re-arm bug).
     if (pl.status === 'accepted') planMode.value = false
@@ -210,13 +205,9 @@ export const useConvStore = defineStore('conversations', () => {
           messages.value.push({ role: 'assistant', content: m.answer })
         }
         liveThinking.value = ''
-        // Surface the Approve/Refine bar ONLY if a plan was actually authored and awaits
-        // approval (status 'proposed') — never on an aborted/no-plan turn (a plain
-        // "was a plan turn" flag showed an EMPTY bar after a Stop). Truth = the persisted plan.
-        api.getPlan(id).then(r => {
-          plan.value = r.plan || null
-          planPending.value = r.status === 'proposed'
-        }).catch(() => { planPending.value = false })
+        // Load the plan markdown for the Approve bar's CONTENT. The bar's VISIBILITY is driven by the
+        // referent (convState.phase, pushed live by the end-of-turn ReferentSnapshot) — not by this fetch.
+        api.getPlan(id).then(r => { plan.value = r.plan || null }).catch(() => {})
         // convState is already up to date : the orchestrator pushed an authoritative end-of-turn
         // ReferentSnapshot over the WS just before {final} (no separate best-effort GET needed).
         refresh() // re-order the list (last interaction first) + pick up auto-title
@@ -260,7 +251,8 @@ export const useConvStore = defineStore('conversations', () => {
     trace.value = []
     dispatch.value = null
     error.value = ''
-    planPending.value = false // a new turn supersedes any pending choice bar
+    // A new turn supersedes any pending approval : the optimistic phase below (planning/executing)
+    // moves convState.phase off "awaiting_approval", so the Approve bar hides immediately.
     // Optimistic phase so the referent strip reflects THIS turn immediately (the authoritative
     // phase is refetched at `final`) : a new plan turn resets stale "Répondu", an execute turn
     // shows "En cours" right away instead of the previous turn's phase.
@@ -374,7 +366,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, planPending, plan, planEditorOpen, convState,
+    currentMode, planMode, planAvailable, awaitingApproval, plan, planEditorOpen, convState,
     refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,

@@ -203,7 +203,7 @@
     </v-dialog>
 
     <!-- Plan presented → approve (execute in a fresh Edit turn) or type feedback to refine. -->
-    <div v-if="conv.planPending" class="px-3 pt-2">
+    <div v-if="conv.awaitingApproval" class="px-3 pt-2">
       <div class="d-flex align-center ga-2">
         <v-icon color="primary" icon="mdi-clipboard-check-outline" size="18" />
         <span class="text-body-2 text-medium-emphasis">
