@@ -274,7 +274,7 @@ Création d'un compte web :
 ./jm.sh --create-user alice           # prompt pour le password
 ```
 
-## Capacités image (livré)
+## Capacités image
 
 Audit complet dans
 [docs/image_vision.md](docs/image_vision.md).
@@ -936,37 +936,26 @@ jeanmichel/
     └── test_smoke_e2e.py     # skipped sans Ollama (JEANMICHEL_SMOKE_E2E=1)
 ```
 
-## État
+## Composants & capacités (pour contextualiser)
 
-Bascule v2 complétée (8 phases), mergée sur `main`. Config modèle via `models.toml` : orchestrateur (`main`) sur
-**cogito:32b**, dispatcher sur granite4.1:8b, code-router sur qwen3:14b, 4 reasoners +
-compactor/subagent sur gemma4:26b, 2 workers code sur qwen3-coder (pattern
-fetcher/runner). **835 tests v2 verts.**
+**La chaîne** : un dispatcher Tier 0 (`granite4.1:8b`) classe chaque tour ALEXA (réponse directe) ou DEEP →
+l'orchestrateur Tier 1 (`main`, `cogito:32b`) répond ou délègue → des subagents Tier 2 (délégation imbriquée
+jusqu'à `MAX_DEPTH=5`). La boucle de contrôle est **Python + hooks déterministes** — le LLM ne pilote pas le flux.
 
-**Cœur stabilisé** : CLI multi-tour en tous modes, `--resume`, `--list-conv`,
-dispatcher Tier 0 opérationnel via granite, main loop Tier 1 multi-turn
-natif, subagents Tier 2 avec délégation imbriquée jusqu'à `MAX_DEPTH=5`,
-mémoire long-terme utilisateur (scopée par user), compaction 4 niveaux,
-sandbox audit JSONL, Markdown cleanup pour TTS, configuration tunable
-sans recompile via `config.py` + `.env` + CLI flags.
+**Surfaces** : CLI multi-tour (modes `analyse` / `chat` / `vocal` / `code`, `--resume`, `--list-conv`) et
+**frontal web** (API FastAPI multi-utilisateur, streaming WebSocket des events d'orchestration, SPA Vue 3 /
+Vuetify : chat, drawer conversations, workspace, mémoire, profil, TTS navigateur). Le daemon Python tourne sur
+l'hôte ; seul le front est conteneurisé (nginx).
 
-**Frontal web livré** (sprints S0→S7 + M2→M3, cf. branche
-`voice_out` historique) : API FastAPI multi-utilisateur, WebSocket
-streaming des events orchestrateur, SPA Vue 3 / Vuetify avec
-auth + chat + drawer conversations + workspace UI + memory CRUD +
-profile + TTS navigateur. Conteneurisé côté front uniquement (nginx),
-daemon Python à la main côté hôte.
+**Capacités** :
+- **Mémoire long-terme** scopée (world / user / project / tool), isolée par utilisateur, + consolidation shadow.
+- **Compaction** du contexte à 4 niveaux ; budget partitionné system / working / output.
+- **Sandbox** Docker (`bash_sandbox`, `--network=none`, audit JSONL) ; workspace par conversation (quota).
+- **Images** : `analyze_image` délègue à `gemma4` multimodal (jamais de base64 dans `messages.json`) ; `image_search`.
+- **Mode code** : décomposition en TODO + boucle PDCA déléguant à des workers `qwen3-coder` (py / node) ;
+  intervention sur un vrai repo dans un worktree git isolé.
+- **Voix** : réponses synthétisées via Piper TTS en mode vocal.
 
-**Capacités image livrées** (migrate_115→119) : endpoint authed
-`/workspace/image` (vrai MIME + blob pattern), outil `image_search`
-(SearXNG), outil `analyze_image(path, question)` vers gemma4 multimodal
-(image ⇒ DEEP forcé, jamais de base64 persisté dans `messages.json`),
-affichage front (grille `v-img` + miniatures workspace + lightbox).
-
-**Orchestrateur codeur livré** (mode `code`, migrate_120→123) : main agent `qwen3:14b`
-qui décompose en TODO plat (`todo_write`) et pilote une boucle PDCA sur des
-workers `qwen3-coder` (code-runner py-alpine + code-runner-node node-alpine,
-code-fetcher pour le lookup). Sprints S1 (infra TODO) + S2 (wiring modèles +
-paradigme PDCA) + S2.5 (mode code), plus les renforts tirés du fork Claude
-Code : retry sans thinking (R5), reaper de sandbox (R1, `--reap-sandboxes`),
-tools fichiers workspace (R4), worker node (R2).
+**À savoir** : tout est **tunable sans recompile** (`models.toml` + `.env` + flags CLI) ; l'orchestrateur est
+volontairement déterministe ; les **paradigmes** (comportements d'agents, en DB) sont strictement
+model-agnostic — aucun prompt ne nomme un modèle.
