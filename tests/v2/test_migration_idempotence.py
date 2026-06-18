@@ -85,6 +85,11 @@ def v2_migrated_db(tmp_path: Path):
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_146_apply_dont_describe.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_147_router_delegates_web_search.sql")
     _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_148_router_planning_sobriety.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_149_plan_write.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_150_pdca_act_todo_update.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_151_conversation_lineage.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_152_drop_world_scope_add_importance.sql")
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_153_pending_consolidation.sql")
     yield conn
     conn.close()
 
@@ -136,6 +141,7 @@ def test_v2_tables_are_present(v2_migrated_db):
         "paradigms",
         "paradigm_modes",
         "memory",
+        "pending_consolidation",
         "projects",
     }
     missing = expected - tables
@@ -181,8 +187,8 @@ def test_memory_indices_present(v2_migrated_db):
             "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory'"
         ).fetchall()
     }
-    # Partial unique indexes per scope + the recency index.
-    assert {"ux_memory_user", "ux_memory_world", "idx_memory_modified"} <= indices
+    # Partial unique indexes per scope + the recency index (ux_memory_world dropped in migrate_152).
+    assert {"ux_memory_user", "idx_memory_modified"} <= indices
 
 
 def test_new_paradigms_present_and_active(v2_migrated_db):
@@ -917,3 +923,84 @@ def test_code_router_is_leaner_than_jean_michel(v2_consolidated_db):
             "WHERE a.code=?", (code,)
         ).fetchone()["c"]
     assert n_bound("code-router") < n_bound("jean-michel")  # 15 vs 46
+
+
+# ---- migrate_152 : drop `world` scope + add `importance` (memory rebuild) ----
+
+
+def test_migrate_152_collapses_world_and_adds_importance(tmp_path):
+    """migrate_152 rebuilds `memory` : drops the `world` scope (rows PRESERVED →
+    user/cli, codes de-collided on clash) and adds `importance` (default 3). Data
+    and the FTS index survive the rebuild."""
+    db_path = tmp_path / "m152.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    # Minimal pre-152 state : cli user + the 4-scope memory table + FTS + triggers.
+    conn.executescript(
+        """
+        CREATE TABLE web_users (id INTEGER PRIMARY KEY, username TEXT);
+        INSERT INTO web_users (id, username) VALUES (1, 'cli');
+        CREATE TABLE projects (id INTEGER PRIMARY KEY);
+        CREATE TABLE memory (
+          id INTEGER PRIMARY KEY,
+          scope TEXT NOT NULL CHECK (scope IN ('world','user','project','tool')),
+          user_id INTEGER, project_id INTEGER, tool_code TEXT,
+          code TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
+          content TEXT NOT NULL, created_at TEXT NOT NULL, modified_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX ux_memory_world ON memory(code) WHERE scope='world';
+        CREATE UNIQUE INDEX ux_memory_user ON memory(user_id, code) WHERE scope='user';
+        CREATE VIRTUAL TABLE memory_fts USING fts5(
+          title, description, content, content='memory', content_rowid='id');
+        CREATE TRIGGER memory_ai AFTER INSERT ON memory BEGIN
+          INSERT INTO memory_fts(rowid,title,description,content)
+          VALUES (new.id,new.title,new.description,new.content);
+        END;
+        CREATE TRIGGER memory_ad AFTER DELETE ON memory BEGIN
+          INSERT INTO memory_fts(memory_fts,rowid,title,description,content)
+          VALUES ('delete',old.id,old.title,old.description,old.content);
+        END;
+        CREATE TRIGGER memory_au AFTER UPDATE ON memory BEGIN
+          INSERT INTO memory_fts(memory_fts,rowid,title,description,content)
+          VALUES ('delete',old.id,old.title,old.description,old.content);
+          INSERT INTO memory_fts(rowid,title,description,content)
+          VALUES (new.id,new.title,new.description,new.content);
+        END;
+        INSERT INTO memory (scope,user_id,project_id,tool_code,code,title,description,content,created_at,modified_at)
+          VALUES ('world',NULL,NULL,NULL,'kiss','KISS','keep it simple','simple wins','2026-01-01','2026-01-01');
+        INSERT INTO memory (scope,user_id,project_id,tool_code,code,title,description,content,created_at,modified_at)
+          VALUES ('user',1,NULL,NULL,'likes-rust','Rust','likes rust','prefers rust','2026-01-01','2026-01-01');
+        INSERT INTO memory (scope,user_id,project_id,tool_code,code,title,description,content,created_at,modified_at)
+          VALUES ('world',NULL,NULL,NULL,'likes-rust','Dup','clashing code','dup body','2026-01-01','2026-01-01');
+        """
+    )
+    _apply_sql(conn, _ROOT / "db" / "migrations" / "migrate_152_drop_world_scope_add_importance.sql")
+
+    # No world rows remain.
+    assert conn.execute("SELECT COUNT(*) AS c FROM memory WHERE scope='world'").fetchone()["c"] == 0
+    # The non-clashing world entry became a user(cli) entry, content preserved.
+    row = conn.execute("SELECT scope, user_id, content FROM memory WHERE code='kiss'").fetchone()
+    assert row["scope"] == "user" and row["user_id"] == 1 and row["content"] == "simple wins"
+    # The clashing world 'likes-rust' was de-collided (suffixed) → BOTH survive as user rows.
+    n_rust = conn.execute(
+        "SELECT COUNT(*) AS c FROM memory WHERE scope='user' AND code LIKE 'likes-rust%'"
+    ).fetchone()["c"]
+    assert n_rust == 2
+    # importance column added (default 3 for every migrated row).
+    imps = {r["importance"] for r in conn.execute("SELECT importance FROM memory")}
+    assert imps == {3}
+    # ux_memory_world dropped ; ux_memory_user kept.
+    idx = {
+        r["name"] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory'"
+        )
+    }
+    assert "ux_memory_world" not in idx and "ux_memory_user" in idx
+    # FTS survived the rebuild.
+    hits = {
+        r["code"] for r in conn.execute(
+            "SELECT m.code FROM memory_fts f JOIN memory m ON m.id=f.rowid WHERE memory_fts MATCH 'rust'"
+        )
+    }
+    assert "likes-rust" in hits
+    conn.close()

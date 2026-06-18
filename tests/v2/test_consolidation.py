@@ -97,7 +97,7 @@ def test_assistant_only_grounding_rejected(tmp_db_v2):
     """Anti-GIGO : a quote that appears ONLY in the ASSISTANT's own message is dropped
     (the model must not memorize its own, possibly hallucinated, claims)."""
     llm = FakeLLM({"candidates": [{
-        "scope": "world", "code": "grain-volume", "title": "Grain volume",
+        "scope": "user", "code": "grain-volume", "title": "Grain volume",
         "description": "d", "content": "c",
         "grounding_quote": "a semolina grain is about 0.04 cubic centimeters",  # assistant said it
     }]})
@@ -112,7 +112,7 @@ def test_assistant_only_grounding_rejected(tmp_db_v2):
 def test_tool_result_grounding_kept(tmp_db_v2):
     """A quote from a TOOL result (a real source) is accepted."""
     llm = FakeLLM({"candidates": [{
-        "scope": "world", "code": "py314-release", "title": "Python 3.14",
+        "scope": "user", "code": "py314-release", "title": "Python 3.14",
         "description": "d", "content": "c",
         "grounding_quote": "Python 3.14 was released in October 2025",
     }]})
@@ -161,41 +161,42 @@ def test_similar_entry_surfaced_as_review(tmp_db_v2):
 # ---- pending persistence + apply ------------------------------------------
 
 
-def test_pending_roundtrip_and_dedup(tmp_db_v2, conv_folder):
+def _mk_conv(cid: str) -> None:
+    """Insert a minimal conversations row so pending_consolidation's FK is satisfied."""
+    with db_connect() as conn:
+        conn.execute(
+            "INSERT INTO conversations (id, folder_path, status, mode, created_at, modified_at) "
+            "VALUES (?, '/tmp/x', 'active', 'chat', datetime('now'), datetime('now'))",
+            (cid,),
+        )
+
+
+def test_pending_roundtrip_and_dedup(tmp_db_v2):
+    _mk_conv("cpend")
     c1 = {"scope": "user", "code": "a", "title": "t", "description": "d", "content": "c",
           "grounding_quote": "q", "tool_code": None, "project_id": None,
           "suggested_action": "new", "existing_matches": []}
-    consolidation.add_pending(conv_folder, [c1])
-    # Re-adding the same key replaces (no duplicate).
-    consolidation.add_pending(conv_folder, [{**c1, "title": "t2"}])
-    pending = consolidation.load_pending(conv_folder)
+    consolidation.add_pending("cpend", [c1])
+    # Re-adding the same key refreshes the pending row (no duplicate).
+    consolidation.add_pending("cpend", [{**c1, "title": "t2"}])
+    pending = consolidation.load_pending("cpend")
     assert len(pending) == 1
     assert pending[0]["title"] == "t2"
-    consolidation.clear_pending(conv_folder)
-    assert consolidation.load_pending(conv_folder) == []
+    consolidation.clear_pending("cpend")
+    assert consolidation.load_pending("cpend") == []
 
 
-def test_remove_pending_drops_by_key(tmp_db_v2, conv_folder):
+def test_remove_pending_drops_by_key(tmp_db_v2):
+    _mk_conv("crem")
     a = {"scope": "user", "code": "a", "title": "t", "description": "d", "content": "c",
          "grounding_quote": "q", "tool_code": None, "project_id": None}
     b = {**a, "code": "b"}
-    consolidation.add_pending(conv_folder, [a, b])
-    remaining = consolidation.remove_pending(conv_folder, a)
+    consolidation.add_pending("crem", [a, b])
+    remaining = consolidation.remove_pending("crem", a)  # dismiss a
     assert [c["code"] for c in remaining] == ["b"]
-    assert [c["code"] for c in consolidation.load_pending(conv_folder)] == ["b"]
-    # Idempotent : removing an absent candidate is a no-op (the human reviewed it once).
-    assert [c["code"] for c in consolidation.remove_pending(conv_folder, a)] == ["b"]
-
-
-def test_reflection_due_tracks_watermark(tmp_path):
-    # Never studied → any content is due.
-    assert consolidation.reflection_due(tmp_path, 4) is True
-    consolidation.mark_studied(tmp_path, 4)
-    # Studied up to 4 → not due at 4 ; due again when the conversation CONTINUES.
-    assert consolidation.reflection_due(tmp_path, 4) is False
-    assert consolidation.reflection_due(tmp_path, 6) is True
-    consolidation.mark_studied(tmp_path, 6)
-    assert consolidation.reflection_due(tmp_path, 6) is False
+    assert [c["code"] for c in consolidation.load_pending("crem")] == ["b"]
+    # Idempotent : dismissing an already-dismissed candidate is a no-op.
+    assert [c["code"] for c in consolidation.remove_pending("crem", a)] == ["b"]
 
 
 def test_apply_save_and_extend(tmp_db_v2):
@@ -230,7 +231,7 @@ def test_run_shadow_stashes_pending(tmp_db_v2, conv_folder):
     }]})
     new = consolidation.run_shadow(conv_folder, "cshadow", llm=llm, user_id=_uid())
     assert len(new) == 1
-    assert len(consolidation.load_pending(conv_folder)) == 1
+    assert len(consolidation.load_pending("cshadow")) == 1
 
 
 def test_run_shadow_best_effort_on_bad_llm(tmp_db_v2, conv_folder):

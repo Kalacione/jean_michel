@@ -79,7 +79,7 @@ def create_app() -> Any:
     from ..service import memory as memory_svc
     from ..service import project as project_svc
     from ..service import workspace as workspace_svc
-    from . import auth, executor, notifications, project_build, reflection
+    from . import auth, executor, notifications, project_build
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app):
@@ -94,19 +94,11 @@ def create_app() -> Any:
         # Connect to MCP servers at startup (off-loop : startup() blocks on a
         # bounded connect). No-op when MCP is off/unconfigured. Best-effort.
         await asyncio.to_thread(mcp_client.startup)
-        # Background memory-reflection daemon (sleep-time consolidation) : studies
-        # conversations off the turn path when idle. Cancelled on shutdown.
-        reflection_task = (
-            asyncio.create_task(reflection.reflection_loop())
-            if config.REFLECTION_ENABLED else None
-        )
+        # Memory reflection now fires at the END of each deep turn (executor), not on a
+        # timer — no background daemon to register here.
         try:
             yield
         finally:
-            if reflection_task is not None:
-                reflection_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await reflection_task
             await asyncio.to_thread(mcp_client.shutdown)
             # Stop all jm-sandbox-* / jm-repo-* containers on clean shutdown.
             await asyncio.to_thread(reap_sandboxes)
@@ -290,21 +282,24 @@ def create_app() -> Any:
     def get_state(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
         return {"state": persistence.load_state(Path(conv["folder_path"]))}
 
-    # ---- shadow-consolidation candidates (memory suggestions awaiting review) ----
-    # Persist across reload/switch : the bg consolidation stashes to pending_memory.json
-    # but the live notif is lost if the client leaves. GET reloads the set ; dismiss
-    # prunes the reviewed one (saved OR ignored) so it doesn't resurrect on reload.
+    # ---- consolidation candidates (memory/paradigm suggestions awaiting review) ----
+    # Stashed in the pending_consolidation DB table by the end-of-turn reflection beat
+    # (+ the propose_memory tool). GET reloads the pending set ; dismiss marks the reviewed
+    # one dismissed so it doesn't resurface.
 
     @app.get("/api/conversations/{conversation_id}/pending-memory")
-    def get_pending_memory(conv: Any = Depends(auth.require_conversation_owner)) -> dict[str, Any]:
-        return {"pending_memory": consolidation_svc.load_pending(Path(conv["folder_path"]))}
+    def get_pending_memory(
+        conversation_id: str, conv: Any = Depends(auth.require_conversation_owner)
+    ) -> dict[str, Any]:
+        return {"pending_memory": consolidation_svc.load_pending(conversation_id)}
 
     @app.post("/api/conversations/{conversation_id}/pending-memory/dismiss")
     def dismiss_pending_memory(
+        conversation_id: str,
         candidate: dict[str, Any],
         conv: Any = Depends(auth.require_conversation_owner),
     ) -> dict[str, Any]:
-        return {"pending_memory": consolidation_svc.remove_pending(Path(conv["folder_path"]), candidate)}
+        return {"pending_memory": consolidation_svc.remove_pending(conversation_id, candidate)}
 
     # ---- living plan (todo.json) — read + human edit (plan mode) ----------
 
@@ -615,8 +610,6 @@ def create_app() -> Any:
     def _mem_target(
         scope: str, user_id: int, project_id: int | None, tool_code: str | None
     ) -> dict[str, Any]:
-        if scope == "world":
-            return {}
         if scope == "user":
             return {"user_id": user_id}
         if scope == "project":

@@ -1,20 +1,21 @@
-"""End-of-turn memory consolidation — the *shadow* pass.
+"""Memory consolidation — the end-of-turn reflection beat.
 
-Runs AFTER the response is delivered (while the human reads/thinks). The LLM
-proposes candidate memories from the conversation ; every proposal is then
-verified DETERMINISTICALLY before a human ever sees it :
+``propose()`` runs at the completion of a DEEP turn (the live reflection beat, fired
+by the CLI thread / the API executor — never a wall-clock timer). The LLM proposes
+candidate memories from the fresh exchange ; every proposal is verified
+DETERMINISTICALLY before a human ever sees it :
 
   1. **Grounding** — each candidate must carry a ``grounding_quote`` that is a
-     verbatim (whitespace/case-normalized) excerpt of the conversation. A
-     candidate whose quote is not found is dropped. This is the anti-hallucination
-     gate : the LLM cannot invent a fact "to please" without a real source.
+     verbatim (whitespace/case-normalized) excerpt of a USER message or TOOL result.
+     A candidate whose quote is not found is dropped — the anti-hallucination gate
+     (the LLM cannot invent a fact "to please" without a real source).
   2. **Dedup / contradiction** — for each survivor we run a deterministic FTS
      search in its target scope and attach the existing matches (BM25-ranked),
      so the human can *extend* an existing entry rather than duplicate it.
 
-Nothing is ever written here. Candidates accumulate in ``pending_memory.json``
-in the conversation folder ; the CLI / web review UI applies the human's choice
-via ``service.memory``.
+Nothing is ever written here. Candidates accumulate in the ``pending_consolidation``
+DB table (per conversation) ; the CLI ``/memo`` / web review UI applies the human's
+choice via ``service.memory``.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,6 @@ from . import memory
 
 _log = logging.getLogger(__name__)
 
-PENDING_FILE = "pending_memory.json"
 MAX_CANDIDATES = 6
 MIN_QUOTE_CHARS = 12          # too-short quotes can't be reliably grounded
 MAX_TRANSCRIPT_CHARS = 8_000  # cap the transcript fed to the LLM
@@ -40,7 +41,7 @@ CONSOLIDATION_SYSTEM_PROMPT = """You extract durable, reusable facts worth remem
 
 Rules:
 - Only propose a fact that is DURABLE and reusable across future conversations. Skip one-off task details, transient state, and anything already obvious.
-- `scope`: "user" (a stable fact/preference about the human), "project" (a decision/constraint of the current project), "tool" (a reusable lesson on how to use a tool — set `tool_code`), or "world" (a globally useful fact).
+- `scope`: "user" (a stable fact/preference about the human), "project" (a decision/constraint of the current project), or "tool" (a reusable lesson on how to use a tool — set `tool_code`).
 - `grounding_quote`: a VERBATIM excerpt copied from a USER message or a TOOL result that supports the fact — NEVER from the assistant's own statements (those may be unverified). If you cannot quote a user/tool source, do not propose it. Never paraphrase the quote.
 - `code`: a short kebab-case slug (e.g. "prefers-terse-answers"). No spaces.
 - Keep it concise: title <= 60 chars, description <= 150, content <= 1000.
@@ -92,8 +93,6 @@ def _clamp(s: str, n: int) -> str:
 
 def _target_for(scope: str, *, project_id: int | None, tool_code: str | None) -> dict[str, Any] | None:
     """Concrete service target for a scope, or None if it can't be satisfied here."""
-    if scope == "world":
-        return {}
     if scope == "user":
         return {}  # filled with user_id by the caller
     if scope == "project":
@@ -210,85 +209,76 @@ def propose(
     return out
 
 
-# ---- pending persistence (per conversation) -------------------------------
+# ---- pending persistence (DB table pending_consolidation, per conversation) ----
 
-def _pending_path(conv_folder: Path) -> Path:
-    return conv_folder / PENDING_FILE
-
-
-def load_pending(conv_folder: Path) -> list[dict[str, Any]]:
-    path = _pending_path(conv_folder)
-    if not path.exists():
-        return []
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return []
+def _now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def save_pending(conv_folder: Path, candidates: list[dict[str, Any]]) -> None:
-    persistence._atomic_write_text(
-        _pending_path(conv_folder), json.dumps(candidates, ensure_ascii=False, indent=2)
-    )
+def _dedup_key(c: dict[str, Any]) -> str:
+    """Stable upsert key. fact → scope/code/target ; rule → section/category/title-slug."""
+    if c.get("kind") == "rule":
+        slug = re.sub(r"[^a-z0-9]+", "-", (c.get("title") or "").lower()).strip("-")
+        return f"rule/{c.get('section_code') or ''}/{c.get('category_code') or ''}/{slug}"
+    return f"fact/{c.get('scope')}/{c.get('code')}/{c.get('project_id')}/{c.get('tool_code')}"
 
 
-def _key(c: dict[str, Any]) -> tuple:
-    return (c.get("scope"), c.get("code"), c.get("project_id"), c.get("tool_code"))
+def load_pending(conv_id: str) -> list[dict[str, Any]]:
+    """The conversation's candidates still awaiting review (status='pending'), oldest first."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT payload FROM pending_consolidation "
+            "WHERE conversation_id=? AND status='pending' ORDER BY id",
+            (conv_id,),
+        ).fetchall()
+    return [json.loads(r["payload"]) for r in rows]
 
 
-def add_pending(conv_folder: Path, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Merge ``new`` into the pending file (dedup by scope/code/target), newest wins."""
-    existing = load_pending(conv_folder)
-    by_key = {_key(c): c for c in existing}
-    for c in new:
-        by_key[_key(c)] = c
-    merged = list(by_key.values())
-    save_pending(conv_folder, merged)
-    return merged
+def add_pending(conv_id: str, new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Upsert candidates (dedup by (conv, dedup_key)). A *pending* row is refreshed ; an
+    already applied/dismissed one is NOT resurfaced (terminal — the WHERE guards it).
+    Returns the current pending set."""
+    if new:
+        now = _now()
+        with db.connect() as conn:
+            for c in new:
+                conn.execute(
+                    "INSERT INTO pending_consolidation "
+                    "(conversation_id, kind, dedup_key, payload, status, created_at) "
+                    "VALUES (?, ?, ?, ?, 'pending', ?) "
+                    "ON CONFLICT(conversation_id, dedup_key) DO UPDATE SET "
+                    "payload=excluded.payload, kind=excluded.kind, created_at=excluded.created_at "
+                    "WHERE status='pending'",
+                    (conv_id, c.get("kind", "fact"), _dedup_key(c),
+                     json.dumps(c, ensure_ascii=False), now),
+                )
+    return load_pending(conv_id)
 
 
-def remove_pending(conv_folder: Path, candidate: dict[str, Any]) -> list[dict[str, Any]]:
-    """Drop the candidate sharing ``candidate``'s key (scope/code/target) from the
-    pending file and return what remains. Idempotent (no-op if already gone). Called
-    when the human reviews a candidate (saved OR dismissed) so it doesn't resurrect on
-    reload — the web mirror of the CLI's prune."""
-    target = _key(candidate)
-    remaining = [c for c in load_pending(conv_folder) if _key(c) != target]
-    save_pending(conv_folder, remaining)
-    return remaining
-
-
-def clear_pending(conv_folder: Path) -> None:
-    _pending_path(conv_folder).unlink(missing_ok=True)
-
-
-STATE_FILE = "consolidation_state.json"
-
-
-def _studied_msgs(conv_folder: Path) -> int:
-    """Message count at the last successful study (the reflection watermark). 0 if none."""
-    try:
-        return int(json.loads((conv_folder / STATE_FILE).read_text(encoding="utf-8")).get("studied_msgs", 0))
-    except Exception:  # noqa: BLE001 — missing/corrupt → never studied
-        return 0
-
-
-def reflection_due(conv_folder: Path, msg_count: int) -> bool:
-    """True if the conversation has NEW content since its last study — i.e. its current
-    message count exceeds the watermark. A studied conversation that CONTINUES becomes due
-    again (no permanent 'done' state). Pure read."""
-    return msg_count > _studied_msgs(conv_folder)
-
-
-def mark_studied(conv_folder: Path, msg_count: int) -> None:
-    """Advance the watermark to ``msg_count`` after a completed reflection pass (the conv
-    is studied up to that message). Best-effort (never raises)."""
-    try:
-        persistence._atomic_write_text(
-            conv_folder / STATE_FILE, json.dumps({"studied_msgs": int(msg_count)})
+def _set_status(conv_id: str, candidate: dict[str, Any], status: str) -> list[dict[str, Any]]:
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE pending_consolidation SET status=? WHERE conversation_id=? AND dedup_key=?",
+            (status, conv_id, _dedup_key(candidate)),
         )
-    except Exception as exc:  # noqa: BLE001
-        _log.debug("consolidation watermark write failed: %s", exc)
+    return load_pending(conv_id)
+
+
+def remove_pending(conv_id: str, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mark a candidate dismissed (the human reviewed + skipped it). Idempotent. Returns
+    what remains pending."""
+    return _set_status(conv_id, candidate, "dismissed")
+
+
+def mark_applied(conv_id: str, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mark a candidate applied (its content was written to memory/paradigms)."""
+    return _set_status(conv_id, candidate, "applied")
+
+
+def clear_pending(conv_id: str) -> None:
+    """Delete ALL queued candidates for a conversation."""
+    with db.connect() as conn:
+        conn.execute("DELETE FROM pending_consolidation WHERE conversation_id=?", (conv_id,))
 
 
 # ---- shadow entry point (called by the CLI / API after the response) ------
@@ -301,7 +291,8 @@ def run_shadow(
     user_id: int | None = None,
     model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Self-contained shadow pass : propose + stash to pending. Returns NEW candidates.
+    """End-of-turn reflection beat : propose + stash to the pending queue (DB). Returns NEW
+    candidates.
 
     Best-effort : never raises (the turn already succeeded). Resolves the
     conversation's project + the memory owner itself, so callers only inject
@@ -319,7 +310,7 @@ def run_shadow(
                 conn, messages, llm=llm, user_id=uid, project_id=project_id, model=model
             )
         if candidates:
-            add_pending(conv_folder, candidates)
+            add_pending(conv_id, candidates)
         return candidates
     except Exception as exc:  # noqa: BLE001
         _log.debug("shadow consolidation failed: %s", exc)
@@ -358,3 +349,71 @@ def apply_candidate(
     saved = memory.save(conn, scope=scope, code=candidate["code"],
                         title=t, description=d, content=ct, **target)
     return {"action": "save", **saved}
+
+
+# ---- in-turn capture (the propose_memory tool) ----------------------------
+
+def add_candidate(
+    conv_id: str,
+    *,
+    scope: str,
+    code: str,
+    title: str,
+    description: str,
+    content: str,
+    user_id: int,
+    project_id: int | None = None,
+    tool_code: str | None = None,
+    grounding_quote: str = "",
+    importance: int = 3,
+) -> dict[str, Any]:
+    """Validate + dedup + stash ONE agent-proposed fact candidate (the propose_memory tool).
+
+    Deterministic (no LLM) : same dedup as ``propose`` (existing entry → 'extend' ;
+    FTS matches → 'review' ; else 'new'). NOTHING is written to memory — the candidate
+    lands in the pending queue for human review. Raises ``memory.MemoryOpError`` on an
+    invalid scope / unsatisfiable target / missing fields. Returns the stored candidate."""
+    if scope not in memory.VALID_SCOPES:
+        raise memory.MemoryOpError(
+            "invalid_scope", f"scope must be one of {sorted(memory.VALID_SCOPES)}.", received=scope
+        )
+    code = (code or "").strip()
+    if not code or " " in code:
+        raise memory.MemoryOpError(
+            "invalid_code", "code is required and must be kebab-case (no spaces)."
+        )
+    title = _clamp(title, memory.MAX_TITLE_CHARS)
+    description = _clamp(description, memory.MAX_DESCRIPTION_CHARS)
+    content = _clamp(content, memory.MAX_CONTENT_CHARS)
+    if not (title and description and content):
+        raise memory.MemoryOpError("invalid_args", "title, description and content are required.")
+
+    target = _target_for(scope, project_id=project_id, tool_code=tool_code)
+    if target is None:
+        raise memory.MemoryOpError(
+            "invalid_target", f"scope '{scope}' can't be satisfied in this conversation.", scope=scope
+        )
+    if scope == "user":
+        target = {"user_id": user_id}
+    imp = max(1, min(5, int(importance or 3)))
+
+    with db.connect() as conn:
+        existing = memory.recall(conn, scope=scope, code=code, **target)
+        try:
+            matches = memory.search(conn, query=f"{title} {description}", scope=scope, limit=3, **target)
+        except memory.MemoryOpError:
+            matches = []
+    action = "extend" if existing is not None else ("review" if matches else "new")
+
+    candidate = {
+        "kind": "fact", "scope": scope, "code": code, "title": title,
+        "description": description, "content": content,
+        "grounding_quote": grounding_quote.strip(), "tool_code": tool_code,
+        "project_id": project_id if scope == "project" else None,
+        "importance": imp, "suggested_action": action,
+        "existing_matches": [
+            {k: m.get(k) for k in ("code", "title", "description", "score")} for m in matches
+        ],
+    }
+    add_pending(conv_id, [candidate])
+    return candidate

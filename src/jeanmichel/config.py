@@ -339,13 +339,12 @@ WALL_CLOCK_TURN_SECONDS = _int_env("JEANMICHEL_TURN_WALL_CLOCK", 900)
 # ask_human prompt before giving up and letting the orchestrator conclude (S4).
 ASK_HUMAN_TIMEOUT_SECONDS = _int_env("JEANMICHEL_ASK_HUMAN_TIMEOUT", 300)
 
-# Background memory reflection (sleep-time consolidation). A periodic daemon (registered
-# in the API lifespan) consolidates conversations OUTSIDE the turn path — never consuming
-# a turn — when the system is idle (serialised on the GPU turn_lock) and only for convs
-# with NEW content since the last study (watermark). Replaces the old per-turn pass.
+# Reflection beat : a small-model pass that proposes durable memory/paradigm candidates at
+# the END of each DEEP turn (live, fired by the CLI thread / API executor — never a timer).
+# REFLECTION_ENABLED gates it ; REFLECTION_MODEL picks the (cheap) model. Candidates land in
+# the pending_consolidation queue for human review.
 REFLECTION_ENABLED = os.environ.get("JEANMICHEL_REFLECTION_ENABLED", "1").strip().lower() not in ("", "0", "false", "off", "no")
-REFLECTION_INTERVAL_SECONDS = _int_env("JEANMICHEL_REFLECTION_INTERVAL", 900)  # 15 min
-REFLECTION_MAX_CONVS_PER_CYCLE = _int_env("JEANMICHEL_REFLECTION_MAX_CONVS", 20)
+REFLECTION_MODEL = os.environ.get("JEANMICHEL_REFLECTION_MODEL", "").strip() or DISPATCH_MODEL
 
 # Mémoire long-terme (cf. §10 doc 06). Seuil d'alerte sur la mémoire user.
 USER_MEMORY_INDEX_LIMIT = _int_env("JEANMICHEL_USER_MEMORY_LIMIT", 100)
@@ -353,7 +352,6 @@ USER_MEMORY_WARN_AT = _int_env("JEANMICHEL_USER_MEMORY_WARN_AT", 90)
 
 # Caps d'injection par scope dans le system prompt (index uniquement, jamais le
 # content). Bornent le budget de contexte ; l'inclusion reste déterministe.
-MEMORY_WORLD_CAP = _int_env("JEANMICHEL_MEMORY_WORLD_CAP", 20)
 MEMORY_USER_CAP = _int_env("JEANMICHEL_MEMORY_USER_CAP", 40)
 MEMORY_PROJECT_CAP = _int_env("JEANMICHEL_MEMORY_PROJECT_CAP", 30)
 MEMORY_TOOL_CAP_PER_TOOL = _int_env("JEANMICHEL_MEMORY_TOOL_CAP", 5)

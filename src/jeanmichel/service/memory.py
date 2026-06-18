@@ -5,7 +5,6 @@ consolidation engine. Validation + SQL live here once.
 
 A single ``scope`` dimension drives deterministic prompt inclusion :
 
-  world   → global, injected everywhere        (no target key)
   user    → one user                           (target: user_id)
   project → one project                        (target: project_id)
   tool    → any agent granted that tool         (target: tool_code)
@@ -25,7 +24,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-VALID_SCOPES: frozenset[str] = frozenset({"world", "user", "project", "tool"})
+VALID_SCOPES: frozenset[str] = frozenset({"user", "project", "tool"})
 VALID_ACTIONS: frozenset[str] = frozenset(
     {"save", "recall", "search", "list", "update", "delete"}
 )
@@ -88,8 +87,6 @@ def _target_clause(
     result always begins with ``scope=?`` so callers can append it directly.
     """
     _check_scope(scope)
-    if scope == "world":
-        return "scope=?", [scope]
     if scope == "user":
         if user_id is None:
             raise MemoryOpError("invalid_args", "user_id is required for scope='user'.")

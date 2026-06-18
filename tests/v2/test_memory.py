@@ -1,5 +1,5 @@
 """Tests for the scoped `manage_memory` tool + FTS search + memory block renderer
-+ bootstrap. Memory has a single `scope` dimension (world/user/project/tool) that
++ bootstrap. Memory has a single `scope` dimension (user/project/tool) that
 drives deterministic prompt inclusion ; FTS5/BM25 powers search."""
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def test_spec_has_required_fields():
     assert MEMORY_SPEC.parameters["required"] == ["action"]
     actions = set(MEMORY_SPEC.parameters["properties"]["action"]["enum"])
     assert {"save", "recall", "search", "list", "update", "delete"} <= actions
-    assert {"note_for_world", "note_for_user", "note_for_project", "note_for_tool"} <= actions
+    assert {"note_for_user", "note_for_project", "note_for_tool"} <= actions
 
 
 # ---- save (scopes) --------------------------------------------------------
@@ -60,18 +60,6 @@ def test_save_user_scope(tmp_db_v2):
     assert len(rows) == 1
     assert rows[0]["scope"] == "user"
     assert rows[0]["user_id"] == _uid()
-
-
-def test_save_world_scope_no_target(tmp_db_v2):
-    result = json.loads(_handler(
-        action="note_for_world", code="fact", title="Fact",
-        description="A global fact", content="Applies everywhere.",
-    ))
-    assert "error" not in result
-    with db_connect() as conn:
-        row = conn.execute("SELECT scope, user_id, project_id, tool_code FROM memory").fetchone()
-    assert row["scope"] == "world"
-    assert row["user_id"] is None and row["project_id"] is None and row["tool_code"] is None
 
 
 def test_save_tool_scope(tmp_db_v2):
@@ -126,7 +114,7 @@ def test_save_duplicate_suggests_update(tmp_db_v2):
 
 
 def test_same_code_different_scope_coexists(tmp_db_v2):
-    a = json.loads(_handler(action="note_for_world", code="kiss", title="t", description="d", content="c"))
+    a = json.loads(_handler(action="note_for_tool", tool_code="weather", code="kiss", title="t", description="d", content="c"))
     b = json.loads(_handler(action="note_for_user", code="kiss", title="t", description="d", content="c"))
     assert "error" not in a and "error" not in b
     with db_connect() as conn:
@@ -213,9 +201,9 @@ def test_search_requires_query(tmp_db_v2):
 
 
 def test_search_scope_filter(tmp_db_v2):
-    _handler(action="note_for_world", code="w", title="t", description="shared widget", content="c")
+    _handler(action="note_for_tool", tool_code="weather", code="w", title="t", description="shared widget", content="c")
     _handler(action="note_for_user", code="u", title="t", description="user widget", content="c")
-    result = json.loads(_handler(action="search", query="widget", scope="world"))
+    result = json.loads(_handler(action="search", query="widget", scope="tool", tool_code="weather"))
     codes = [r["code"] for r in result["results"]]
     assert codes == ["w"]
 
@@ -233,11 +221,12 @@ def test_list_index_only_no_content(tmp_db_v2):
 
 
 def test_list_default_spans_visible_scopes(tmp_db_v2):
-    _handler(action="note_for_world", code="w", title="t", description="d", content="c")
+    pid = _make_project()
+    _handler(action="save", scope="project", code="p", title="t", description="d", content="c", project_id=pid)
     _handler(action="note_for_user", code="u", title="t", description="d", content="c")
-    result = json.loads(_handler(action="list"))
+    result = json.loads(_handler(action="list", project_id=pid))
     scopes = {e["scope"] for e in result["entries"]}
-    assert scopes == {"world", "user"}
+    assert scopes == {"project", "user"}
 
 
 # ---- update / delete ------------------------------------------------------
@@ -291,14 +280,16 @@ def test_render_empty_returns_empty(tmp_db_v2):
     assert count == 0
 
 
-def test_render_world_and_user_sections(tmp_db_v2):
-    _handler(action="note_for_world", code="global-fact", title="t", description="shared everywhere", content="c")
+def test_render_user_and_project_sections(tmp_db_v2):
+    pid = _make_project()
+    _handler(action="save", scope="project", code="proj-fact", title="t",
+             description="project decision x", content="c", project_id=pid)
     _handler(action="note_for_user", code="unity-montreal", title="t", description="senior dev unity", content="c")
     with db_connect() as conn:
-        block, count = render_memory_block(conn, user_id=_uid())
-    assert "## World knowledge" in block
+        block, count = render_memory_block(conn, user_id=_uid(), project_id=pid)
+    assert "## Project context" in block
     assert "## Known facts about the user" in block
-    assert "global-fact : shared everywhere" in block
+    assert "proj-fact : project decision x" in block
     assert "unity-montreal : senior dev unity" in block
     assert count == 1  # user-scope count only
 

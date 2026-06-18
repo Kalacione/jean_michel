@@ -25,8 +25,11 @@ from pathlib import Path
 from typing import Any
 
 from .. import config, persistence, voice
+from ..events import MemoryConsolidationProposed
 from ..llm import OllamaClient
+from ..service import consolidation as consolidation_svc
 from ..service import turn_runner
+from . import notifications
 
 _log = logging.getLogger(__name__)
 
@@ -50,6 +53,47 @@ def get_llm_clients() -> tuple[Any, Any]:
             OllamaClient(model=MAIN_MODEL),
         )
     return _llm_clients
+
+
+_REFLECT_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_reflection(conv_id: str, folder: Path, user_id: int | None, llm: Any) -> None:
+    """Fire the end-of-turn reflection beat as a background task (best-effort). No-op if
+    disabled or no owner. Held in a module set so it isn't GC'd mid-flight."""
+    if not config.REFLECTION_ENABLED or user_id is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_reflect_after_turn(conv_id, folder, user_id, llm))
+    _REFLECT_TASKS.add(task)
+    task.add_done_callback(_REFLECT_TASKS.discard)
+
+
+async def _reflect_after_turn(conv_id: str, folder: Path, user_id: int, llm: Any) -> None:
+    """Propose durable memory/paradigm candidates from the fresh exchange (cheap model),
+    serialised on ``turn_lock`` (runs when idle). Surfaces the pending set via the per-user
+    notifications WS + a persisted event. Never raises."""
+    try:
+        async with turn_lock:
+            cands = await asyncio.to_thread(
+                consolidation_svc.run_shadow, folder, conv_id,
+                llm=llm, user_id=user_id, model=config.REFLECTION_MODEL,
+            )
+        if not cands:
+            return
+        pending = await asyncio.to_thread(consolidation_svc.load_pending, conv_id)
+        persistence.append_event(
+            folder, MemoryConsolidationProposed(count=len(pending), candidates=pending)
+        )
+        notifications.notify(user_id, {
+            "type": "notification", "kind": "memory_proposed",
+            "conv_id": conv_id, "count": len(pending), "candidates": pending,
+        })
+    except Exception as exc:  # noqa: BLE001 — best-effort ; the turn already succeeded
+        _log.debug("post-turn reflection failed (conv=%s): %s", conv_id, exc)
 
 
 async def run_turn_streaming(
@@ -89,7 +133,10 @@ async def run_turn_streaming(
                 msg["speak"] = phrase
         loop.call_soon_threadsafe(event_queue.put_nowait, msg)
 
+    was_deep = {"v": False}
+
     def on_dispatch(decision: Any) -> None:
+        was_deep["v"] = decision.intent != "alexa"
         loop.call_soon_threadsafe(
             event_queue.put_nowait,
             {
@@ -175,10 +222,8 @@ async def run_turn_streaming(
             _log.info("recv_answers ended conv=%s : %s", conv_id, type(exc).__name__)
             answer_box.put("")  # unblock a pending ask_human so the turn finishes
 
-    # NB : memory consolidation is NO LONGER done per-turn. A background reflection
-    # daemon (api/reflection.py, registered in the app lifespan) studies conversations
-    # with new content when the system is idle — so it never consumes a turn nor delays
-    # 'final'. See plan « Daemon de réflexion mémoire ».
+    # NB : the reflection beat (memory/paradigm candidate proposal) fires AFTER the turn,
+    # in the finally below — decoupled from 'final' so it never delays the response.
 
     turn_future = loop.run_in_executor(None, worker)
     recv_task = asyncio.create_task(recv_answers())
@@ -206,3 +251,7 @@ async def run_turn_streaming(
         # Let the worker finish (persists messages/state/events) even if the
         # client vanished mid-turn.
         await turn_future
+        # Reflection beat : end of a DEEP turn (live ; not a timer). Best-effort, serialised
+        # on turn_lock → runs when idle. Candidates land in pending_consolidation for review.
+        if was_deep["v"]:
+            _schedule_reflection(conv_id, folder, memory_user_id, main_llm)

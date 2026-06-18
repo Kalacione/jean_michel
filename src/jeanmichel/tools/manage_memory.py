@@ -8,13 +8,12 @@ tool_ok/tool_error strings.
 
 A memory has a ``scope`` that decides where it is later injected (deterministic) :
 
-  world   → everywhere                 (no target ; cross-user/shared)
   user    → the current user           (target bound from the conversation)
   project → the conversation's project  (target bound from the conversation)
   tool    → any agent granted a tool    (target: tool_code, given by the LLM)
 
 Actions : save / recall / search / list / update / delete, plus the ergonomic
-shortcuts note_for_world / note_for_user / note_for_project / note_for_tool
+shortcuts note_for_user / note_for_project / note_for_tool
 (sugar over save with the scope pinned).
 """
 
@@ -34,7 +33,6 @@ _log = logging.getLogger(__name__)
 
 # action → fixed scope, for the note_for_* shortcuts.
 _NOTE_SHORTCUTS: dict[str, str] = {
-    "note_for_world": "world",
     "note_for_user": "user",
     "note_for_project": "project",
     "note_for_tool": "tool",
@@ -47,8 +45,6 @@ def _resolve_target(
     scope: str, *, uid: int, project_id: int | None, tool_code: str | None
 ) -> dict[str, Any]:
     """Map a scope to the concrete target kwargs for the service layer."""
-    if scope == "world":
-        return {}
     if scope == "user":
         return {"user_id": uid}
     if scope == "project":
@@ -65,7 +61,7 @@ def _resolve_target(
 
 def _visible_scopes(uid: int, project_id: int | None) -> list[tuple[str, dict[str, Any]]]:
     """The scopes a browse (list/search without an explicit scope) spans."""
-    out: list[tuple[str, dict[str, Any]]] = [("world", {}), ("user", {"user_id": uid})]
+    out: list[tuple[str, dict[str, Any]]] = [("user", {"user_id": uid})]
     if project_id is not None:
         out.append(("project", {"project_id": project_id}))
     return out
@@ -217,8 +213,8 @@ _PARAMETERS = {
             "type": "string",
             "enum": sorted(memory.VALID_SCOPES),
             "description": (
-                "world (global), user (about the human), project (the current "
-                "project), tool (operational note for a tool). Required for "
+                "user (about the human), project (the current project), tool "
+                "(operational note for a tool). Required for "
                 "save/recall/update/delete ; optional filter for list/search."
             ),
         },
@@ -264,11 +260,11 @@ _PARAMETERS = {
 }
 
 _DESCRIPTION = (
-    "Manage long-term, scoped, cross-conversation memory. Scopes: world (global), "
+    "Manage long-term, scoped, cross-conversation memory. Scopes: "
     "user (durable facts about the human), project (the current project), tool "
     "(operational notes to use a tool better). Actions: save, recall (load full "
     "body by code), search (full-text BM25 ranking — use it before concluding you "
-    "don't know something), list (index), update, delete ; plus note_for_world / "
+    "don't know something), list (index), update, delete ; plus "
     "note_for_user / note_for_project / note_for_tool shortcuts. Entries are "
     "unique per (scope, target, code)."
 )

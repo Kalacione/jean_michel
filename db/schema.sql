@@ -901,12 +901,14 @@ INSERT INTO agent_delegation_targets VALUES(1,'strategist','2026-05-28 20:17:15'
 INSERT INTO agent_delegation_targets VALUES(1,'news-specialist','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(1,'code-fetcher','2026-05-28 20:17:15');
 INSERT INTO agent_delegation_targets VALUES(12,'code-fetcher','2026-05-28 20:17:15');
--- Long-term memory (migrate_125). A single `scope` dimension drives deterministic
--- prompt inclusion (world everywhere / user / project / tool). A CHECK enforces
--- exactly one target key per scope. FTS5 (below) provides BM25-ranked recall.
+-- Long-term memory (migrate_125 ; migrate_152 dropped the `world` scope + added
+-- `importance`). A single `scope` dimension drives deterministic prompt inclusion
+-- (user / project / tool). A CHECK enforces exactly one target key per scope.
+-- `importance` (1..5) is consolidation-scored and ranks injection. FTS5 (below)
+-- provides BM25-ranked recall.
 CREATE TABLE memory (
   id          INTEGER PRIMARY KEY,
-  scope       TEXT NOT NULL CHECK (scope IN ('world', 'user', 'project', 'tool')),
+  scope       TEXT NOT NULL CHECK (scope IN ('user', 'project', 'tool')),
   user_id     INTEGER REFERENCES web_users(id) ON DELETE CASCADE,
   project_id  INTEGER REFERENCES projects(id)  ON DELETE CASCADE,
   tool_code   TEXT,
@@ -916,15 +918,14 @@ CREATE TABLE memory (
   content     TEXT NOT NULL,  -- full markdown body, loaded on demand via recall
   created_at  TEXT NOT NULL,
   modified_at TEXT NOT NULL,
+  importance  INTEGER NOT NULL DEFAULT 3,  -- 1..5 ; ranks injection (importance DESC, then recency)
   CHECK (
-    (scope = 'world'   AND user_id IS NULL     AND project_id IS NULL     AND tool_code IS NULL) OR
     (scope = 'user'    AND user_id IS NOT NULL AND project_id IS NULL     AND tool_code IS NULL) OR
     (scope = 'project' AND user_id IS NULL     AND project_id IS NOT NULL AND tool_code IS NULL) OR
     (scope = 'tool'    AND user_id IS NULL     AND project_id IS NULL     AND tool_code IS NOT NULL)
   )
 );
 CREATE INDEX idx_agent_tools_agent ON agent_tools(agent_id);
-CREATE UNIQUE INDEX ux_memory_world   ON memory(code)             WHERE scope = 'world';
 CREATE UNIQUE INDEX ux_memory_user    ON memory(user_id, code)    WHERE scope = 'user';
 CREATE UNIQUE INDEX ux_memory_project ON memory(project_id, code) WHERE scope = 'project';
 CREATE UNIQUE INDEX ux_memory_tool    ON memory(tool_code, code)  WHERE scope = 'tool';
@@ -953,6 +954,21 @@ CREATE TRIGGER memory_au AFTER UPDATE ON memory BEGIN
   INSERT INTO memory_fts(rowid, title, description, content)
   VALUES (new.id, new.title, new.description, new.content);
 END;
+
+-- Pending consolidation queue (migrate_153) : candidates (memory facts + paradigm
+-- rules) awaiting human review. Fed by the `propose_memory` tool + the end-of-turn
+-- reflection beat ; read by the CLI `/memo` + web review. Replaces pending_memory.json.
+CREATE TABLE pending_consolidation (
+  id              INTEGER PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL CHECK (kind IN ('fact', 'rule')),
+  dedup_key       TEXT NOT NULL,
+  payload         TEXT NOT NULL,   -- the candidate dict (JSON)
+  status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'dismissed')),
+  created_at      TEXT NOT NULL,
+  UNIQUE (conversation_id, dedup_key)
+);
+CREATE INDEX idx_pending_conv ON pending_consolidation(conversation_id, status);
 
 -- Projects (migrate_124) : owned by a web_user, group conversations.
 CREATE TABLE projects (

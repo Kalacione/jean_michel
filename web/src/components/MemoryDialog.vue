@@ -141,7 +141,7 @@
   import { useProjectStore } from '@/stores/projects'
 
   const open = defineModel({ type: Boolean })
-  const SCOPES = ['user', 'world', 'project', 'tool']
+  const SCOPES = ['user', 'project', 'tool']
   const projects = useProjectStore()
 
   const browseScope = ref('user')

@@ -6,8 +6,8 @@ Three exposed surfaces :
   (cf. docs/architecture_v2.md §3). JSON-forced output.
 - ``render_memory_block(conn, *, user_id, project_id, tool_codes)`` — Markdown
   block listing the (code : description) index of the long-term ``memory``
-  entries that DETERMINISTICALLY apply here : world (always) + the user's facts
-  + the conversation's project + the notes of the tools this agent is granted.
+  entries that DETERMINISTICALLY apply here : the user's facts + the
+  conversation's project + the notes of the tools this agent is granted.
   Injected into every agent's ``## Human`` section by ``render_system_prompt_v2``.
 - ``render_system_prompt_v2(*, …)`` — produces the system message used by
   the v2 main loop. Composition : identity + context (human + conversation)
@@ -27,7 +27,6 @@ from .config import (
     MEMORY_PROJECT_CAP,
     MEMORY_TOOL_CAP_PER_TOOL,
     MEMORY_USER_CAP,
-    MEMORY_WORLD_CAP,
     USER_MEMORY_WARN_AT,
 )
 
@@ -109,7 +108,6 @@ def render_memory_block(
     """Render the long-term memory index block + return the user-scope entry count.
 
     Inclusion is 100 % deterministic (pure SQL by scope) — no LLM in this path :
-      - world   : always
       - user    : the given ``user_id`` (``None`` → reserved ``cli`` user)
       - project : the given ``project_id`` (skipped when None)
       - tool    : entries whose ``tool_code`` is in ``tool_codes`` (the agent's grants)
@@ -124,9 +122,6 @@ def render_memory_block(
     try:
         uid = user_id if user_id is not None else cli_user_id(conn)
         sections: list[str] = []
-        sections += _memory_section(
-            conn, "World knowledge (long-term memory)", "scope='world'", (), MEMORY_WORLD_CAP
-        )
         sections += _memory_section(
             conn,
             "Known facts about the user (long-term memory)",

@@ -1,6 +1,6 @@
 # Orchestrator — determinism map
 
-> Généré le 2026-06-15 01:00 UTC. Valeurs **lues en live** depuis `config` ; le registre des points de contrôle est ancré au code. Régénérer : `./jm.sh --orchestrator-map`.
+> Généré le 2026-06-18 17:13 UTC. Valeurs **lues en live** depuis `config` ; le registre des points de contrôle est ancré au code. Régénérer : `./jm.sh --orchestrator-map`.
 >
 > **Le narratif (pourquoi / comment) vit dans `README.md`** (§Orchestrateur, §Hooks, §Compaction). Ce fichier est la *référence* (quoi / quelle valeur / où dans le code) — pas une seconde prose.
 
@@ -32,13 +32,12 @@ Tout ici est **déterministe** (décidé par du code Python, pas par un LLM). Ce
 | `REPO_TEST_TIMEOUT` | `300` | `JEANMICHEL_REPO_TEST_TIMEOUT` | repo_test timeout |
 | `REPO_PROTECTED_PATHS` | `jeanmichel.db, .env, .api_secret, conversations/, backups/, voice_models/, .venv/, .git/` | `—` | paths repo_edit/repo_write must never touch |
 | **Memory caps** | | | |
-| `MEMORY_WORLD_CAP` | `20` | `JEANMICHEL_MEMORY_WORLD_CAP` | world-scope entries injected |
 | `MEMORY_USER_CAP` | `40` | `JEANMICHEL_MEMORY_USER_CAP` | user-scope entries injected |
 | `MEMORY_PROJECT_CAP` | `30` | `JEANMICHEL_MEMORY_PROJECT_CAP` | project-scope entries injected |
 | `MEMORY_TOOL_CAP_PER_TOOL` | `5` | `JEANMICHEL_MEMORY_TOOL_CAP` | tool-note entries per granted tool |
 | **Models (per role/mode)** | | | |
 | `DISPATCH_MODEL` | `granite4.1:8b` | `JEANMICHEL_DISPATCH_MODEL` | Tier-0 dispatcher |
-| `MAIN_MODEL` | `cogito:32b` | `JEANMICHEL_MAIN_MODEL` | router default (non-code) |
+| `MAIN_MODEL` | `gemma4:26b` | `JEANMICHEL_MAIN_MODEL` | router default (non-code) |
 | `CODE_MODEL` | `qwen3:14b` | `JEANMICHEL_CODE_MODEL` | router model in code mode |
 | `SUBAGENT_DEFAULT_MODEL` | `gemma4:26b` | `JEANMICHEL_SUBAGENT_MODEL` | specialist default (unless model_override) |
 | `COMPACTOR_MODEL` | `gemma4:26b` | `JEANMICHEL_COMPACTOR_MODEL` | LLM used for compaction levels 3-4 |
@@ -58,7 +57,7 @@ Gate de validation (downstream) : `complexity_probe` = keywords / >=2 files (val
 | **PostToolUse hook** | hook | `src/jeanmichel/hooks.py · PostToolUse` | — | counter updates, dedup-cache population, force-persist nudge after N research calls. |
 | **OnDelegateReturn hook** | hook | `src/jeanmichel/hooks.py · OnDelegateReturn` | — | push structured SubResult into parent messages; reject confidence=low without a reason. |
 | **Compaction escalade** | pipeline | `src/jeanmichel/compaction.py` | COMPACTION_THRESHOLDS, OUTPUT_RESERVE_RATIO | 4 levels: snip / microcompact (deterministic) → context collapse / autocompact (LLM). |
-| **Memory inclusion** | pipeline | `src/jeanmichel/prompts.py · render_memory_block + db.py:73` | MEMORY_*_CAP | 100% SQL scope-driven injection (world/user/project/tool); paradigms gated by paradigm_modes. |
+| **Memory inclusion** | pipeline | `src/jeanmichel/prompts.py · render_memory_block + db.py:73` | MEMORY_*_CAP | 100% SQL scope-driven injection (user/project/tool); paradigms gated by paradigm_modes. |
 | **Wall-clock guards** | budget | `src/jeanmichel/orchestrator_v2.py · _run_agent_loop` | LLM/REQUEST/TURN timeouts, SOFT_DEADLINE_RATIO | nested timeouts; soft deadline restricts tools to the conclusion verb to wrap up gracefully. |
 | **Worktree isolation** | code-mode | `src/jeanmichel/worktree.py` | CODE_WORKTREE_ENABLED | code-mode conv gets an isolated git worktree (branch jm/conv-<id>); live tree untouched. |
 | **Repo edit gates** | gate | `src/jeanmichel/tools/_repo.py · edit_preflight + repo_edit/repo_write` | REPO_PROTECTED_PATHS | read-before-edit + freshness (mtime) + protected-path deny — in the tool layer. |

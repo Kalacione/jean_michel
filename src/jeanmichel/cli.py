@@ -32,6 +32,7 @@ from . import db, mcp_client, persistence
 from .config import (
     DISPATCH_MODEL,
     MAIN_MODEL,
+    REFLECTION_MODEL,
     UserProfile,
     ensure_dirs,
 )
@@ -376,15 +377,15 @@ def run_one_turn(
                 "paplay/aplay/ffplay is installed (see voice_models/README.md).[/]"
             )
 
-    # Shadow consolidation : after the answer is shown (the user reads/thinks),
-    # introspect in the background to propose durable memories. Non-blocking,
-    # best-effort, DEEP turns only (ALEXA single-facts hold nothing to remember).
-    # Results land in pending_memory.json ; the loop surfaces them at the next prompt.
+    # Reflection beat : after the answer is shown (the user reads/thinks), introspect in
+    # the background (cheap model) to propose durable memory/paradigm candidates. Non-blocking,
+    # best-effort, DEEP turns only. Candidates land in pending_consolidation ; the loop
+    # surfaces them at the next prompt (/memo to review).
     if consolidate and was_deep["v"]:
         threading.Thread(
             target=consolidation_svc.run_shadow,
             args=(conv_folder, conv_id),
-            kwargs={"llm": main_llm},
+            kwargs={"llm": main_llm, "model": REFLECTION_MODEL},
             daemon=True,
         ).start()
 
@@ -512,9 +513,9 @@ def _resolve_cli_project(code: str, console: Console) -> int | None:
         return None
 
 
-def _memory_recap(console: Console, conv_folder: Path) -> None:
-    """One-line nudge if the shadow pass stashed memory candidates to review."""
-    pending = consolidation_svc.load_pending(conv_folder)
+def _memory_recap(console: Console, conv_id: str) -> None:
+    """One-line nudge if the reflection beat stashed memory candidates to review."""
+    pending = consolidation_svc.load_pending(conv_id)
     if pending:
         console.print(
             f"[dim]💡 {len(pending)} élément(s) à mémoriser — tape [/]"
@@ -522,13 +523,14 @@ def _memory_recap(console: Console, conv_folder: Path) -> None:
         )
 
 
-def review_pending(console: Console, session: PromptSession, conv_folder: Path) -> None:
+def review_pending(console: Console, session: PromptSession, conv_id: str) -> None:
     """Interactive review of pending memory candidates : accept / edit / extend / drop.
 
-    Human-in-the-loop : nothing is written until the user confirms each item.
-    Grounded candidates show their source quote ; existing matches are surfaced
+    Human-in-the-loop : nothing is written until the user confirms each item. Each item is
+    marked applied or dismissed in the queue as it's reviewed ; quitting leaves the rest
+    pending. Grounded candidates show their source quote ; existing matches are surfaced
     so the user can extend rather than duplicate."""
-    pending = consolidation_svc.load_pending(conv_folder)
+    pending = consolidation_svc.load_pending(conv_id)
     if not pending:
         console.print("[dim]Aucune suggestion mémoire en attente.[/]")
         return
@@ -536,7 +538,6 @@ def review_pending(console: Console, session: PromptSession, conv_folder: Path) 
     with db.connect() as conn:
         uid = db.cli_user_id(conn)
 
-    remaining: list[dict] = []
     for i, c in enumerate(pending):
         target = c.get("tool_code") or (f"project#{c['project_id']}" if c.get("project_id") else "")
         body = [
@@ -560,10 +561,10 @@ def review_pending(console: Console, session: PromptSession, conv_folder: Path) 
         ).strip().lower() or default
 
         if choice == "q":
-            remaining.extend(pending[i:])  # keep this one and the rest
-            break
+            break  # leave this one and the rest pending
         if choice == "d":
-            continue  # drop → not saved, not kept
+            consolidation_svc.remove_pending(conv_id, c)  # dismiss
+            continue
 
         title = c["title"]
         description = c["description"]
@@ -579,12 +580,10 @@ def review_pending(console: Console, session: PromptSession, conv_folder: Path) 
                     conn, c, action=action, user_id=uid,
                     title=title, description=description, content=content,
                 )
+            consolidation_svc.mark_applied(conv_id, c)
             console.print(f"[{C_FINAL}]✓ {action} {c['scope']}/{c['code']}[/]")
         except Exception as exc:  # noqa: BLE001
-            console.print(f"[{C_WARN}]✖ {exc}[/]")
-            remaining.append(c)  # keep it so the user can retry
-
-    consolidation_svc.save_pending(conv_folder, remaining)
+            console.print(f"[{C_WARN}]✖ {exc}[/]")  # stays pending → retry later
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -698,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             # End-of-turn nudge : surface any memory candidates the shadow pass
             # stashed (it ran while the user read the previous answer).
-            _memory_recap(console, conv_folder)
+            _memory_recap(console, conv_id)
             try:
                 user_input = session.prompt(
                     HTML('<ansibrightcyan><b>you</b></ansibrightcyan>: '),
@@ -713,7 +712,7 @@ def main(argv: list[str] | None = None) -> int:
                 console.print("[dim]bye.[/]")
                 return 0
             if cmd in {"/memo", "/memory"}:
-                review_pending(console, session, conv_folder)
+                review_pending(console, session, conv_id)
                 continue
             if not user_input.strip():
                 continue

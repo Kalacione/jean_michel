@@ -22,6 +22,7 @@ from jeanmichel import db, persistence  # noqa: E402
 from jeanmichel.api import app as api_app  # noqa: E402
 from jeanmichel.api import auth  # noqa: E402
 from jeanmichel.db import connect as db_connect  # noqa: E402
+from jeanmichel.service import consolidation  # noqa: E402
 from jeanmichel.tools._workspace import workspace_root_for  # noqa: E402
 from jeanmichel.tools.manage_memory import _handler as memory_handler  # noqa: E402
 
@@ -110,22 +111,20 @@ def test_get_state(client, alice_conv):
 
 
 def test_get_pending_memory(client, alice_conv):
-    token, conv_id, folder = alice_conv
-    (folder / "pending_memory.json").write_text(
-        json.dumps([{"scope": "user", "code": "likes_tea", "title": "T",
-                     "description": "d", "content": "c"}]),
-        encoding="utf-8",
-    )
+    token, conv_id, _folder = alice_conv
+    consolidation.add_pending(conv_id, [
+        {"scope": "user", "code": "likes_tea", "title": "T", "description": "d", "content": "c"},
+    ])
     resp = client.get(f"/api/conversations/{conv_id}/pending-memory", headers=_auth(token))
     assert resp.status_code == 200
     assert [c["code"] for c in resp.json()["pending_memory"]] == ["likes_tea"]
 
 
 def test_dismiss_pending_memory_prunes_and_persists(client, alice_conv):
-    token, conv_id, folder = alice_conv
+    token, conv_id, _folder = alice_conv
     a = {"scope": "user", "code": "a", "title": "A", "description": "d", "content": "c"}
     b = {"scope": "user", "code": "b", "title": "B", "description": "d", "content": "c"}
-    (folder / "pending_memory.json").write_text(json.dumps([a, b]), encoding="utf-8")
+    consolidation.add_pending(conv_id, [a, b])
     resp = client.post(
         f"/api/conversations/{conv_id}/pending-memory/dismiss", json=a, headers=_auth(token)
     )

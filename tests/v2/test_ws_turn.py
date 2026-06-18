@@ -96,9 +96,9 @@ def test_ws_streams_real_turn(client, monkeypatch):
 
 
 def test_ws_no_consolidation_event_in_turn(client, monkeypatch):
-    """Memory consolidation is handled by the background reflection daemon (api/reflection.py),
-    NOT in the turn. So the TURN itself must NOT run a pass nor emit MemoryConsolidationProposed,
-    and 'final' is the last frame — the turn is truly done when 'final' fires (so an Approve
+    """Memory consolidation fires as a background reflection beat AFTER the turn (executor),
+    NOT on the turn WS. So the TURN itself must NOT emit MemoryConsolidationProposed, and
+    'final' is the last frame — the turn is truly done when 'final' fires (so an Approve
     sent right after isn't dropped)."""
     monkeypatch.setattr(executor, "get_llm_clients", _deep_clients)
     _make_user("carol", "pw")
