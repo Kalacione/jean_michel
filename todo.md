@@ -12,11 +12,7 @@
 - **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
   garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
 - Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
-- Re-vérifier en live : artefacts écrits dans le workspace, plans en mode analyse qui répondent, appels d'outils
-  non bloqués, mémoires visibles.
-  - erreurs frontend LaTex : ```LaTeX-incompatible input and strict mode is set to 'warn': Unrecognized Unicode character "ệ" (7879) [unknownSymbol] katex.mjs:316:49
-No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs:4738:47
-“mathvariant='bold'” on MathML elements is deprecated and will be removed at a future date.```
+
 
 ## consolidation
 
@@ -29,15 +25,8 @@ No character metrics for 'ệ' in style 'Main-Regular' and mode 'text' katex.mjs
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
-- On est définitivement en v2 ? Checker si v1 sert encore ; sinon dégager v1 + docs et consolider (orchestrateur, tests).
-- **MAJ `docs/PROMPT_SKELETON.md`** : remettre à jour la structure du prompt avec l'état v2 actuel (noté au ménage docs).
-- **Paradigm viewer/éditeur web** (chantier séparé) : l'intégrer dans l'app web (façon `AgentsDialog`) — voir/éditer
-  content + rationale + bindings/modes + un onglet « Promotions » (`pending_consolidation kind='rule'`). Le CLI
-  (`admin.py` : `paradigm <code>`, `promotions`) couvre déjà la lecture + la revue des promotions.
 - Audit des paradigmes de tous les agents (incohérences ?).
-- **meta_analyst — auto-trigger périodique** : le lancer automatiquement sur un seuil (échecs récurrents /
-  ask_human) plutôt qu'à la main ; sortie toujours filtrée par l'humain, jamais auto-appliquée. (Le grounding +
-  la promotion en règles ancrées sont en place.)
+
 
 
 ## Idées
