@@ -941,6 +941,21 @@ def create_app() -> Any:
             )
         return Response(content=wav, media_type="audio/wav")
 
+    # ---- speech-to-text (voice input ; local faster-whisper) -------------
+    # SYNC endpoint on purpose : FastAPI runs it in a threadpool, so the CPU-bound
+    # transcription never blocks the asyncio loop (cf. the WS-keepalive note at top).
+    @app.post("/api/stt")
+    def stt(file: UploadFile = File(...), user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        from .. import stt as stt_mod
+
+        result = stt_mod.transcribe(file.file.read())
+        if result is None:
+            raise HTTPException(
+                status_code=503,
+                detail="stt unavailable (faster-whisper not installed or model failed)",
+            )
+        return {"text": result["text"], "language": result.get("language", "")}
+
     # ---- turn WebSocket (live event stream) ------------------------------
 
     @app.websocket("/ws/conversations/{conversation_id}")

@@ -51,6 +51,11 @@ mcp = [
   # Optional: the core runs fine without it (feature degrades to a no-op).
   "mcp>=1.0.0",
 ]
+audio = [
+  # Local speech-to-text for voice input (faster-whisper / CTranslate2 ; pulls PyAV
+  # for audio decoding). Optional : absent → /api/stt degrades to 503 (no crash).
+  "faster-whisper>=1.0.0",
+]
 
 [project.scripts]
 jean-michel = "jeanmichel.cli:main"

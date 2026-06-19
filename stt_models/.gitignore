@@ -1,0 +1,4 @@
+# faster-whisper (Whisper) models auto-download here — large binaries, gitignored.
+*
+!.gitignore
+!README.md

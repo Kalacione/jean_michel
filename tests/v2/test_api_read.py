@@ -693,6 +693,42 @@ def test_tts_unavailable_returns_503(client, monkeypatch):
     assert r.status_code == 503
 
 
+# ---- STT endpoint (voice input ; faster-whisper mocked) -------------------
+
+
+def test_stt_requires_auth(client):
+    assert client.post(
+        "/api/stt", files={"file": ("a.webm", b"audio", "audio/webm")}
+    ).status_code == 401
+
+
+def test_stt_returns_text(client, monkeypatch):
+    from jeanmichel import stt
+
+    monkeypatch.setattr(stt, "transcribe", lambda audio: {"text": "bonjour le monde", "language": "fr"})
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    r = client.post(
+        "/api/stt", files={"file": ("a.webm", b"audio", "audio/webm")}, headers=_auth(token)
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["text"] == "bonjour le monde"
+    assert body["language"] == "fr"
+
+
+def test_stt_unavailable_returns_503(client, monkeypatch):
+    from jeanmichel import stt
+
+    monkeypatch.setattr(stt, "transcribe", lambda audio: None)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    r = client.post(
+        "/api/stt", files={"file": ("a.webm", b"x", "audio/webm")}, headers=_auth(token)
+    )
+    assert r.status_code == 503
+
+
 def test_project_code_repo_roundtrip(client):
     """The project API round-trips code_repo/repo_kind (create + patch + validation)."""
     _make_user("alice", "pw")

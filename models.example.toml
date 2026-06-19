@@ -11,6 +11,7 @@
 #   per-agent        → JEANMICHEL_AGENT_MODEL_<CODE>  (CODE = agent code, non-alnum → '_')
 #   context windows  → JEANMICHEL_CTX_WINDOW_<slug>  (slug = model id, non-alnum → '_')
 #   voice            → JEANMICHEL_VOICE_MODEL, JEANMICHEL_AUDIO_PLAYER
+#   stt              → JEANMICHEL_STT_MODEL, _STT_DEVICE, _STT_COMPUTE_TYPE, _STT_LANGUAGE
 #
 # Per-agent models (specialists needing a specific model) are NOT here : they live in the DB
 # (agents.model_override), edited via `jm.sh --admin set-model …` or the web "Agent settings" panel.
@@ -55,3 +56,13 @@ subagent  = "gemma4:26b"      # default for any specialist without a per-agent m
 model = "voice_models/default.onnx"
 # Force an audio player (paplay / aplay / ffplay …). Empty = auto-detect.
 audio_player = ""
+
+# ---- Voice input (faster-whisper STT) ---------------------------------------
+# Requires the optional [audio] extra : pip install -e ".[web,audio]".
+[stt]
+# Whisper model : a size name (tiny/base/small/medium/large-v3) auto-downloaded once
+# to stt_models/, or an absolute path. base = fast on CPU ; small/medium = better French.
+model = "base"
+device = "cpu"           # "cpu" (int8) or "cuda" (shares VRAM with Ollama)
+compute_type = "int8"    # int8 (CPU) / float16 (GPU)
+language = ""            # "" = auto-detect (fr/en/…) ; or pin "fr" / "en"

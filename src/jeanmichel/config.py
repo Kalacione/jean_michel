@@ -464,6 +464,27 @@ VOICE_MODEL_PATH = Path(
 VOICE_AUDIO_PLAYER = _voice_setting("JEANMICHEL_AUDIO_PLAYER", "audio_player", "")
 
 
+# Voice input — faster-whisper STT (the input twin of [voice] above). Resolved the
+# same way : env → models config `[stt].<key>` → default. The model (a Whisper size
+# name or a path) auto-downloads ONCE to STT_MODEL_DIR ; speech-to-text degrades
+# gracefully (HTTP 503) when faster-whisper isn't installed or the model fails to load.
+def _stt_setting(env_name: str, toml_key: str, default: str) -> str:
+    env = os.environ.get(env_name)
+    if env is not None and env.strip():
+        return env.strip()
+    val = _models_section("stt").get(toml_key)
+    return val.strip() if isinstance(val, str) and val.strip() else default
+
+
+STT_MODEL = _stt_setting("JEANMICHEL_STT_MODEL", "model", "base")
+STT_DEVICE = _stt_setting("JEANMICHEL_STT_DEVICE", "device", "cpu")
+STT_COMPUTE_TYPE = _stt_setting("JEANMICHEL_STT_COMPUTE_TYPE", "compute_type", "int8")
+STT_LANGUAGE = _stt_setting("JEANMICHEL_STT_LANGUAGE", "language", "")  # "" = auto-detect (fr/en/…)
+STT_MODEL_DIR = Path(
+    _stt_setting("JEANMICHEL_STT_MODEL_DIR", "model_dir", str(REPO_ROOT / "stt_models"))
+)
+
+
 # ---- User profile ---------------------------------------------------------
 
 @dataclass(frozen=True)
