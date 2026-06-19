@@ -93,6 +93,7 @@
     liveThinking: { type: String, default: '' },
     busy: Boolean,
     queued: Boolean,
+    isPlan: Boolean,
   })
 
   // Whole-trace card : expanded while thinking, auto-collapsed once the turn
@@ -133,7 +134,7 @@
 
   const headerLabel = computed(() => {
     if (props.queued) return 'En file d’attente…'
-    if (props.busy) return 'Jean-Michel réfléchit…'
+    if (props.busy) return props.isPlan ? 'Rédaction du plan…' : 'Jean-Michel réfléchit…'
     const n = rows.value.length
     return `Réflexion · ${n} étape${n > 1 ? 's' : ''}`
   })

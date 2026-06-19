@@ -124,6 +124,7 @@
             :busy="conv.busy"
             :dispatch="conv.dispatch"
             :events="conv.trace"
+            :is-plan="conv.planTurn"
             :live-thinking="conv.liveThinking"
             :queued="conv.queued"
           />

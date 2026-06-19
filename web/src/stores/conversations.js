@@ -33,6 +33,7 @@ export const useConvStore = defineStore('conversations', () => {
   const pendingMemory = ref([]) // shadow-consolidation candidates awaiting review
   const currentMode = ref('') // task mode of the selected conversation
   const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
+  const planTurn = ref(false) // is the RUNNING turn a plan turn (isPlan at send) → suppress streaming the plan draft as a chat bubble
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
   const convState = ref(null) // the organizational REFERENT (state.json) : phase, plans, todos, files, subagents
@@ -165,7 +166,11 @@ export const useConvStore = defineStore('conversations', () => {
         if (ev?.type === 'AgentTokenStreamed') {
           if (ev.channel === 'thinking') {
             liveThinking.value += ev.delta || ''   // → dedicated thinking block
-          } else {                                  // content → building answer bubble
+          } else if (!planTurn.value) {             // content → building answer bubble
+            // A PLAN turn narrates the plan in `content` before plan_write ; it belongs in the
+            // Approve-bar cartouche, not a chat response that streams then gets discarded. Drop
+            // those deltas (the plan is captured by plan_write). Thinking still streams above ;
+            // normal / edit turns stream their answer here as before.
             if (!streamingMsg) {
               messages.value.push({ role: 'assistant', content: '', streaming: true })
               streamingMsg = messages.value[messages.value.length - 1]
@@ -256,6 +261,7 @@ export const useConvStore = defineStore('conversations', () => {
     const clean = (text || '').trim()
     if ((!clean && !files.length) || !turnWs || busy.value) return
     const isPlan = plan === undefined ? (planAvailable.value && planMode.value) : plan
+    planTurn.value = isPlan // a plan turn writes its plan to the Approve-bar cartouche — don't stream the draft as a chat response
     streamingMsg = null // fresh turn → new building bubble
     liveThinking.value = ''
     messages.value.push({ role: 'user', content: clean, files: [...files] })
@@ -377,7 +383,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo,
+    currentMode, planMode, planTurn, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo,
     refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,
