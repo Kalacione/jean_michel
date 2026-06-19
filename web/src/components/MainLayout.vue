@@ -21,11 +21,17 @@
         @click="review = true"
       />
     </v-badge>
-    <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
     <v-btn icon="mdi-robot-outline" title="Réglages des agents" @click="agents = true" />
     <v-btn icon="mdi-script-text-outline" title="Paradigmes" @click="paradigms = true" />
     <v-btn icon="mdi-theme-light-dark" title="Thème" @click="$vuetify.theme.cycle()" />
-    <v-chip class="ml-2" prepend-icon="mdi-account" variant="tonal">
+    <v-chip
+      class="ml-2"
+      link
+      prepend-icon="mdi-account"
+      title="Mon profil"
+      variant="tonal"
+      @click="profile = true"
+    >
       {{ auth.user?.username }}
     </v-chip>
     <v-btn icon="mdi-logout" title="Déconnexion" @click="logout" />
