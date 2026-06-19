@@ -32,7 +32,8 @@
             />
           </div>
           <v-list class="flex-grow-1 px-2 pane-scroll" density="compact" nav style="min-height: 0">
-            <template v-for="(group, section) in grouped" :key="section">
+            <template v-for="(group, section, index) in grouped" :key="section">
+              <v-divider v-if="index > 0" class="mt-2 mb-1" />
               <v-list-subheader>{{ section }}</v-list-subheader>
               <v-list-item
                 v-for="p in group"
@@ -369,5 +370,14 @@
 }
 .pane-scroll {
   overflow-y: auto;
+}
+/* Séparateurs de catégorie plus lisibles : MAJUSCULES + un divider entre les groupes. */
+.pane-left :deep(.v-list-subheader) {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  opacity: 1;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  min-height: 32px;
 }
 </style>
