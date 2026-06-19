@@ -1,6 +1,6 @@
 <template>
-  <v-dialog v-model="open" max-width="980" scrollable>
-    <v-card class="d-flex flex-column" height="82vh">
+  <v-dialog v-model="open" max-width="1200" scrollable>
+    <v-card class="d-flex flex-column" height="85vh">
       <v-card-title class="d-flex align-center ga-2">
         <v-icon icon="mdi-brain" /> Mémoire
         <v-chip v-if="entries.length" size="small" variant="tonal">{{ entries.length }}</v-chip>
@@ -292,5 +292,8 @@
 </script>
 
 <style scoped>
-.list { width: 340px; }
+/* Left list : FIXED width (never shrinks when the editor fills) ; the editor takes the
+   rest and gets min-width:0 so its fields wrap instead of squeezing the list. */
+.list { flex: 0 0 340px; }
+.editor { min-width: 0; }
 </style>

@@ -1,6 +1,6 @@
 <template>
-  <v-dialog v-model="open" max-width="960" scrollable>
-    <v-card class="d-flex flex-column" height="80vh">
+  <v-dialog v-model="open" max-width="1200" scrollable>
+    <v-card class="d-flex flex-column" height="85vh">
       <v-card-title class="d-flex align-center ga-2">
         <v-icon icon="mdi-folder-open-outline" /> Workspace
         <v-spacer />
@@ -228,6 +228,9 @@
 </script>
 
 <style scoped>
-.files { width: 300px; }
+/* Left list : FIXED width (never shrinks when the viewer fills) ; the viewer takes the
+   rest and gets min-width:0 so its content wraps/scrolls instead of squeezing the list. */
+.files { flex: 0 0 300px; }
+.viewer { min-width: 0; }
 .content { white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 0.8rem; }
 </style>
