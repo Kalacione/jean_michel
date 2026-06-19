@@ -44,8 +44,17 @@
                 size="16"
                 @click="toggle(i)"
               />
+              <!-- Settled thinking : markdown — but raw text if huge, so a runaway
+                   block doesn't block the main thread re-parsing on every reopen. -->
+              <div
+                v-if="isHugeText(e.text)"
+                class="think-body think-live font-italic text-medium-emphasis flex-grow-1"
+                :class="{ collapsed: expandedIdx !== i }"
+                @click="toggle(i)"
+              >{{ e.text }}</div>
               <!-- eslint-disable-next-line vue/no-v-html -->
               <div
+                v-else
                 class="think-body font-italic text-medium-emphasis flex-grow-1"
                 :class="{ collapsed: expandedIdx !== i }"
                 @click="toggle(i)"
@@ -76,7 +85,7 @@
 
 <script setup>
   import { computed, ref, watch } from 'vue'
-  import { renderMarkdown } from '@/markdown'
+  import { isHugeText, renderMarkdown } from '@/markdown'
 
   const props = defineProps({
     events: { type: Array, default: () => [] },

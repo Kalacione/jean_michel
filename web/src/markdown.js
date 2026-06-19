@@ -12,3 +12,12 @@ const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 export function renderMarkdown (text) {
   return md.render(text || '')
 }
+
+// Above this many characters we render RAW text instead of markdown/KaTeX : parsing
+// a very large buffer (a runaway generation, or replayed on reopen) blocks the main
+// thread, while raw text is cheap. Normal messages sit far below this.
+export const MD_RAW_THRESHOLD = 40000
+
+export function isHugeText (text) {
+  return (text || '').length > MD_RAW_THRESHOLD
+}

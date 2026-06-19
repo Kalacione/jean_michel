@@ -14,9 +14,18 @@
               :variant="m.role === 'user' ? 'flat' : 'tonal'"
             >
               <template v-if="m.role === 'assistant'">
+                <!-- While streaming (or for a pathologically huge block) render RAW
+                     text : markdown+KaTeX over a growing/large buffer blocks the main
+                     thread (froze the tab on long / runaway turns). The settled,
+                     normal-size answer renders as markdown. -->
+                <div v-if="m.streaming" class="md md-raw">{{ m.content }}</div>
+                <div
+                  v-else-if="stripImages(m.content) && isHugeText(m.content)"
+                  class="md md-raw"
+                >{{ stripImages(m.content) }}</div>
                 <!-- eslint-disable-next-line vue/no-v-html -->
                 <div
-                  v-if="stripImages(m.content)"
+                  v-else-if="stripImages(m.content)"
                   class="md"
                   @click="onMdClick"
                   @error.capture="onImgError"
@@ -362,7 +371,7 @@
   import PlanEditor from '@/components/PlanEditor.vue'
   import WorkspaceImage from '@/components/WorkspaceImage.vue'
   import { saveBlob } from '@/download'
-  import { renderMarkdown } from '@/markdown'
+  import { isHugeText, renderMarkdown } from '@/markdown'
   import { useConvStore } from '@/stores/conversations'
 
   const conv = useConvStore()
@@ -624,6 +633,10 @@
 .msg-col { max-width: 80%; }
 .user-text {
   white-space: pre-wrap;
+}
+.md-raw {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .md :deep(p) { margin: 0 0 0.5em; }
 .md :deep(p:last-child) { margin-bottom: 0; }
