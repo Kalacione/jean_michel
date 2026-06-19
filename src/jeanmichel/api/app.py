@@ -177,6 +177,31 @@ def create_app() -> Any:
         temperature: float | None = None
         thinking_mode: bool | None = None
 
+    class ParadigmUpdate(BaseModel):
+        title: str | None = None
+        content: str | None = None
+        rationale: str | None = None        # "" → clear ; None → leave unchanged
+        is_global: bool | None = None
+        order_priority: int | None = None
+        active: bool | None = None
+        modes: list[str] | None = None      # None → leave ; [] → unrestricted (all modes)
+
+    class ParadigmBind(BaseModel):
+        agent: str
+
+    class PromotionApply(BaseModel):
+        conversation_id: str
+        candidate: dict[str, Any]
+        action: str = "create"              # "create" (dark) | "bind" (existing)
+        bind_agent: str | None = None
+        bind_to_code: str | None = None
+        title: str | None = None
+        content: str | None = None
+
+    class PromotionDismiss(BaseModel):
+        conversation_id: str
+        candidate: dict[str, Any]
+
     # ---- health ----------------------------------------------------------
 
     @app.get("/api/health")
@@ -743,6 +768,99 @@ def create_app() -> Any:
         except memory_svc.MemoryOpError as exc:
             raise _memory_http(exc) from exc
         return {"deleted_id": target_id}
+
+    # ---- paradigms (procedural memory : human curation) -------------------
+    # Editor surface for the web ParadigmsDialog (+ admin CLI parity). Reads expose
+    # EVERY paradigm with full metadata ; writes go through db.* (never raw SQL). The
+    # promotion queue (kind='rule' candidates, cross-conversation) is reviewed here.
+    # Route order : the literal /promotions* paths MUST precede /{code} (else {code}
+    # would swallow "promotions").
+    def _paradigm_http(exc: Exception) -> HTTPException:
+        if isinstance(exc, memory_svc.MemoryOpError):
+            return _memory_http(exc)
+        if isinstance(exc, KeyError):
+            return HTTPException(status_code=404, detail=str(exc).strip("\"'"))
+        return HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/paradigms")
+    def list_paradigms(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        with db.connect() as conn:
+            return {"paradigms": db.list_all_paradigms(conn)}
+
+    @app.get("/api/paradigms/promotions")
+    def list_promotions(user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        return {"promotions": consolidation_svc.list_pending_rules()}
+
+    @app.post("/api/paradigms/promotions/apply")
+    def apply_promotion(
+        body: PromotionApply, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                result = consolidation_svc.apply_rule_candidate(
+                    conn, body.candidate, action=body.action,
+                    bind_agent=body.bind_agent, bind_to_code=body.bind_to_code,
+                    title=body.title, content=body.content,
+                )
+        except (KeyError, memory_svc.MemoryOpError) as exc:
+            raise _paradigm_http(exc) from exc
+        consolidation_svc.mark_applied(body.conversation_id, body.candidate)
+        return {"applied": result, "promotions": consolidation_svc.list_pending_rules()}
+
+    @app.post("/api/paradigms/promotions/dismiss")
+    def dismiss_promotion(
+        body: PromotionDismiss, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        consolidation_svc.remove_pending(body.conversation_id, body.candidate)
+        return {"promotions": consolidation_svc.list_pending_rules()}
+
+    @app.get("/api/paradigms/{code}")
+    def get_paradigm(code: str, user: dict = Depends(auth.current_user)) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                return {"paradigm": db.get_paradigm_by_code(conn, code)}
+        except KeyError as exc:
+            raise _paradigm_http(exc) from exc
+
+    @app.patch("/api/paradigms/{code}")
+    def patch_paradigm(
+        code: str, body: ParadigmUpdate, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        patch = body.model_dump(exclude_unset=True)
+        modes = patch.pop("modes", None)
+        try:
+            with db.connect() as conn:
+                db.update_paradigm(conn, code, **patch)
+                if modes is not None:
+                    db.set_paradigm_modes(conn, code, modes)
+                updated = db.get_paradigm_by_code(conn, code)
+        except (KeyError, ValueError) as exc:
+            raise _paradigm_http(exc) from exc
+        return {"paradigm": updated}
+
+    @app.post("/api/paradigms/{code}/bind")
+    def bind_paradigm_route(
+        code: str, body: ParadigmBind, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                db.bind_paradigm(conn, body.agent, code)
+                updated = db.get_paradigm_by_code(conn, code)
+        except KeyError as exc:
+            raise _paradigm_http(exc) from exc
+        return {"paradigm": updated}
+
+    @app.delete("/api/paradigms/{code}/bind/{agent}")
+    def unbind_paradigm_route(
+        code: str, agent: str, user: dict = Depends(auth.current_user)
+    ) -> dict[str, Any]:
+        try:
+            with db.connect() as conn:
+                db.unbind_paradigm(conn, agent, code)
+                updated = db.get_paradigm_by_code(conn, code)
+        except KeyError as exc:
+            raise _paradigm_http(exc) from exc
+        return {"paradigm": updated}
 
     # ---- user profile (structured ; filled at creation, editable by the user) -
 

@@ -517,6 +517,134 @@ def set_paradigm_active(conn: sqlite3.Connection, paradigm_code: str, active: bo
         raise KeyError(f"Unknown paradigm: {paradigm_code}")
 
 
+# ---- Paradigm curation (editor-facing : web ParadigmsDialog + admin CLI) ----
+# Unlike load_paradigms_for_agent (injection : active + mode + agent scoped), these
+# expose EVERY paradigm with full metadata so a human can read / edit / curate them.
+
+_PARADIGM_FULL_SELECT = """
+        SELECT p.id, p.code, p.title, p.content, p.rationale, p.is_global,
+               p.order_priority, p.active, p.created_at, p.modified_at,
+               s.code AS section_code, c.code AS category_code, c.title AS category_title
+        FROM paradigms p
+        JOIN categories c ON c.id = p.category_id
+        JOIN sections   s ON s.id = c.section_id
+        """
+
+# Mirrors the paradigm_modes.mode CHECK in the schema.
+_VALID_MODES = ("analyse", "chat", "vocal", "code")
+
+
+def _paradigm_bindings(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """{paradigm_id: [agent_code, …]} for every explicit binding."""
+    out: dict[int, list[str]] = {}
+    for r in conn.execute(
+        "SELECT ap.paradigm_id AS pid, a.code AS code FROM agent_paradigms ap "
+        "JOIN agents a ON a.id = ap.agent_id ORDER BY a.id",
+    ):
+        out.setdefault(r["pid"], []).append(r["code"])
+    return out
+
+
+def _paradigm_modes_map(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """{paradigm_id: [mode, …]} for every mode restriction."""
+    out: dict[int, list[str]] = {}
+    for r in conn.execute("SELECT paradigm_id AS pid, mode FROM paradigm_modes"):
+        out.setdefault(r["pid"], []).append(r["mode"])
+    return out
+
+
+def _shape_paradigm(row: sqlite3.Row, agents: list[str], modes: list[str]) -> dict[str, Any]:
+    d = dict(row)
+    d["is_global"] = bool(d["is_global"])
+    d["active"] = bool(d["active"])
+    d["agents"] = agents
+    d["modes"] = modes
+    return d
+
+
+def list_all_paradigms(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every paradigm (active or dark) with full metadata + bound agents + modes,
+    ordered section→category→priority. For human curation, not prompt injection."""
+    binds = _paradigm_bindings(conn)
+    modes = _paradigm_modes_map(conn)
+    rows = conn.execute(
+        _PARADIGM_FULL_SELECT
+        + "ORDER BY s.order_priority, c.order_priority, p.order_priority, p.id",
+    ).fetchall()
+    return [_shape_paradigm(r, binds.get(r["id"], []), modes.get(r["id"], [])) for r in rows]
+
+
+def get_paradigm_by_code(conn: sqlite3.Connection, code: str) -> dict[str, Any]:
+    """One paradigm with full metadata + bound agents + modes. Raises KeyError if unknown."""
+    row = conn.execute(_PARADIGM_FULL_SELECT + "WHERE p.code = ?", (code,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown paradigm: {code}")
+    agents = [
+        r["code"] for r in conn.execute(
+            "SELECT a.code AS code FROM agent_paradigms ap JOIN agents a ON a.id = ap.agent_id "
+            "WHERE ap.paradigm_id = ? ORDER BY a.id",
+            (row["id"],),
+        )
+    ]
+    modes = [
+        r["mode"] for r in conn.execute(
+            "SELECT mode FROM paradigm_modes WHERE paradigm_id = ?", (row["id"],),
+        )
+    ]
+    return _shape_paradigm(row, agents, modes)
+
+
+def update_paradigm(
+    conn: sqlite3.Connection,
+    code: str,
+    *,
+    title: str | None = None,
+    content: str | None = None,
+    rationale: str | None = None,
+    is_global: bool | None = None,
+    order_priority: int | None = None,
+    active: bool | None = None,
+) -> None:
+    """Patch any subset of a paradigm's editable fields (None = leave unchanged ; pass
+    rationale='' to clear it). Bumps modified_at and folds in the active toggle — one
+    write path for the editor. Raises KeyError if the code is unknown."""
+    sets: list[str] = []
+    params: list[Any] = []
+    for col, val in (
+        ("title", title),
+        ("content", content),
+        ("rationale", rationale),
+        ("is_global", None if is_global is None else int(is_global)),
+        ("order_priority", order_priority),
+        ("active", None if active is None else int(active)),
+    ):
+        if val is not None:
+            sets.append(f"{col}=?")
+            params.append(val)
+    sets.append("modified_at=?")
+    params.append(_now())
+    params.append(code)
+    result = conn.execute(f"UPDATE paradigms SET {', '.join(sets)} WHERE code=?", params)
+    if result.rowcount == 0:
+        raise KeyError(f"Unknown paradigm: {code}")
+
+
+def set_paradigm_modes(conn: sqlite3.Connection, paradigm_code: str, modes: list[str]) -> None:
+    """Replace a paradigm's mode restrictions atomically. Empty list = unrestricted
+    (injected in every mode). Raises KeyError if unknown, ValueError on an invalid mode."""
+    bad = [m for m in modes if m not in _VALID_MODES]
+    if bad:
+        raise ValueError(f"Invalid mode(s): {', '.join(bad)}")
+    row = conn.execute("SELECT id FROM paradigms WHERE code = ?", (paradigm_code,)).fetchone()
+    if row is None:
+        raise KeyError(f"Unknown paradigm: {paradigm_code}")
+    conn.execute("DELETE FROM paradigm_modes WHERE paradigm_id = ?", (row["id"],))
+    conn.executemany(
+        "INSERT INTO paradigm_modes (paradigm_id, mode) VALUES (?, ?)",
+        [(row["id"], m) for m in modes],
+    )
+
+
 def set_agent_model(conn: sqlite3.Connection, agent_code: str, model: str | None) -> None:
     """Set (or clear) an agent's per-agent model override (``agents.model_override``).
 

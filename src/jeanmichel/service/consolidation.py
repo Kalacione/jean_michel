@@ -320,6 +320,21 @@ def clear_pending(conv_id: str) -> None:
         conn.execute("DELETE FROM pending_consolidation WHERE conversation_id=?", (conv_id,))
 
 
+def list_pending_rules() -> list[dict[str, Any]]:
+    """Every pending RULE candidate across ALL conversations — the promotion queue the
+    web / admin reviewer works from (newest first). Each item carries its conversation_id
+    so the reviewer can apply (then mark_applied) or dismiss it."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT conversation_id, payload FROM pending_consolidation "
+            "WHERE kind='rule' AND status='pending' ORDER BY created_at DESC, id DESC",
+        ).fetchall()
+    return [
+        {"conversation_id": r["conversation_id"], "candidate": json.loads(r["payload"])}
+        for r in rows
+    ]
+
+
 # ---- shadow entry point (called by the CLI / API after the response) ------
 
 def run_shadow(
