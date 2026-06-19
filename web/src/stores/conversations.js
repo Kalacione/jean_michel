@@ -178,6 +178,13 @@ export const useConvStore = defineStore('conversations', () => {
         // Authoritative : the backend pushes this after every persist, so the chips reflect the
         // maintained referent live (no optimistic guess, no stale best-effort refetch).
         if (ev?.type === 'ReferentSnapshot') { convState.value = ev.state; return }
+        // The full todo (todo.json items) isn't carried by the referent — refetch it on
+        // each todo change so the progress-chip tooltip's step list updates LIVE during the
+        // turn (the todo is cleared at completion, so live is the only time it's useful).
+        if (ev?.type === 'TodoInscribed') {
+          const cid = currentId.value
+          api.getTodo(cid).then(r => { if (currentId.value === cid) todo.value = r.todo || null }).catch(() => {})
+        }
         // A tool/delegation means any streamed content so far was intermediate
         // narration (not the final answer) → discard the half-built bubble.
         if (ev?.type === 'ToolCallStarted' || ev?.type === 'DelegationStarted') {
