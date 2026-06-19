@@ -60,11 +60,14 @@
           </div>
         </v-slide-y-transition>
         <!-- Live thinking : the current agent's reasoning streaming in, before the
-             canonical AgentThinking row settles it. Always expanded while it grows. -->
+             canonical AgentThinking row settles it. Always expanded while it grows.
+             RAW text on purpose — rendering markdown+KaTeX over the GROWING buffer on
+             EVERY streamed token is O(n²) and froze the tab on long / runaway streams.
+             The buffer stays fully live (watch the entrails + abort) ; the settled
+             AgentThinking row above renders markdown once it's done. -->
         <div v-if="liveThinking" class="trace-row d-flex ga-2 align-start">
           <v-icon class="think-toggle" color="purple" icon="mdi-menu-down" size="16" />
-          <!-- eslint-disable-next-line vue/no-v-html -->
-          <div class="think-body font-italic text-medium-emphasis flex-grow-1" v-html="renderMarkdown(liveThinking)" />
+          <div class="think-body think-live font-italic text-medium-emphasis flex-grow-1">{{ liveThinking }}</div>
         </div>
       </div>
     </v-expand-transition>
@@ -181,6 +184,12 @@
 }
 .think-body.collapsed {
   max-height: 3.2em;           /* peek : ~2 lines */
+}
+/* Live (un-settled) thinking is shown as RAW text : preserve newlines + wrap long
+   tokens. No markdown/KaTeX while streaming → the per-token path stays O(1). */
+.think-live {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .think-body :deep(p) { margin: 0 0 0.3em; }
 .think-body :deep(p:last-child) { margin-bottom: 0; }
