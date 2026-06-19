@@ -23,6 +23,7 @@
     </v-badge>
     <v-btn icon="mdi-account-cog" title="Profil" @click="profile = true" />
     <v-btn icon="mdi-robot-outline" title="Réglages des agents" @click="agents = true" />
+    <v-btn icon="mdi-script-text-outline" title="Paradigmes" @click="paradigms = true" />
     <v-btn icon="mdi-theme-light-dark" title="Thème" @click="$vuetify.theme.cycle()" />
     <v-chip class="ml-2" prepend-icon="mdi-account" variant="tonal">
       {{ auth.user?.username }}
@@ -52,6 +53,7 @@
   <MemoryReviewDialog v-model="review" />
   <ProfileDialog v-model="profile" />
   <AgentsDialog v-model="agents" />
+  <ParadigmsDialog v-model="paradigms" />
 
   <v-snackbar
     v-model="snackbar.visible"
@@ -71,6 +73,7 @@
   import ConversationsDrawer from '@/components/ConversationsDrawer.vue'
   import MemoryDialog from '@/components/MemoryDialog.vue'
   import MemoryReviewDialog from '@/components/MemoryReviewDialog.vue'
+  import ParadigmsDialog from '@/components/ParadigmsDialog.vue'
   import ProfileDialog from '@/components/ProfileDialog.vue'
   import WorkspaceDialog from '@/components/WorkspaceDialog.vue'
   import { useAuthStore } from '@/stores/auth'
@@ -86,6 +89,7 @@
   const review = ref(false)
   const profile = ref(false)
   const agents = ref(false)
+  const paradigms = ref(false)
 
   let notif = null
   let notifClosing = false

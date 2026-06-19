@@ -168,6 +168,18 @@ export const api = {
   listModels: () => request('GET', '/models'),
   updateAgent: (code, patch) => request('PUT', `/agents/${code}`, patch),
 
+  // Paradigms (procedural memory : curation). updateParadigm patch :
+  // {title?, content?, rationale?, is_global?, order_priority?, active?, modes?}.
+  listParadigms: () => request('GET', '/paradigms'),
+  getParadigm: code => request('GET', `/paradigms/${code}`),
+  updateParadigm: (code, patch) => request('PATCH', `/paradigms/${code}`, patch),
+  bindParadigm: (code, agent) => request('POST', `/paradigms/${code}/bind`, { agent }),
+  unbindParadigm: (code, agent) => request('DELETE', `/paradigms/${code}/bind/${agent}`),
+  listPromotions: () => request('GET', '/paradigms/promotions'),
+  applyPromotion: payload => request('POST', '/paradigms/promotions/apply', payload),
+  dismissPromotion: (conversationId, candidate) =>
+    request('POST', '/paradigms/promotions/dismiss', { conversation_id: conversationId, candidate }),
+
   // TTS is auth-gated, so an <audio src> can't carry the token : fetch with the
   // header and return a Blob the caller plays via the Web Audio / Audio API.
   async tts (text) {
