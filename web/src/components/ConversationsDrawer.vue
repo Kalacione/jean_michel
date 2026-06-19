@@ -45,7 +45,7 @@
         :key="c.id"
         :active="c.id === conv.currentId"
         class="conv-item"
-        prepend-icon="mdi-message-text-outline"
+        :prepend-icon="modeIcon(c.mode)"
         :subtitle="`${c.mode} · ${c.status}`"
         :title="c.title || c.id.slice(0, 8)"
         @click="conv.select(c.id)"
@@ -88,6 +88,17 @@
   const detailsOpen = ref(false)
   const projectsOpen = ref(false)
   const selected = ref(null)
+
+  // Icône par mode → la liste des conversations est plus parlante d'un coup d'œil.
+  const MODE_ICONS = {
+    chat: 'mdi-chat-outline',
+    vocal: 'mdi-microphone-outline',
+    analyse: 'mdi-telescope',
+    code: 'mdi-code-tags',
+  }
+  function modeIcon (m) {
+    return MODE_ICONS[m] || 'mdi-message-text-outline'
+  }
 
   onMounted(() => projects.refresh())
 
