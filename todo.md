@@ -8,11 +8,6 @@
 - **Enforcement plan-mode `todo_write`** : le garde mode-PLAN exige déjà `plan_write` ; reste le glissement où le
   modèle narre la todo en prose au lieu d'appeler l'outil.
 
-## Bugs / à revérifier en live
-- **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
-  garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
-- Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
-
 
 ## consolidation
 
