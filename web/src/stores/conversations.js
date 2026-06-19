@@ -36,6 +36,7 @@ export const useConvStore = defineStore('conversations', () => {
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
   const planEditorOpen = ref(false) // inline plan (todo) editor dialog state
   const convState = ref(null) // the organizational REFERENT (state.json) : phase, plans, todos, files, subagents
+  const todo = ref(null) // full todo tracker (todo.json : {goal, items[{id,text,status}]}) — feeds the progress chip's step tooltip
   // The Approve/Refine bar is a PURE PROJECTION of the authoritative referent (live via ReferentSnapshot,
   // reloaded on select) — not a separate getPlan/status flag that could desync. phase=awaiting_approval ⇒ show it.
   const awaitingApproval = computed(() => convState.value?.phase === 'awaiting_approval')
@@ -121,6 +122,7 @@ export const useConvStore = defineStore('conversations', () => {
     planMode.value = currentMode.value === 'code' || currentMode.value === 'analyse'
     plan.value = null
     convState.value = null
+    todo.value = null
     streamingMsg = null
     liveThinking.value = ''
     trace.value = []
@@ -145,6 +147,7 @@ export const useConvStore = defineStore('conversations', () => {
     trace.value = ev.map(e => ({ type: 'event', event: e })) // match the live WS frame shape
     plan.value = pl.plan || null // rich plan markdown survives reload (shown in the Approve bar / editor)
     convState.value = st // the referent (phase/plans/todos/files/subagents) — drives the chips AND the Approve bar
+    todo.value = td // full tracker (todo.json) — the progress chip tooltip lists the steps
     // An already-accepted plan → default the selector to Edit so a continuation message
     // executes/continues instead of silently re-planning (the reload re-arm bug).
     if (pl.status === 'accepted') planMode.value = false
@@ -208,6 +211,7 @@ export const useConvStore = defineStore('conversations', () => {
         // Load the plan markdown for the Approve bar's CONTENT. The bar's VISIBILITY is driven by the
         // referent (convState.phase, pushed live by the end-of-turn ReferentSnapshot) — not by this fetch.
         api.getPlan(id).then(r => { plan.value = r.plan || null }).catch(() => {})
+        api.getTodo(id).then(r => { todo.value = r.todo || null }).catch(() => {})
         // convState is already up to date : the orchestrator pushed an authoritative end-of-turn
         // ReferentSnapshot over the WS just before {final} (no separate best-effort GET needed).
         refresh() // re-order the list (last interaction first) + pick up auto-title
@@ -366,7 +370,7 @@ export const useConvStore = defineStore('conversations', () => {
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planAvailable, awaitingApproval, plan, planEditorOpen, convState,
+    currentMode, planMode, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo,
     refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,

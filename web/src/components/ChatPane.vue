@@ -160,12 +160,32 @@
       <v-chip v-if="activeTodo && activeTodo.total" label size="x-small" variant="tonal">
         <v-icon icon="mdi-checkbox-marked-outline" size="13" start />
         {{ activeTodo.done }}/{{ activeTodo.total }}
+        <v-tooltip activator="parent" location="top">
+          <div class="todo-tip text-left">
+            <div v-if="conv.todo?.goal" class="font-weight-medium mb-1">{{ conv.todo.goal }}</div>
+            <template v-if="conv.todo?.items?.length">
+              <div v-for="it in conv.todo.items" :key="it.id" class="d-flex align-start ga-1">
+                <v-icon class="mt-1" :color="stepMeta(it.status).color" :icon="stepMeta(it.status).icon" size="12" />
+                <span :class="it.status === 'done' ? 'text-decoration-line-through text-medium-emphasis' : ''">
+                  {{ it.text }}
+                </span>
+              </div>
+            </template>
+            <span v-else>{{ activeTodo.done }}/{{ activeTodo.total }} étapes faites</span>
+          </div>
+        </v-tooltip>
       </v-chip>
       <v-chip v-if="fileCount" label size="x-small" variant="text">
         <v-icon icon="mdi-file-outline" size="13" start /> {{ fileCount }}
+        <v-tooltip activator="parent" location="top">
+          {{ fileCount }} fichier{{ fileCount > 1 ? 's' : '' }} produit{{ fileCount > 1 ? 's' : '' }} dans le workspace
+        </v-tooltip>
       </v-chip>
       <v-chip v-if="subCount" label size="x-small" variant="text">
         <v-icon icon="mdi-account-multiple-outline" size="13" start /> {{ subCount }}
+        <v-tooltip activator="parent" location="top">
+          {{ subCount }} sous-agent{{ subCount > 1 ? 's' : '' }} délégué{{ subCount > 1 ? 's' : '' }} dans cette conversation
+        </v-tooltip>
       </v-chip>
       <v-chip
         v-if="supersededPlans.length"
@@ -421,6 +441,13 @@
   const fileCount = computed(() => conv.convState?.files?.length || 0)
   const subCount = computed(() => conv.convState?.subagents?.length || 0)
 
+  // Icon + colour for a todo step status (the progress-chip tooltip's step list).
+  function stepMeta (status) {
+    if (status === 'done') return { icon: 'mdi-check-circle', color: 'success' }
+    if (status === 'in_progress') return { icon: 'mdi-progress-clock', color: 'primary' }
+    return { icon: 'mdi-circle-outline', color: 'medium-emphasis' }
+  }
+
   // ---- plan history (superseded plans, Phase 2) --------------------------
   const supersededPlans = computed(() => {
     const plans = conv.convState?.plans || {}
@@ -638,6 +665,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.todo-tip { max-width: 320px; }
 .md :deep(p) { margin: 0 0 0.5em; }
 .md :deep(p:last-child) { margin-bottom: 0; }
 .md :deep(pre) {
