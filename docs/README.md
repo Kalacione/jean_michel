@@ -17,7 +17,8 @@ Index des **références vivantes** (tenues à jour). Les vieux plans/audits dat
   garde-fou fait conclure une boucle sans progrès.
 - **Mémoire & paradigmes** : mémoire sémantique (faits scopés user/project/tool, classés par importance) +
   procédurale (paradigmes) enrichies par **proposition → revue humaine** (outil `propose_memory` + un beat de
-  réflexion en fin de tour deep) ; `manage_memory` est lecture seule. Détail → [memory_architecture.md](memory_architecture.md).
+  réflexion en fin de tour deep) ; `manage_memory` est lecture seule. Curation des paradigmes dans l'app
+  (`ParadigmsDialog`) ou en CLI (`admin.py`). Détail → [memory_architecture.md](memory_architecture.md).
 - **Maths** : le LaTeX du chat est rendu en KaTeX.
 - **Modèles** : config dans `models.toml` (`[roles]`, `[context_window]`, `no_thinking`, `[voice]` ; défauts
   committés dans `models.example.toml`, env prioritaire) ; `num_ctx` épinglé par modèle, plafond 128k (anti-OOM

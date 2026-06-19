@@ -53,7 +53,6 @@ Commands:
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
                               (alias: --backup-db)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
-  --paradigm-matrix           Open the paradigm matrix editor at http://localhost:8770
   --synoptic [--stdout]       Generate the agent synoptic diagram from the DB (docs/agents_synoptic.md)
   --orchestrator-map [--stdout]  Generate the orchestrator determinism reference (docs/orchestrator_determinism.md)
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
@@ -261,16 +260,6 @@ cmd_browse_db() {
   exec sqlite_web "${DB_PATH}"
 }
 
-cmd_paradigm_matrix() {
-  ensure_venv
-  if [ ! -f "${DB_PATH}" ]; then
-    echo "Error: database not found at ${DB_PATH}" >&2
-    echo "Run ./jm.sh --install first." >&2
-    exit 1
-  fi
-  exec python "${PROJECT_ROOT}/debug/paradigm_matrix.py" "$@"
-}
-
 cmd_synoptic() {
   # Generate the agent synoptic diagram (mermaid + roster) from the live DB.
   ensure_venv
@@ -384,10 +373,6 @@ case "${COMMAND}" in
   --browse-db)
     shift
     cmd_browse_db "$@"
-    ;;
-  --paradigm-matrix)
-    shift
-    cmd_paradigm_matrix "$@"
     ;;
   --synoptic)
     shift

@@ -729,8 +729,7 @@ jeanmichel/
 │   ├── inspect_conv.py       # lit messages.json + events.jsonl + state.json
 │   ├── export_db.py
 │   ├── admin.py
-│   ├── clean_convs.py
-│   └── paradigm_matrix.py
+│   └── clean_convs.py
 ├── docker/sandbox/           # Dockerfiles sandbox (py-alpine, node-alpine, repo-default)
 ├── docker/searxng/           # compose.yml du méta-moteur local
 ├── voice_models/             # Piper .onnx + README (gitignored sauf README)

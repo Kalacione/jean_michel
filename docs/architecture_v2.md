@@ -1315,7 +1315,7 @@ valide. Interventions ciblées :
 | `--build-docker`        | conservée  | Aucun changement — les Dockerfiles sandbox sont inchangés.                                                         |
 | `--export-db`           | conservée  | Plus rapide après v2 (DB plus petite). Aucun changement de signature.                                              |
 | `--browse-db`           | conservée  | Idem.                                                                                                              |
-| `--paradigm-matrix`     | conservée  | Outil de visualisation reste pertinent (paradigmes survivent en BDD).                                              |
+| `--paradigm-matrix`     | **retirée**  | Remplacée par la curation intégrée à l'app web (`ParadigmsDialog`) ; `--admin` reste le repli CLI.                |
 | `--admin`               | conservée  | Le REPL gère agents/tools/paradigmes. Doit pouvoir éditer la nouvelle table `user_memory` aussi (extension).       |
 | `--inspect-conv`        | **à refondre** | Lit actuellement les tables `requests` / `artifacts` qu'on supprime. Doit lire `messages.json` + `events.jsonl` + `subagent_*.json` du dossier conversation. |
 | `--clean`               | conservée  | Devient plus simple (moins de tables à `DELETE`). Vérifier que `clean_convs.py` ne référence plus les tables virées.|

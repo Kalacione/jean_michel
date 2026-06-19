@@ -47,8 +47,10 @@ les paradigmes (sans filtre d'agent) : si un paradigme proche existe mais n'est 
   jusqu'à ce que l'humain l'active + le bind — anti-bloat du prompt, rien ne s'auto-applique ;
 - **bind** → `db.bind_paradigm` sur un paradigme existant.
 
-Intervention CLI sur les paradigmes : `debug/admin.py` — `paradigm <code>` (content + rationale + bindings),
-`paradigms` (liste + preview), `promotions` (revue des candidats-règle), `bind`/`toggle-paradigm`.
+Curation des paradigmes : dans l'**app web** (`ParadigmsDialog` — catalogue éditable : content + rationale +
+modes + bindings, et un onglet **Promotions** qui revoit les candidats-règle) ou en **CLI** (`debug/admin.py` :
+`paradigm <code>`, `paradigms`, `promotions`, `bind`/`toggle-paradigm`). Le serveur autonome `paradigm_matrix`
+(antérieur à l'app web) a été retiré.
 
 ## Les fichiers
 `service/memory.py` (CRUD + FTS) · `service/consolidation.py` (propose / add_candidate / add_rule_candidate /
