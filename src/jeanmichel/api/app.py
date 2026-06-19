@@ -208,6 +208,14 @@ def create_app() -> Any:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/capabilities")
+    def capabilities(user: dict = Depends(auth.current_user)) -> dict[str, bool]:
+        """Optional-feature flags for the UI (e.g. hide the mic button when the STT
+        [audio] extra isn't installed)."""
+        from .. import stt as stt_mod
+
+        return {"stt": stt_mod.is_available()}
+
     # ---- auth ------------------------------------------------------------
 
     @app.post("/api/auth/login")

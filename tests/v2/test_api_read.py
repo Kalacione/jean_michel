@@ -729,6 +729,20 @@ def test_stt_unavailable_returns_503(client, monkeypatch):
     assert r.status_code == 503
 
 
+def test_capabilities_requires_auth(client):
+    assert client.get("/api/capabilities").status_code == 401
+
+
+def test_capabilities_reports_stt(client, monkeypatch):
+    from jeanmichel import stt
+
+    monkeypatch.setattr(stt, "is_available", lambda: True)
+    _make_user("alice", "pw")
+    token = _login(client, "alice", "pw")
+    body = client.get("/api/capabilities", headers=_auth(token)).json()
+    assert body["stt"] is True
+
+
 def test_project_code_repo_roundtrip(client):
     """The project API round-trips code_repo/repo_kind (create + patch + validation)."""
     _make_user("alice", "pw")

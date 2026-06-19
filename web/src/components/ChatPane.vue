@@ -325,8 +325,10 @@
           </v-list>
         </v-card>
       </v-menu>
-      <!-- Dictée vocale : MediaRecorder → /api/stt → remplit le champ (relecture avant envoi). -->
+      <!-- Dictée vocale (si STT dispo) : MediaRecorder → /api/stt → remplit le champ
+           (relecture) ; en mode vocal, envoi automatique. -->
       <v-btn
+        v-if="conv.sttAvailable"
         :color="recording ? 'error' : undefined"
         :disabled="conv.busy || transcribing"
         :icon="recording ? 'mdi-stop' : 'mdi-microphone'"
@@ -627,13 +629,21 @@
     attachments.value = []
   }
 
-  // ---- Voice input (dictée) : MediaRecorder → POST /api/stt → fill the draft.
-  // On remplit le champ (pas d'auto-envoi) : le STT peut se tromper, on relit/corrige.
+  // ---- Voice input (dictée) : MediaRecorder → POST /api/stt → remplit le champ.
+  // Le flux micro est gardé CHAUD entre deux dictées (latence ~0 après la 1ʳᵉ fois),
+  // libéré au unmount. En mode VOCAL on envoie direct (le Stop reste dispo) ; ailleurs on
+  // remplit le champ pour relecture/correction.
   const recording = ref(false)
   const transcribing = ref(false)
   let mediaRecorder = null
   let mediaStream = null
   let audioChunks = []
+
+  async function ensureStream () {
+    if (mediaStream && mediaStream.active) return mediaStream
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    return mediaStream
+  }
 
   async function toggleMic () {
     if (recording.value) {
@@ -641,14 +651,15 @@
       recording.value = false
       return
     }
+    let stream
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await ensureStream()  // 1ʳᵉ fois : ~1-2 s (permission + ouverture du micro) ; instantané ensuite
     } catch {
       snackbar.value = { show: true, color: 'error', text: 'Micro indisponible (permission refusée ?).' }
       return
     }
     audioChunks = []
-    mediaRecorder = new MediaRecorder(mediaStream)
+    mediaRecorder = new MediaRecorder(stream)
     mediaRecorder.ondataavailable = e => { if (e.data.size) audioChunks.push(e.data) }
     mediaRecorder.onstop = transcribeRecording
     mediaRecorder.start()
@@ -656,14 +667,17 @@
   }
 
   async function transcribeRecording () {
-    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null }
+    // On ne coupe PAS le flux (mediaStream) — gardé chaud pour la prochaine dictée.
     const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
     audioChunks = []
     if (!blob.size) return
     transcribing.value = true
     try {
       const { text } = await api.stt(blob)
-      if (text) draft.value = draft.value ? `${draft.value} ${text}` : text
+      if (text) {
+        draft.value = draft.value ? `${draft.value} ${text}` : text
+        if (conv.currentMode === 'vocal') send()  // mode vocal : envoi automatique
+      }
     } catch (e) {
       snackbar.value = { show: true, color: 'error', text: e.detail || 'Transcription indisponible.' }
     } finally {

@@ -123,6 +123,7 @@
 
   onMounted(() => {
     conv.refresh()
+    conv.loadCapabilities()
     openNotifications()
   })
 

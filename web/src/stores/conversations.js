@@ -32,6 +32,7 @@ export const useConvStore = defineStore('conversations', () => {
   const wsInitialPath = ref('') // file to auto-open when the WorkspaceDialog opens
   const pendingMemory = ref([]) // shadow-consolidation candidates awaiting review
   const currentMode = ref('') // task mode of the selected conversation
+  const sttAvailable = ref(false) // backend STT (faster-whisper) installed → show the mic button
   const planMode = ref(false) // Plan/Edit selector value (sticky ; Plan = no mutation)
   const planTurn = ref(false) // is the RUNNING turn a plan turn (isPlan at send) → suppress streaming the plan draft as a chat bubble
   const plan = ref(null) // rich plan document (plan.md markdown) of the current conversation
@@ -380,11 +381,16 @@ export const useConvStore = defineStore('conversations', () => {
     if (m && m.conv_id === currentId.value) pendingMemory.value = m.candidates || []
   }
 
+  // Optional-feature flags (e.g. STT) → drives conditional UI like the mic button.
+  async function loadCapabilities () {
+    try { sttAvailable.value = !!(await api.capabilities()).stt } catch { sttAvailable.value = false }
+  }
+
   return {
     list, currentId, messages, trace, liveThinking, busy, stopping, queued, dispatch, askHuman, error, vocal,
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
-    currentMode, planMode, planTurn, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo,
-    refresh, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
+    currentMode, planMode, planTurn, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo, sttAvailable,
+    refresh, loadCapabilities, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
     fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
     loadSnapshots, revert, fork, reloadCurrent,
   }

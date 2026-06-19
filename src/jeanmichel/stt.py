@@ -12,6 +12,7 @@ absent the import fails and voice input is simply disabled.
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import logging
 
@@ -20,6 +21,13 @@ from . import config
 _log = logging.getLogger(__name__)
 
 _model_singleton = None  # faster_whisper.WhisperModel, lazy-loaded
+
+
+def is_available() -> bool:
+    """True if faster-whisper is importable (the [audio] extra is installed). Cheap :
+    checks the import spec WITHOUT loading the model — lets the UI hide the mic button
+    when voice input can't run."""
+    return importlib.util.find_spec("faster_whisper") is not None
 
 
 def _load_model():

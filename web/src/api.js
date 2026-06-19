@@ -48,6 +48,7 @@ async function request (method, path, body) {
 export const api = {
   login: (username, password) => request('POST', '/auth/login', { username, password }),
   me: () => request('GET', '/auth/me'),
+  capabilities: () => request('GET', '/capabilities'),
 
   listConversations: () => request('GET', '/conversations'),
   createConversation: (mode, projectId = null) =>
