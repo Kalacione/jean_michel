@@ -29,6 +29,7 @@ pass dataclasses directly.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import threading
@@ -313,12 +314,47 @@ def _emit_referent(emitter: EventEmitter | None, state: ConversationState) -> No
     _emit(emitter, None, ReferentSnapshot(state=asdict(state)))
 
 
+def _arg_mismatch_error(name: str, handler: Any, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """Validate the model's call `arguments` against the handler signature. Returns a
+    structured, instructive error when they don't fit (unknown / missing params), else
+    None — the call then proceeds UNCHANGED (no behaviour change on the happy path). A
+    clean error beats a leaky Python TypeError : a local model that fumbles a parameter
+    name (e.g. blends two into 'content_relative_path') recovers in one step. Generic —
+    every registry tool benefits. Handlers taking **kwargs (e.g. MCP proxies) accept
+    anything, so they are skipped."""
+    if not isinstance(arguments, dict):
+        return None
+    try:
+        params = inspect.signature(handler).parameters
+    except (TypeError, ValueError):
+        return None  # uninspectable → don't regress, let the call run
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return None
+    named = {
+        n: p for n, p in params.items()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    unexpected = sorted(k for k in arguments if k not in named)
+    missing = [n for n, p in named.items() if p.default is inspect.Parameter.empty and n not in arguments]
+    if not unexpected and not missing:
+        return None
+    issues = []
+    if unexpected:
+        issues.append(f"unknown argument(s): {', '.join(unexpected)}")
+    if missing:
+        issues.append(f"missing required argument(s): {', '.join(missing)}")
+    required = [n for n, p in named.items() if p.default is inspect.Parameter.empty]
+    valid = f"Valid arguments: {', '.join(named) or '(none)'}"
+    valid += f" (required: {', '.join(required)})." if required else "."
+    return {"error": "bad_arguments", "summary": f"Tool '{name}': {'; '.join(issues)}. {valid}"}
+
+
 def _execute_native_tool(call: ToolCall, registry: dict[str, Any]) -> dict[str, Any]:
     """Run a registry tool handler. Returns the parsed JSON result.
 
     The handler always returns a JSON string (cf. `tool_ok` / `tool_error`).
-    Parsing failures are surfaced as a structured error so the loop never
-    crashes on a bad tool.
+    Argument mismatches (a fumbled param name) and parsing failures are surfaced
+    as structured errors so the loop never crashes on a bad tool.
     """
     spec = registry.get(call.name)
     if spec is None:
@@ -326,6 +362,9 @@ def _execute_native_tool(call: ToolCall, registry: dict[str, Any]) -> dict[str, 
             "error": "unknown_tool",
             "summary": f"Tool '{call.name}' not in registry.",
         }
+    mismatch = _arg_mismatch_error(call.name, spec.handler, call.arguments)
+    if mismatch is not None:
+        return mismatch
     try:
         raw = spec.handler(**call.arguments)
     except Exception as exc:  # noqa: BLE001
