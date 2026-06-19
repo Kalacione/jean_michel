@@ -325,6 +325,16 @@
           </v-list>
         </v-card>
       </v-menu>
+      <!-- Dictée vocale : MediaRecorder → /api/stt → remplit le champ (relecture avant envoi). -->
+      <v-btn
+        :color="recording ? 'error' : undefined"
+        :disabled="conv.busy || transcribing"
+        :icon="recording ? 'mdi-stop' : 'mdi-microphone'"
+        :loading="transcribing"
+        :title="recording ? 'Arrêter la dictée' : 'Dictée vocale'"
+        variant="text"
+        @click="toggleMic"
+      />
       <!-- Plan/Edit selector (code & analyse only) : Plan = read-only, produce a plan
            for approval ; Edit = normal execution. Sticky between turns. -->
       <v-btn-toggle
@@ -386,7 +396,7 @@
 </template>
 
 <script setup>
-  import { computed, nextTick, ref, watch } from 'vue'
+  import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
   import { api } from '@/api'
   import EventTrace from '@/components/EventTrace.vue'
   import PlanEditor from '@/components/PlanEditor.vue'
@@ -616,6 +626,54 @@
     draft.value = ''
     attachments.value = []
   }
+
+  // ---- Voice input (dictée) : MediaRecorder → POST /api/stt → fill the draft.
+  // On remplit le champ (pas d'auto-envoi) : le STT peut se tromper, on relit/corrige.
+  const recording = ref(false)
+  const transcribing = ref(false)
+  let mediaRecorder = null
+  let mediaStream = null
+  let audioChunks = []
+
+  async function toggleMic () {
+    if (recording.value) {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop()
+      recording.value = false
+      return
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      snackbar.value = { show: true, color: 'error', text: 'Micro indisponible (permission refusée ?).' }
+      return
+    }
+    audioChunks = []
+    mediaRecorder = new MediaRecorder(mediaStream)
+    mediaRecorder.ondataavailable = e => { if (e.data.size) audioChunks.push(e.data) }
+    mediaRecorder.onstop = transcribeRecording
+    mediaRecorder.start()
+    recording.value = true
+  }
+
+  async function transcribeRecording () {
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null }
+    const blob = new Blob(audioChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
+    audioChunks = []
+    if (!blob.size) return
+    transcribing.value = true
+    try {
+      const { text } = await api.stt(blob)
+      if (text) draft.value = draft.value ? `${draft.value} ${text}` : text
+    } catch (e) {
+      snackbar.value = { show: true, color: 'error', text: e.detail || 'Transcription indisponible.' }
+    } finally {
+      transcribing.value = false
+    }
+  }
+
+  onBeforeUnmount(() => {
+    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop())
+  })
 
   async function downloadFile (p) {
     const blob = await api.downloadWorkspace(conv.currentId, p)

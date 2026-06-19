@@ -189,4 +189,22 @@ export const api = {
     })
     return res.ok ? res.blob() : null
   },
+
+  // STT (voice input) : POST the recorded audio blob (multipart) → { text, language }.
+  async stt (audioBlob) {
+    const token = getToken()
+    const form = new FormData()
+    form.append('file', audioBlob, 'audio.webm')
+    const res = await fetch('/api/stt', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try { detail = (await res.json()).detail ?? detail } catch { /* non-JSON */ }
+      throw new ApiError(res.status, detail)
+    }
+    return res.json()
+  },
 }
