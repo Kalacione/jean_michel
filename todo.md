@@ -5,17 +5,10 @@
 ## Plan / todo — reste
 - **Steering en cours de tour** : avec le multi-plan, pouvoir réorienter pendant l'exécution d'un plan.
   Prend un chemin d'analyse en cours de plan ; à creuser.
-- **Todo multiple** (par-id, comme les plans) : aujourd'hui les **plans sont multiples** (`workspace/plan_<id>.md`,
-  supersede déterministe au re-plan, historique en lecture seule dans l'UI) mais le **todo reste unique**
-  (`todo.json` à la racine, le courant écrase). Cible : un todo par demande **et** le todo comme outil de
-  **suivi de progression des subagents** sur les opérations longues. (Déféré le 2026-06-17 — « on a plus urgent ».)
 - **Enforcement plan-mode `todo_write`** : le garde mode-PLAN exige déjà `plan_write` ; reste le glissement où le
   modèle narre la todo en prose au lieu d'appeler l'outil.
 
 ## Bugs / à revérifier en live
-- **Plan mode : plan narré en « message »** — en mode plan, le modèle streame parfois le plan dans le canal
-  content (visible) avant `plan_write` ; jeté à l'appel d'outil (non persisté), donc cosmétique. Piste : ne pas
-  rendre le stream content en mode plan (le front connaît `isPlan` ; ou le backend ne l'émet pas).
 - **Stop + garde-fou boucle** (livrés R5 : Stop ferme la connexion Ollama + annule pendant les tool calls ;
   garde-fou sans-progrès conclut seul) → à **valider en live** (Stop d'une action longue pas encore testé).
 - Hallucination d'agents sur des fichiers hors workspace (probable compaction) — `conversations/2026-06-13_19-20_dfcafc75…`.
