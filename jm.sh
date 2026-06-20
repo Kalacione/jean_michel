@@ -125,7 +125,7 @@ cmd_install() {
   echo "[2/4] Installing dependencies"
   pip install --upgrade pip >/dev/null
   pip cache purge >/dev/null 2>&1 || true
-  pip install -e ".[dev,web,mcp]"
+  pip install -e ".[dev,web,mcp,audio]"
 
   # ---- database -----------------------------------------------------------
   echo "[3/4] Initializing SQLite database"
