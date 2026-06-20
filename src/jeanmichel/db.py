@@ -29,6 +29,46 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def apply_pending_migrations(db_path: Path, migrations_dir: Path) -> list[str]:
+    """Apply ``migrate_<NNN>_*.sql`` files whose NNN > the DB's ``PRAGMA user_version``,
+    in numeric order, each wrapped in its OWN transaction + a ``user_version`` bump, and
+    stop at the first failure (no half-migrated DB). Returns the applied filenames.
+
+    ``db/schema.sql`` is the baseline (``user_version 0``) : a fresh install is already up
+    to date, so this is a no-op until a new migration lands. Idempotent (nothing pending → []).
+    """
+    pending: list[tuple[int, Path]] = []
+    for p in Path(migrations_dir).glob("migrate_*.sql"):
+        try:
+            num = int(p.name.split("_")[1])
+        except (IndexError, ValueError):
+            continue  # not a migrate_<NNN>_*.sql file
+        pending.append((num, p))
+    pending.sort()
+
+    applied: list[str] = []
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        for num, path in pending:
+            if num <= current:
+                continue
+            # One transaction per migration (+ the version bump) → all-or-nothing.
+            conn.executescript(
+                "BEGIN;\n"
+                + path.read_text(encoding="utf-8")
+                + f"\nPRAGMA user_version = {num};\nCOMMIT;"
+            )
+            applied.append(path.name)
+    except Exception:
+        conn.rollback()  # roll back the failed (still-open) migration ; earlier ones stay committed
+        raise
+    finally:
+        conn.close()
+    return applied
+
+
 # ---- Agents ---------------------------------------------------------------
 
 def list_active_agents(conn: sqlite3.Connection) -> list[Agent]:

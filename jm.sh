@@ -53,6 +53,7 @@ Commands:
   --export-db [--out FILE]    Dump DB to backups/db_TIMESTAMP.sql (or FILE)
                               (alias: --backup-db)
   --browse-db                 Open the database in sqlite_web at http://localhost:8080
+  --migrate                   Apply pending DB migrations (auto --export-db snapshot first)
   --synoptic [--stdout]       Generate the agent synoptic diagram from the DB (docs/agents_synoptic.md)
   --orchestrator-map [--stdout]  Generate the orchestrator determinism reference (docs/orchestrator_determinism.md)
   --inspect-conv ID [...]     Inspect artifacts of a conversation (by ID prefix)
@@ -239,6 +240,25 @@ cmd_export_db() {
   fi
 }
 
+cmd_migrate() {
+  # Apply pending DB migrations to an EXISTING database (schema.sql = baseline, the
+  # migrations under db/migrations/ bump it forward). Snapshots the DB first.
+  ensure_venv
+  if [ ! -f "${DB_PATH}" ]; then
+    echo "Error: database not found at ${DB_PATH} — run ./jm.sh --install first." >&2
+    exit 1
+  fi
+  echo "Snapshot before migrating…"
+  cmd_export_db                       # backup to backups/db_TIMESTAMP.sql (no --out → no exec)
+  echo "Applying pending migrations…"
+  python -c "
+from pathlib import Path
+from jeanmichel import db
+applied = db.apply_pending_migrations(Path('${DB_PATH}'), Path('${PROJECT_ROOT}/db/migrations'))
+print('  Applied: ' + ', '.join(applied) if applied else '  Already up to date (no pending migration).')
+"
+}
+
 cmd_clean() {
   ensure_venv
   exec python "${PROJECT_ROOT}/debug/clean_convs.py" "$@"
@@ -373,6 +393,10 @@ case "${COMMAND}" in
   --browse-db)
     shift
     cmd_browse_db "$@"
+    ;;
+  --migrate)
+    shift
+    cmd_migrate "$@"
     ;;
   --synoptic)
     shift
