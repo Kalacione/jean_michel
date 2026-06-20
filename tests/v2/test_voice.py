@@ -60,6 +60,23 @@ def test_synthesize_to_bytes_empty_text_returns_none():
     assert voice.synthesize_to_bytes("   ") is None
 
 
+def test_strip_markdown_drops_image_and_bare_urls():
+    strip = voice._strip_markdown_for_tts
+    # Image whose alt IS a URL (common for generated/web images) → dropped entirely.
+    out = strip("Voici ![https://ex.com/a.png](https://ex.com/a.png) un graphe.")
+    assert "http" not in out and "ex.com" not in out
+    assert "Voici" in out and "un graphe" in out
+    # Image URL with parens (Wikipedia-style) → no leftover fragment read aloud.
+    out2 = strip("![x](https://e.com/File_(2024).jpg) suite")
+    assert "http" not in out2 and ".jpg" not in out2 and "2024" not in out2
+    assert "suite" in out2
+    # Regular link : keep the visible text, drop the URL.
+    out3 = strip("vois [la doc](https://e.com/doc) ici")
+    assert "la doc" in out3 and "ici" in out3 and "http" not in out3
+    # Bare URL (not in markdown) : not read either.
+    assert "http" not in strip("source : https://e.com/page?x=1")
+
+
 def test_synthesize_to_bytes_produces_wav(tmp_path, monkeypatch):
     fake_model = tmp_path / "fake.onnx"
     fake_model.write_bytes(b"x")

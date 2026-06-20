@@ -41,8 +41,13 @@ def _strip_markdown_for_tts(text: str) -> str:
     is conservative with ``_`` so snake_case identifiers survive when spoken.
     """
     text = text or ""
-    # Images / links : keep the visible text, drop the target URL.
-    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    # Images : drop ENTIRELY — the picture is shown visually, and its alt is often a
+    # URL/filename a TTS would read aloud as gibberish. ([^\s]* tolerates parens in URLs.)
+    text = re.sub(r"!\[[^\]]*\]\([^\s]*\)", " ", text)
+    # Links : keep the visible text, drop the target URL.
+    text = re.sub(r"\[([^\]]*)\]\([^\s]*\)", r"\1", text)
+    # Any bare URL left over (or one not in markdown) : a TTS must not read it.
+    text = re.sub(r"https?://\S+", "", text)
     # Line-start block markers : headings, blockquotes, horizontal rules, bullets.
     text = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]*", "", text)   # ## Heading
     text = re.sub(r"(?m)^[ \t]{0,3}>[ \t]?", "", text)        # > quote
