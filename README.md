@@ -722,7 +722,7 @@ jeanmichel/
 ├── cli_profile.example.toml
 ├── .env / .env.example       # clés d'API tools externes
 ├── db/
-│   ├── schema.sql            # schéma v2 consolidé (123 migrations appliquées)
+│   ├── schema.sql            # schéma v2 consolidé (toutes les migrations appliquées)
 │   ├── schema_v1_baseline.sql # baseline v1 (tests migration)
 │   └── migrations/           # migrate_NNN_*.sql
 ├── debug/
