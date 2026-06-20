@@ -1,7 +1,8 @@
-"""Verify no orphan FK references or dead-tool mentions after v2 migrations.
+"""Verify no orphan FK references or dead-tool mentions in the consolidated schema.
 
-These tests run on a freshly-migrated v2 DB (schema + 100 + 101 + 102) and
-verify the data is internally consistent for the v2 orchestrator.
+These tests load `db/schema.sql` (the install baseline) into a fresh DB and verify
+the seeded data is internally consistent for the v2 orchestrator : no dangling FK
+references, no active paradigm mentions a dead tool, every active agent is bound.
 """
 
 from __future__ import annotations
@@ -14,27 +15,12 @@ import pytest
 _ROOT = Path(__file__).parent.parent.parent
 
 
-def _apply_full_v2_chain(conn: sqlite3.Connection) -> None:
-    """Apply the v1 baseline + the three v2 migrations to obtain v2 final state.
-
-    This validates the migration chain. To test the consolidated v2 schema
-    directly, load `db/schema.sql` instead (see test_migration_idempotence).
-    """
-    for rel in (
-        "db/schema_v1_baseline.sql",
-        "db/migrations/migrate_100_paradigm_realignment.sql",
-        "db/migrations/migrate_101_user_memory.sql",
-        "db/migrations/migrate_102_drop_runtime_tables.sql",
-    ):
-        conn.executescript((_ROOT / rel).read_text(encoding="utf-8"))
-
-
 @pytest.fixture()
 def v2_db(tmp_path: Path):
     db_path = tmp_path / "v2_orphan_audit.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _apply_full_v2_chain(conn)
+    conn.executescript((_ROOT / "db" / "schema.sql").read_text(encoding="utf-8"))
     yield conn
     conn.close()
 
