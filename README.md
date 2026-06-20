@@ -40,6 +40,63 @@ turn assistant **sans tool_calls** : le `content` EST la réponse.
 Voir `docs/architecture_v2.md` pour le détail
 architectural complet.
 
+## Démarrage rapide
+
+Prérequis : Linux ou macOS, Python ≥ 3.14, [Ollama](https://ollama.com/download),
+Docker (frontend conteneurisé + sandboxes de code).
+
+```bash
+# 1. Ollama + les 4 modèles du roster par défaut (~50 Go sur disque)
+curl -fsSL https://ollama.com/install.sh | sh        # Linux ; macOS → app sur ollama.com
+ollama pull granite4.1:8b        # dispatcher tier-0          5.3 Go
+ollama pull qwen3:14b            # code-router / analyste     9.3 Go
+ollama pull gemma4:26b           # orchestrateur + reasoners   17 Go
+ollama pull qwen3-coder:latest   # workers de code             18 Go
+
+# 2. Installe Jean-Michel : venv + db/schema.sql + images sandbox Docker
+./jm.sh --install
+
+# 3. Lance — soit le CLI…
+./jm.sh                          # mode analyse, nouvelle conversation
+# … soit la surface web :
+./jm.sh --create-user alice      # crée un compte web (prompt password)
+./jm.sh --serve                  # daemon API sur :8000  (à garder ouvert)
+docker compose -f web/compose.yml up --build   # frontend → http://localhost:3000
+```
+
+Le frontend (nginx conteneurisé) reverse-proxy `/api` + `/ws` vers le daemon de
+l'hôte — même origine, pas de CORS. Le daemon reste lancé à la main sur l'hôte
+(il a besoin d'Ollama / du GPU).
+
+**Adapter les modèles à ta VRAM.** Le roster par défaut (`models.example.toml`) vise
+une grosse machine. Ollama charge un modèle à la demande, mais le modèle résident +
+son contexte doit tenir en VRAM, sinon il déborde sur le CPU (lent) — le plus gros ici
+est `qwen3-coder:latest` (18 Go) ou `gemma4:26b` (17 Go), plus le KV cache (∝ `num_ctx`).
+Pour tourner plus léger, crée un `models.toml` (gitignored, fusionné par-clé au-dessus de
+l'exemple) qui surcharge `[roles]` et `[context_window]` avec des modèles / fenêtres plus
+petits :
+
+```toml
+# models.toml — exemple « VRAM serrée »
+[roles]
+main      = "qwen3:14b"   # au lieu de gemma4:26b
+compactor = "qwen3:14b"
+subagent  = "qwen3:14b"
+
+[context_window]
+"qwen3:14b" = 16384       # KV cache plus petit
+```
+
+Les modèles par-agent (specialists) vivent en DB :
+`./jm.sh --admin set-model <agent> <model>` ou le panneau « Agent settings » du web.
+
+**Mettre à jour une instance existante.** Après un `git pull` qui ajoute des migrations
+DB :
+
+```bash
+./jm.sh --migrate          # snapshot auto, puis applique les migrations en attente
+```
+
 ## Surfaces
 
 Le même cœur (orchestrateur Python + agents + BDD SQLite) sert **deux
