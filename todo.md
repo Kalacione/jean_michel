@@ -2,11 +2,11 @@
 
 > Backlog consolidé. Pour la connaissance acquise (design, audits), voir [docs/README.md](docs/README.md).
 
+Docker pour frontend, capable d'acceder au backend python.
+
 ## Plan / todo — reste
 - **Steering en cours de tour** : avec le multi-plan, pouvoir réorienter pendant l'exécution d'un plan.
   Prend un chemin d'analyse en cours de plan ; à creuser.
-- **Enforcement plan-mode `todo_write`** : le garde mode-PLAN exige déjà `plan_write` ; reste le glissement où le
-  modèle narre la todo en prose au lieu d'appeler l'outil.
 
 
 ## consolidation
