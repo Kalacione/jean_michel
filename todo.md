@@ -1,9 +1,5 @@
 # To Do
 
-> Backlog consolidé. Pour la connaissance acquise (design, audits), voir [docs/README.md](docs/README.md).
-
-Docker pour frontend, capable d'acceder au backend python.
-
 ## Plan / todo — reste
 - **Steering en cours de tour** : avec le multi-plan, pouvoir réorienter pendant l'exécution d'un plan.
   Prend un chemin d'analyse en cours de plan ; à creuser.
@@ -21,7 +17,6 @@ Docker pour frontend, capable d'acceder au backend python.
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
 - Audit des paradigmes de tous les agents (incohérences ?).
-
 
 
 ## Idées
