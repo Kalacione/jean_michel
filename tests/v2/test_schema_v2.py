@@ -31,7 +31,7 @@ V2_SOURCE_FILES: list[str] = [
     "src/jeanmichel/tools/report_back.py",
 ]
 
-# Tables dropped by migrate_102. v2 code must not SQL-reference these.
+# Legacy v1 runtime tables, dropped in v2. v2 code must not SQL-reference these.
 LEGACY_TABLES: list[str] = [
     "requests",
     "artifacts",

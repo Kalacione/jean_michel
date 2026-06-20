@@ -124,7 +124,7 @@ def load_paradigms_for_agent(conn: sqlite3.Connection, agent_id: int, mode: str)
 
     Carries ``requires_tool`` (from the optional ``paradigm_requires_tool`` table) so
     the caller can gate a paradigm on the agent actually having that tool. Falls back
-    to the un-gated query when the table is absent (migrate_127 not yet applied)."""
+    to the un-gated query when that optional table is absent (a DB predating it)."""
     try:
         sql = _PARADIGM_SELECT.format(
             requires_tool=", prt.tool_prefix AS requires_tool",
@@ -275,7 +275,7 @@ def touch_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
 
 
 def delete_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
-    """Delete a conversation row. ON DELETE CASCADE (migrate_114) removes its
+    """Delete a conversation row. ON DELETE CASCADE removes its
     ownership links — and any future cascade-declared child rows. Requires
     PRAGMA foreign_keys=ON (set by ``connect``)."""
     conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
@@ -283,8 +283,8 @@ def delete_conversation(conn: sqlite3.Connection, conv_id: str) -> None:
 
 # ---- Web users + profile + conversation ownership (web frontend) ----------
 
-# Structured profile fields (the cli_profile.toml structure, reprise en BDD ;
-# migrate_113). Filled at creation for web users.
+# Structured profile fields (the cli_profile.toml structure, reprise en BDD).
+# Filled at creation for web users.
 WEB_PROFILE_FIELDS = ("name", "birthdate", "city", "country", "language", "interests", "notes")
 
 
@@ -335,11 +335,11 @@ def update_web_user_profile(conn: sqlite3.Connection, user_id: int, **fields: st
 def cli_user_id(conn: sqlite3.Connection) -> int:
     """id of the reserved `cli` user — the CLI's identity + the default memory scope.
 
-    Raises KeyError if migrate_113 hasn't been applied (no `cli` user yet).
+    Raises KeyError if the reserved `cli` user is missing (DB not installed).
     """
     row = conn.execute("SELECT id FROM web_users WHERE username='cli'").fetchone()
     if row is None:
-        raise KeyError("reserved 'cli' user missing (migrate_113 not applied)")
+        raise KeyError("reserved 'cli' user missing (run ./jm.sh --install?)")
     return row["id"]
 
 
@@ -383,7 +383,7 @@ def user_owns_conversation(
     return row is not None
 
 
-# ---- Projects (migrate_124) -----------------------------------------------
+# ---- Projects -------------------------------------------------------------
 
 _PROJECT_COLS = (
     "id, user_id, code, name, description, status, code_repo, repo_kind, dockerfile, "
@@ -457,7 +457,7 @@ def update_project(
 
 def delete_project(conn: sqlite3.Connection, project_id: int) -> None:
     """Delete a project. Memory scope='project' cascades ; conversations.project_id
-    is set NULL (migrate_124). Requires PRAGMA foreign_keys=ON (set by ``connect``)."""
+    is set NULL. Requires PRAGMA foreign_keys=ON (set by ``connect``)."""
     conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
 
 

@@ -133,8 +133,8 @@ sur 1 GPU (32 Go), GGUF Ollama rôdé (leçon Nemotron).
 agent en mode code → `turn_runner.py` met `main_agent.model = MODE_ROUTER_MODEL["code"]` (= `CODE_MODEL`),
 MAIS `load_agent` (`orchestrator_v2.py`) applique aussi `agents.model_override` si non-NULL (**précédence à
 confirmer**) ; (b) *code-analyst* (subagent) = via `agents.model_override`. Donc câbler = `[roles].code`
-(+ `[context_window]`) dans `models.example.toml` **ET** migration manuelle de `agents.model_override` des
-deux agents → gagnant (+ `db/schema.sql` + apply live + test). Cf. mémoire migrations manuelles.
+(+ `[context_window]`) dans `models.example.toml` **ET** un `migrate_NNN` mettant à jour `agents.model_override`
+des deux agents → gagnant (+ miroir `db/schema.sql` + `./jm.sh --migrate` + test).
 
 ---
 

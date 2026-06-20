@@ -87,7 +87,7 @@ extra `web`). C'est le socle de D2 et de la normalisation vision.
 `web_search._do_search` ([tools/web_search.py:86](../../src/jeanmichel/tools/web_search.py#L86))
 n'envoie **aucune** `categories`. SearXNG gère `categories=images` nativement → par résultat :
 `title, url, img_src, thumbnail_src, source`. Ajout d'outil = pattern établi (fichier outil +
-`build_registry` + migration grant + régén `schema.sql`, cf. `migrate_106/107`).
+`build_registry` + migration du grant + miroir `schema.sql`, appliquée par `./jm.sh --migrate`).
 
 ---
 
@@ -262,7 +262,7 @@ On garde les deux techniques, **affectées au mode où leur modèle de coût col
   GIF→frame0, SVG servi tel quel) ; masquage dotfiles ; rendu `<img>` + lightbox dans
   `ChatPane`. *Pur UX, zéro risque LLM.*
 - **I2 — `image_search`.** `_do_search`+`categories=images` (URLs + `thumbnail_src`) ; registry ;
-  migration grant (+ paradigme routage) ; régén `schema.sql` ; tests + suite verte.
+  migration du grant (+ paradigme routage) ; miroir `schema.sql` ; tests + suite verte.
 - **I3 — Vision A (chat/vocal) : `analyze_image` + `image_fetch`.** `analyze_image(path, question)`
   (workspace-bound, réutilise la dérivée 1024 px, appel gemma4 isolé → texte) ; `image_fetch(url)` (grab →
   workspace, cap 22 Mo, gardes SSRF §4) → cas « analyser une image du web » ; grants ; règle

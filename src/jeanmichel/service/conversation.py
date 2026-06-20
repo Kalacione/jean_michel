@@ -113,8 +113,8 @@ def revert_conversation(conv_id: str, commit: str) -> bool:
 
 
 def delete_conversation(conv_id: str) -> None:
-    """Delete a conversation entirely : DB row (+ cascaded ownership links via
-    migrate_114) and its on-disk folder (messages, events, workspace).
+    """Delete a conversation entirely : DB row (+ cascaded ownership links)
+    and its on-disk folder (messages, events, workspace).
     Folder removal is best-effort."""
     with db.connect() as conn:
         row = db.get_conversation(conn, conv_id)

@@ -4,7 +4,7 @@ Shared by the web API (and, read-only, by the CLI ``--project`` resolution).
 A project is owned by a web_user, identified by a kebab-case ``code`` unique
 per owner, and groups conversations (1 project → N conversations). Deleting a
 project sets its conversations' ``project_id`` to NULL and cascades its
-scope='project' memory (migrate_124/125).
+scope='project' memory.
 
 Errors are signalled by raising ``ProjectOpError(code, message)``.
 """

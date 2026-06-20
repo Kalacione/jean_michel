@@ -48,7 +48,7 @@ _MEMORY_WARN_AT = 90
 
 
 def _conversation_project_id(conv_id: str) -> int | None:
-    """The project a conversation is attached to (migrate_124), or None.
+    """The project a conversation is attached to, or None.
 
     Defensive : returns None if the column / table is absent (migrations not
     applied) so the turn never breaks on a missing project association.

@@ -253,20 +253,20 @@ Voir [web/README.md](web/README.md) pour les détails de stack.
 
 Mode mono-utilisateur côté CLI, multi-comptes côté web. Concrètement :
 
-- Table `web_users` (migrate_112) : `id`, `username`, `password_hash`
+- Table `web_users` : `id`, `username`, `password_hash`
   (argon2), `created_at`, plus les champs profil (`display_name`,
   `city`, `country`, `language`, `interests`, `notes`) remplis à la
   création du compte.
 - Table `conversation_users` : association `conversation_id ↔ user_id`,
   matérialise l'ownership. Le CLI utilise un user système `cli`
   (`user_id=1`), invisible du frontal.
-- `user_memory.user_id` (migrate_113) : la mémoire long-terme est
-  scopée par user. Les facts d'Alice n'apparaissent jamais dans les
-  prompts de Bob, ni vice-versa. Le CLI charge le user `cli` par défaut
-  et garde ses propres entrées.
-- `migrate_114_conversation_cascade.sql` : suppression d'une
-  conversation cascade ses messages / events / state / workspace et
-  l'association `conversation_users`.
+- Mémoire scopée par user (`memory`, scope `user`) : la mémoire
+  long-terme est isolée par compte. Les facts d'Alice n'apparaissent
+  jamais dans les prompts de Bob, ni vice-versa. Le CLI charge le user
+  `cli` par défaut et garde ses propres entrées.
+- `ON DELETE CASCADE` sur les FK : la suppression d'une conversation
+  cascade ses messages / events / state / workspace et l'association
+  `conversation_users`.
 
 Création d'un compte web :
 
@@ -385,7 +385,7 @@ fallback permet au système de toujours produire une réponse.
 
 ## Mémoire long-terme (scopée)
 
-Table `memory` (migrate_125, généralise l'ancienne `user_memory`). Une seule
+Table `memory`. Une seule
 dimension **`scope`** pilote l'inclusion — `world` (global), `user` (sur
 l'humain), `project` (un projet), `tool` (note d'usage d'un outil) — avec un
 `CHECK` qui impose exactement une cible par scope. Tool unique
@@ -409,7 +409,7 @@ Bootstrap depuis `cli_profile.toml` au premier démarrage : crée une entrée
 
 ### Projets
 
-Table `projects` (migrate_124) possédée par un user ; `conversations.project_id`
+Table `projects` possédée par un user ; `conversations.project_id`
 (nullable, `ON DELETE SET NULL`) rattache une conversation à **0 ou 1** projet
 (1 projet → N conversations). CLI : `--project <code>` (créé à la volée). Web :
 gestion CRUD + sélecteur à la création (`ProjectsDialog.vue`). La mémoire
@@ -576,10 +576,10 @@ code = ["jean-michel", "code-fetcher"]
 
 ## Paradigmes en BDD
 
-Le système de paradigmes survit en v2, **purgé puis enrichi** (≈118 paradigmes actifs), et reste strictement
+Le système de paradigmes survit en v2, **purgé puis enrichi** (≈130 paradigmes actifs), et reste strictement
 **model-agnostic** : le comportement vit en DB (`paradigms` / `agent_paradigms` / `paradigm_modes`), aucun prompt
 ne nomme un modèle. L'évolution v1 → v2 (purge des incantatoires, ajouts par spécialiste) est détaillée dans
-[CHANGELOG.md](CHANGELOG.md) + `db/migrations/`.
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Stack
 
@@ -686,22 +686,24 @@ commentaires `#`, quotes optionnelles, pas d'interpolation `$VAR`
 
 ## Migrations BDD
 
-`db/schema.sql` est l'état v2 consolidé (fresh installs partent de là).
+`db/schema.sql` est la **baseline** : le schéma complet et courant, chargé tel quel par
+`./jm.sh --install` sur une base neuve (qui démarre à `user_version 0`).
 
-`db/schema_v1_baseline.sql` est conservé pour valider les migrations
-v1 → v2 dans les tests.
+Faire évoluer le schéma : écrire `db/migrations/migrate_NNN_desc.sql` (NNN à partir de
+`001`, numéro suivant), **reporter le même changement dans `db/schema.sql`** (les fresh
+installs partent de là), puis appliquer avec `./jm.sh --migrate`.
 
-Migrations sous `db/migrations/` (un fichier par migration, `migrate_NNN_*.sql`, appliquées **à la main**) —
-le détail de chacune est dans [CHANGELOG.md](CHANGELOG.md) (« Migrations DB »).
-
-Pour mettre à jour une instance existante — **après un backup** (`./jm.sh --export-db`) — rejouer **dans
-l'ordre** les migrations qui lui manquent (l'ordre lexical des fichiers `migrate_NNN_*.sql` = l'ordre numérique).
+`--migrate` fait un backup automatique (`--export-db`) avant toute écriture, puis applique
+les migrations dont le numéro dépasse le `PRAGMA user_version` de la base — chacune dans sa
+propre transaction, par ordre numérique — en bumpant `user_version` à chaque succès. Il
+s'arrête à la première erreur (jamais de base à moitié migrée) ; relancer sans migration en
+attente est un no-op. Convention détaillée : [db/migrations/README.md](db/migrations/README.md).
 
 ## Profil utilisateur
 
 Édite `cli_profile.toml` à la racine. Description libre injectée dans
-le bloc `## Human` du prompt + ingérée dans `user_memory` au premier
-démarrage. Exemple :
+le bloc `## Human` du prompt + ingérée dans la mémoire (`memory`) au
+premier démarrage. Exemple :
 
 ```toml
 name = "Jeremy"
@@ -722,9 +724,8 @@ jeanmichel/
 ├── cli_profile.example.toml
 ├── .env / .env.example       # clés d'API tools externes
 ├── db/
-│   ├── schema.sql            # schéma v2 consolidé (toutes les migrations appliquées)
-│   ├── schema_v1_baseline.sql # baseline v1 (tests migration)
-│   └── migrations/           # migrate_NNN_*.sql
+│   ├── schema.sql            # baseline : schéma complet courant (chargé par --install)
+│   └── migrations/           # migrations futures (migrate_NNN_*.sql) + README
 ├── debug/
 │   ├── inspect_conv.py       # lit messages.json + events.jsonl + state.json
 │   ├── export_db.py
@@ -805,7 +806,8 @@ jeanmichel/
     ├── test_tokens.py
     ├── test_user_memory.py
     ├── test_cli_rendering.py
-    ├── test_migration_idempotence.py
+    ├── test_schema_consolidated.py
+    ├── test_migrate_runner.py
     ├── test_no_orphan_paradigms.py
     ├── test_schema_v2.py
     └── test_smoke_e2e.py     # skipped sans Ollama (JEANMICHEL_SMOKE_E2E=1)

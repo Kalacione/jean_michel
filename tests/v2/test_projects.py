@@ -74,7 +74,7 @@ def test_update_invalid_status_rejected(tmp_db_v2):
         assert exc.value.code == "invalid_status"
 
 
-# ---- code_repo / repo_kind (migrate_133) ----------------------------------
+# ---- code_repo / repo_kind ------------------------------------------------
 
 
 def test_create_repo_defaults_and_explicit(tmp_db_v2):

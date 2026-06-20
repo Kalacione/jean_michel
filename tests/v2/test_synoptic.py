@@ -36,7 +36,7 @@ def test_render_synoptic_from_schema(tmp_db_v2):
     assert "subgraph DELIB" in md
     assert "critical_coder --> sergent_kiss" in md
     assert "code_router -. hard code step .-> DELIB" in md
-    # The comparator whitelist fix (migrate_132) is visible as edges.
+    # The comparator whitelist is visible as edges.
     assert "comparator_specialist --> web_search_specialist" in md
     # Roster table present.
     assert "| Agent | Role | Model |" in md

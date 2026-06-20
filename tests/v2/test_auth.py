@@ -280,7 +280,7 @@ def test_touch_bumps_modified(tmp_db_v2):
 
 
 def test_delete_conversation_cascades_association(tmp_db_v2):
-    """migrate_114 : deleting only the conversation row cascades to its links."""
+    """Deleting only the conversation row cascades to its links (ON DELETE CASCADE)."""
     alice = _make_user("alice", "pw")
     conv_id, _ = conversation_svc.create_conversation("chat")
     with db_connect() as conn:

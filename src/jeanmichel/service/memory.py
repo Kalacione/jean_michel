@@ -10,7 +10,7 @@ A single ``scope`` dimension drives deterministic prompt inclusion :
   tool    → any agent granted that tool         (target: tool_code)
 
 A row is uniquely addressed by ``(scope, target, code)`` (enforced by the
-partial unique indexes in migrate_125), so there is never any ambiguity.
+partial unique indexes on ``memory``), so there is never any ambiguity.
 
 Full-text recall / dedup uses the FTS5 ``memory_fts`` table with BM25 ranking
 (``search``). Errors are signalled by raising ``MemoryOpError(code, message,

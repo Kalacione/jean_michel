@@ -1,5 +1,10 @@
 # Notice — Ajouter un spécialiste ou un outil
 
+> **Appliquer les changements DB** : les snippets SQL de cette notice vont dans une migration
+> `db/migrations/migrate_NNN_*.sql` (numéro suivant) **et** sont reportés dans `db/schema.sql`
+> (la baseline des fresh installs), puis appliqués par `./jm.sh --migrate` (backup auto). Voir
+> [db/migrations/README.md](../db/migrations/README.md).
+
 ## A. Nouvel agent spécialiste (sans outil Python)
 
 **1. DB — INSERT agent**
@@ -118,11 +123,11 @@ def build_registry(conv_folder: Path) -> dict[str, ToolSpec]:
 
 ## Checklist
 
-- [ ] Agent INSERT dans DB + schema.sql
-- [ ] Catégorie + paradigme INSERT si domaine nouveau (DB + schema.sql)
-- [ ] `agent_paradigms` bindings (DB + schema.sql)
-- [ ] `paradigm_modes` restrictions si le paradigme ne s'applique pas à tous les modes (DB + schema.sql)
-- [ ] `agent_tools` grants si outil Python (DB + schema.sql)
+- [ ] Agent INSERT dans migration + schema.sql
+- [ ] Catégorie + paradigme INSERT si domaine nouveau (migration + schema.sql)
+- [ ] `agent_paradigms` bindings (migration + schema.sql)
+- [ ] `paradigm_modes` restrictions si le paradigme ne s'applique pas à tous les modes (migration + schema.sql)
+- [ ] `agent_tools` grants si outil Python (migration + schema.sql)
 - [ ] Fichier outil créé si nécessaire
 - [ ] `build_registry` mis à jour si nouvel outil
 - [ ] Paradigme de routing ajouté à jean-michel si le nouvel agent doit être ciblé explicitement
@@ -201,7 +206,7 @@ Prérequis système : image Docker buildée (`./jm.sh --build-docker`, une seule
 
 Exemple complet — créer un agent `code-runner` avec workspace write et sandbox Python :
 
-> **Note** : `code-runner` est déjà en production (id=12, `db/migrate_006_code_runner.sql`).
+> **Note** : `code-runner` est déjà en production (id=12).
 > Cet exemple sert de référence pour créer un agent similaire.
 
 ```sql

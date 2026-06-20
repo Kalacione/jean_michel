@@ -14,7 +14,7 @@ REPO_ROOT = Path(os.environ.get("JEANMICHEL_HOME", Path.cwd())).resolve()
 DB_PATH = REPO_ROOT / "jeanmichel.db"
 CONVERSATIONS_DIR = REPO_ROOT / "conversations"
 # The CLI runs as the reserved `cli` user ; its profile lives in this file.
-# Web users keep their profile in the `web_users` columns (migrate_113).
+# Web users keep their profile in the `web_users` columns.
 CLI_PROFILE_PATH = REPO_ROOT / "cli_profile.toml"
 ENV_FILE_PATH = REPO_ROOT / ".env"
 
