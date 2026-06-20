@@ -458,3 +458,58 @@ def test_ws_chat_image_uses_tool_not_context(client, monkeypatch):
                 break
 
     assert not any(m.get("images") for m in _user_msgs(main))  # A path : no in-context image
+
+
+# ---- client disconnect mid-turn : graceful drain + turn_complete notice ---
+
+
+def test_run_turn_streaming_client_gone_persists_and_notifies(client, monkeypatch):
+    """A dead client socket mid-turn (e.g. the user switched conversations) must NOT crash the
+    drain with an ASGI traceback. Instead : stop sending to the dead socket, still let the worker
+    persist the turn, and push a per-user `turn_complete` notice so the GUI can reload the
+    (now-persisted) conversation instead of showing a blank panel until a manual refresh."""
+    import asyncio
+
+    from jeanmichel.api import notifications
+    from jeanmichel.config import UserProfile
+
+    uid = _make_user("dave", "pw")
+    token = _login(client, "dave", "pw")
+    conv_id = _create_conv(client, token)
+    folder = _conv_folder(conv_id)
+    with db_connect() as conn:
+        profile = UserProfile.from_row(db.get_web_user_by_id(conn, uid))
+
+    pushed: list[tuple[int, dict]] = []
+    monkeypatch.setattr(notifications, "notify",
+                        lambda user_id, payload: pushed.append((user_id, payload)))
+    # Keep the test about the disconnect path, not the post-turn reflection beat.
+    monkeypatch.setattr(executor, "_schedule_reflection", lambda *a, **k: None)
+
+    class _DeadWS:
+        """Client vanished : every send fails (as starlette does after a close), recv ends."""
+
+        async def send_json(self, msg):
+            raise RuntimeError(
+                "Unexpected ASGI message 'websocket.send', after sending 'websocket.close'"
+            )
+
+        async def receive_json(self):
+            raise RuntimeError("client gone")
+
+    dispatch, main = _deep_clients()
+    # The whole point : this must return cleanly, NOT raise, despite every send failing.
+    asyncio.run(executor.run_turn_streaming(
+        _DeadWS(),
+        conv_id=conv_id, folder=folder, user_text="hi", mode="analyse",
+        profile=profile, dispatch_llm=dispatch, main_llm=main, memory_user_id=uid,
+    ))
+
+    # The turn still ran to completion and persisted — the client leaving never loses the work.
+    persisted = persistence.load_messages(folder)
+    assert any(m["role"] == "assistant" and "42" in m["content"] for m in persisted), persisted
+    # And a turn_complete notice went to the conversation's owner so the GUI can catch up.
+    assert pushed, "no turn_complete notification pushed"
+    uid_sent, payload = pushed[-1]
+    assert uid_sent == uid
+    assert payload["kind"] == "turn_complete" and payload["conv_id"] == conv_id

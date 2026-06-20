@@ -381,6 +381,18 @@ export const useConvStore = defineStore('conversations', () => {
     if (m && m.conv_id === currentId.value) pendingMemory.value = m.candidates || []
   }
 
+  // A turn finished on the backend for `convId`, pushed on the notifications socket because the
+  // turn's own WS had closed (we'd navigated away mid-turn). If we're now viewing that conv and
+  // NOT in a live turn, reload its messages from disk (now persisted) so the answer appears —
+  // no manual page refresh. Messages-only : leaves the live event trace + referent chips alone.
+  async function syncCompletedTurn (convId) {
+    if (convId !== currentId.value || busy.value) return
+    try {
+      const loaded = (await api.messages(convId)).messages
+      if (convId === currentId.value && !busy.value) messages.value = chatBubbles(loaded)
+    } catch { /* best-effort catch-up */ }
+  }
+
   // Optional-feature flags (e.g. STT) → drives conditional UI like the mic button.
   async function loadCapabilities () {
     try { sttAvailable.value = !!(await api.capabilities()).stt } catch { sttAvailable.value = false }
@@ -391,7 +403,7 @@ export const useConvStore = defineStore('conversations', () => {
     wsFiles, wsOpen, wsInitialPath, pendingMemory,
     currentMode, planMode, planTurn, planAvailable, awaitingApproval, plan, planEditorOpen, convState, todo, sttAvailable,
     refresh, loadCapabilities, create, select, sendTurn, stopTurn, answer, approveAndExecute, rename, remove, reset,
-    fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed,
+    fetchWsFiles, openWorkspace, dismissMemory, onMemoryProposed, syncCompletedTurn,
     loadSnapshots, revert, fork, reloadCurrent,
   }
 })

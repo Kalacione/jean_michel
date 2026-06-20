@@ -228,6 +228,7 @@ async def run_turn_streaming(
     turn_future = loop.run_in_executor(None, worker)
     recv_task = asyncio.create_task(recv_answers())
     exit_reason = "sentinel"
+    client_gone = False
     try:
         while True:
             msg = await event_queue.get()
@@ -238,11 +239,16 @@ async def run_turn_streaming(
                 _log.info("drain SEND type=%s conv=%s", mtype, conv_id)
             try:
                 await websocket.send_json(msg)
-            except Exception as exc:  # noqa: BLE001
-                exit_reason = f"send_failed({type(exc).__name__})"
-                _log.warning("drain send_json FAILED type=%s conv=%s : %s — final may be lost",
-                             mtype, conv_id, exc)
-                raise
+            except Exception as exc:  # noqa: BLE001 — client vanished mid-turn (e.g. switched conv)
+                # An EXPECTED disconnect, not a server error : stop draining to the dead socket
+                # and let the `finally` persist the turn. {final} is lost on this socket → the
+                # turn_complete notice below lets the GUI catch up. (Re-raising spammed an ASGI
+                # traceback for a perfectly normal mid-turn navigation.)
+                exit_reason = f"client_gone({type(exc).__name__})"
+                client_gone = True
+                _log.info("drain stop : client gone conv=%s (%s) — turn still persists",
+                          conv_id, type(exc).__name__)
+                break
     finally:
         _log.info("drain EXIT reason=%s conv=%s", exit_reason, conv_id)
         recv_task.cancel()
@@ -251,6 +257,14 @@ async def run_turn_streaming(
         # Let the worker finish (persists messages/state/events) even if the
         # client vanished mid-turn.
         await turn_future
+        # Client disconnected before {final} (typically : switched conversations mid-turn). Its
+        # view is a pre-persist reload that will miss this turn → push a per-user notice so the
+        # GUI reloads this conv if it's the one on screen, instead of a blank panel that only a
+        # manual page refresh fixes. No-op if the user has no notifications socket open.
+        if client_gone and memory_user_id is not None:
+            notifications.notify(memory_user_id, {
+                "type": "notification", "kind": "turn_complete", "conv_id": conv_id,
+            })
         # Reflection beat : end of a DEEP turn (live ; not a timer). Best-effort, serialised
         # on turn_lock → runs when idle. Candidates land in pending_consolidation for review.
         if was_deep["v"]:
