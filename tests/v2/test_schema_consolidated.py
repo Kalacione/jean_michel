@@ -132,12 +132,23 @@ def test_memory_indices_present(schema_db):
 
 
 def test_total_active_paradigms_count(schema_db):
-    """Pinned : 130 active paradigms. Bump this deliberately when you add/retire one
+    """Pinned : 124 active paradigms. Bump this deliberately when you add/retire one
     in schema.sql — it's the guard that a seed edit did exactly what you intended."""
     row = schema_db.execute(
         "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1"
     ).fetchone()
-    assert row["c"] == 130
+    assert row["c"] == 124
+
+
+def test_global_paradigm_floor(schema_db):
+    """Pinned : 11 is_global paradigms — the floor injected into EVERY agent. The audit
+    consolidation cut this from 30 (merged the grounding/format clusters, demoted the
+    reasoning-meta + user-facing globals to explicit bindings). Keep it lean : a global
+    lands on all 20 agents, so promoting one to is_global must be a deliberate choice."""
+    row = schema_db.execute(
+        "SELECT COUNT(*) AS c FROM paradigms WHERE active = 1 AND is_global = 1"
+    ).fetchone()
+    assert row["c"] == 11
 
 
 def test_total_active_agents_count(schema_db):
@@ -666,7 +677,7 @@ def test_code_router_agent(schema_db):
         "SELECT COUNT(*) AS c FROM agent_paradigms ap JOIN agents a ON a.id=ap.agent_id "
         "WHERE a.code='code-router'"
     ).fetchone()["c"]
-    assert n_para == 15
+    assert n_para == 13
     targets = {
         r["target_code"]
         for r in schema_db.execute(
@@ -692,7 +703,7 @@ def test_code_router_is_leaner_than_jean_michel(schema_db):
             (code,),
         ).fetchone()["c"]
 
-    assert n_bound("code-router") < n_bound("jean-michel")  # 15 vs 46
+    assert n_bound("code-router") < n_bound("jean-michel")  # 13 vs 58
 
 
 # ---- Memory read/propose split + meta-analyst -----------------------------
