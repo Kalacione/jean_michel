@@ -16,7 +16,6 @@
 ## Tooling / cleanup
 - **Tool set / MCP par agent** : jean-michel ne doit pas avoir les outils github ni le MCP vuetify (réservés aux
   codeurs ; vuetify pas même lancé) → quel MCP pour quel agent. Suspicion : confond *outil* et *délégation*.
-- Audit des paradigmes de tous les agents (incohérences ?).
 
 
 ## Idées
